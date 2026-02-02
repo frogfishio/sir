@@ -1460,9 +1460,6 @@ typedef struct FunctionCtx {
 
 static bool bind_add(FunctionCtx* f, const char* name, LLVMValueRef v) {
   if (!name) return false;
-  for (size_t i = 0; i < f->bind_len; i++) {
-    if (strcmp(f->binds[i].name, name) == 0) return false;
-  }
   if (f->bind_len == f->bind_cap) {
     size_t next = f->bind_cap ? f->bind_cap * 2 : 16;
     Binding* bigger = (Binding*)realloc(f->binds, next * sizeof(Binding));
@@ -1475,10 +1472,17 @@ static bool bind_add(FunctionCtx* f, const char* name, LLVMValueRef v) {
 }
 
 static LLVMValueRef bind_get(FunctionCtx* f, const char* name) {
-  for (size_t i = 0; i < f->bind_len; i++) {
-    if (strcmp(f->binds[i].name, name) == 0) return f->binds[i].value;
+  for (size_t i = f->bind_len; i > 0; i--) {
+    if (strcmp(f->binds[i - 1].name, name) == 0) return f->binds[i - 1].value;
   }
   return NULL;
+}
+
+static size_t bind_mark(FunctionCtx* f) { return f ? f->bind_len : 0; }
+static void bind_restore(FunctionCtx* f, size_t mark) {
+  if (!f) return;
+  if (mark > f->bind_len) return;
+  f->bind_len = mark;
 }
 
 static LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id);
@@ -2216,8 +2220,17 @@ static LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     if (strcmp(op, "sym") == 0) {
       const char* name = NULL;
       if (n->fields) name = json_get_string(json_obj_get(n->fields, "name"));
+      if (!name && args && args->type == JSON_ARRAY && args->v.arr.len == 1) {
+        int64_t aid = 0;
+        if (parse_node_ref_id(args->v.arr.items[0], &aid)) {
+          NodeRec* an = get_node(f->p, aid);
+          if (an && strcmp(an->tag, "name") == 0 && an->fields) {
+            name = json_get_string(json_obj_get(an->fields, "name"));
+          }
+        }
+      }
       if (!name) {
-        errf(f->p, "sircc: ptr.sym node %lld missing fields.name", (long long)node_id);
+        errf(f->p, "sircc: ptr.sym node %lld requires fields.name or args:[name]", (long long)node_id);
         goto done;
       }
       LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
@@ -2406,6 +2419,111 @@ static LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       out = LLVMBuildIntToPtr(f->builder, bits, pty, "ptr");
       goto done;
     }
+  }
+
+  if (strcmp(n->tag, "alloca") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: alloca node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+    int64_t ty_id = 0;
+    if (!parse_type_ref_id(json_obj_get(n->fields, "ty"), &ty_id)) {
+      errf(f->p, "sircc: alloca node %lld missing fields.ty (type ref)", (long long)node_id);
+      goto done;
+    }
+
+    int64_t el_size = 0;
+    int64_t el_align = 0;
+    if (!type_size_align(f->p, ty_id, &el_size, &el_align)) {
+      errf(f->p, "sircc: alloca node %lld has invalid/unsized element type %lld", (long long)node_id, (long long)ty_id);
+      goto done;
+    }
+
+    LLVMTypeRef el = lower_type(f->p, f->ctx, ty_id);
+    if (!el) {
+      errf(f->p, "sircc: alloca node %lld has invalid element type %lld", (long long)node_id, (long long)ty_id);
+      goto done;
+    }
+
+    // Parse flags: count?:i64, align?:i32, zero?:bool
+    int64_t align_i64 = 0;
+    bool zero_init = false;
+    LLVMValueRef count_val = NULL;
+    JsonValue* flags = json_obj_get(n->fields, "flags");
+    if (flags && flags->type == JSON_OBJECT) {
+      (void)json_get_i64(json_obj_get(flags, "align"), &align_i64);
+      JsonValue* zv = json_obj_get(flags, "zero");
+      if (zv && zv->type == JSON_BOOL) zero_init = zv->v.b;
+    }
+    JsonValue* countv = (flags && flags->type == JSON_OBJECT) ? json_obj_get(flags, "count") : NULL;
+    if (!countv) countv = json_obj_get(n->fields, "count");
+    JsonValue* alignv = json_obj_get(n->fields, "align");
+    if (alignv) (void)json_get_i64(alignv, &align_i64);
+    JsonValue* zerov = json_obj_get(n->fields, "zero");
+    if (zerov && zerov->type == JSON_BOOL) zero_init = zerov->v.b;
+
+    LLVMTypeRef i64 = LLVMInt64TypeInContext(f->ctx);
+    if (!countv) {
+      count_val = LLVMConstInt(i64, 1, 0);
+    } else {
+      int64_t c = 0;
+      if (json_get_i64(countv, &c)) {
+        if (c < 0) {
+          errf(f->p, "sircc: alloca node %lld count must be >= 0", (long long)node_id);
+          goto done;
+        }
+        count_val = LLVMConstInt(i64, (unsigned long long)c, 0);
+      } else {
+        int64_t cid = 0;
+        if (!parse_node_ref_id(countv, &cid)) {
+          errf(f->p, "sircc: alloca node %lld count must be i64 or node ref", (long long)node_id);
+          goto done;
+        }
+        count_val = lower_expr(f, cid);
+        if (!count_val) goto done;
+        if (LLVMGetTypeKind(LLVMTypeOf(count_val)) != LLVMIntegerTypeKind) {
+          errf(f->p, "sircc: alloca node %lld count ref must be integer", (long long)node_id);
+          goto done;
+        }
+        if (LLVMGetIntTypeWidth(LLVMTypeOf(count_val)) != 64) {
+          count_val = LLVMBuildZExtOrTrunc(f->builder, count_val, i64, "count.i64");
+        }
+      }
+    }
+
+    LLVMValueRef alloca_i = NULL;
+    bool is_one = false;
+    if (LLVMIsAConstantInt(count_val)) {
+      unsigned long long z = LLVMConstIntGetZExtValue(count_val);
+      is_one = (z == 1);
+    }
+    if (is_one) {
+      alloca_i = LLVMBuildAlloca(f->builder, el, "alloca");
+    } else {
+      alloca_i = LLVMBuildArrayAlloca(f->builder, el, count_val, "alloca");
+    }
+    if (!alloca_i) goto done;
+
+    unsigned align = 0;
+    if (align_i64 > 0) align = (unsigned)align_i64;
+    else if (el_align > 0) align = (unsigned)el_align;
+    if (align) LLVMSetAlignment(alloca_i, align);
+
+    if (zero_init) {
+      LLVMTypeRef i8p = LLVMPointerType(LLVMInt8TypeInContext(f->ctx), 0);
+      LLVMValueRef dst = LLVMBuildBitCast(f->builder, alloca_i, i8p, "alloca.i8p");
+      LLVMValueRef byte = LLVMConstInt(LLVMInt8TypeInContext(f->ctx), 0, 0);
+      LLVMValueRef bytes = LLVMConstInt(i64, (unsigned long long)el_size, 0);
+      if (!is_one) bytes = LLVMBuildMul(f->builder, count_val, bytes, "alloca.bytes");
+      LLVMBuildMemSet(f->builder, dst, byte, bytes, align ? align : 1);
+    }
+
+    // SIR mnemonic returns `ptr` (opaque). Represent as i8*.
+    LLVMTypeRef i8p = LLVMPointerType(LLVMInt8TypeInContext(f->ctx), 0);
+    alloca_i = LLVMBuildBitCast(f->builder, alloca_i, i8p, "alloca.ptr");
+
+    out = alloca_i;
+    goto done;
   }
 
   if (strncmp(n->tag, "alloca.", 7) == 0) {
@@ -2689,6 +2807,27 @@ static bool lower_stmt(FunctionCtx* f, int64_t node_id) {
     return false;
   }
 
+  if (strcmp(n->tag, "let") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: let node %lld missing fields", (long long)node_id);
+      return false;
+    }
+    const char* name = json_get_string(json_obj_get(n->fields, "name"));
+    if (!name) {
+      errf(f->p, "sircc: let node %lld missing fields.name", (long long)node_id);
+      return false;
+    }
+    int64_t vid = 0;
+    if (!parse_node_ref_id(json_obj_get(n->fields, "value"), &vid)) {
+      errf(f->p, "sircc: let node %lld missing fields.value ref", (long long)node_id);
+      return false;
+    }
+    LLVMValueRef v = lower_expr(f, vid);
+    if (!v) return false;
+    if (!bind_add(f, name, v)) return false;
+    return true;
+  }
+
   if (strncmp(n->tag, "store.", 6) == 0) {
     const char* tname = n->tag + 6;
     if (!n->fields) {
@@ -2843,6 +2982,39 @@ static bool lower_stmt(FunctionCtx* f, int64_t node_id) {
     }
 
     LLVMBuildMemSet(f->builder, dst, bytev, len, align_dst);
+    return true;
+  }
+
+  if (strcmp(n->tag, "eff.fence") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: eff.fence node %lld missing fields", (long long)node_id);
+      return false;
+    }
+    JsonValue* flags = json_obj_get(n->fields, "flags");
+    const char* mode = NULL;
+    if (flags && flags->type == JSON_OBJECT) mode = json_get_string(json_obj_get(flags, "mode"));
+    if (!mode) mode = json_get_string(json_obj_get(n->fields, "mode"));
+    if (!mode) {
+      errf(f->p, "sircc: eff.fence node %lld missing flags.mode", (long long)node_id);
+      return false;
+    }
+
+    if (strcmp(mode, "relaxed") == 0) {
+      // Closed set includes relaxed; model it as a no-op fence.
+      return true;
+    }
+
+    LLVMAtomicOrdering ord;
+    if (strcmp(mode, "acquire") == 0) ord = LLVMAtomicOrderingAcquire;
+    else if (strcmp(mode, "release") == 0) ord = LLVMAtomicOrderingRelease;
+    else if (strcmp(mode, "acqrel") == 0) ord = LLVMAtomicOrderingAcquireRelease;
+    else if (strcmp(mode, "seqcst") == 0) ord = LLVMAtomicOrderingSequentiallyConsistent;
+    else {
+      errf(f->p, "sircc: eff.fence node %lld invalid mode '%s'", (long long)node_id, mode);
+      return false;
+    }
+
+    (void)LLVMBuildFence(f->builder, ord, 0, "");
     return true;
   }
 
@@ -3388,6 +3560,8 @@ static bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod
         f.builder = builder;
         LLVMPositionBuilderAtEnd(builder, bb);
 
+        size_t mark = bind_mark(&f);
+
         // Block params: lowered as PHIs (to be populated by predecessors via branch args).
         JsonValue* params = bn->fields ? json_obj_get(bn->fields, "params") : NULL;
         if (params) {
@@ -3432,6 +3606,17 @@ static bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod
               return false;
             }
             pn->llvm_value = LLVMBuildPhi(builder, pty, "bparam");
+            const char* bname = pn->fields ? json_get_string(json_obj_get(pn->fields, "name")) : NULL;
+            if (bname) {
+              LLVMSetValueName2(pn->llvm_value, bname, strlen(bname));
+              if (!bind_add(&f, bname, pn->llvm_value)) {
+                errf(p, "sircc: failed to bind block param '%s' in fn %lld", bname, (long long)n->id);
+                LLVMDisposeBuilder(builder);
+                free(f.blocks_by_node);
+                free(f.binds);
+                return false;
+              }
+            }
           }
         }
 
@@ -3464,12 +3649,14 @@ static bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod
         if (!LLVMGetBasicBlockTerminator(bb)) {
           errf(p, "sircc: block %lld missing terminator", (long long)bid);
           LLVMDisposeBuilder(builder);
+          bind_restore(&f, mark);
           free(f.blocks_by_node);
           free(f.binds);
           return false;
         }
 
         LLVMDisposeBuilder(builder);
+        bind_restore(&f, mark);
         f.builder = NULL;
       }
 

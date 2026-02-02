@@ -143,6 +143,21 @@ add_test(
 )
 
 add_test(
+  NAME sircc_emit_llvm_alloca_op
+  COMMAND sircc ${CMAKE_CURRENT_LIST_DIR}/examples/alloca_op.sir.jsonl -o ${CMAKE_CURRENT_BINARY_DIR}/alloca_op.ll --emit-llvm
+)
+
+add_test(
+  NAME sircc_emit_llvm_alloca_count_ref
+  COMMAND sircc ${CMAKE_CURRENT_LIST_DIR}/examples/alloca_count_ref.sir.jsonl -o ${CMAKE_CURRENT_BINARY_DIR}/alloca_count_ref.ll --emit-llvm
+)
+
+add_test(
+  NAME sircc_emit_llvm_eff_fence
+  COMMAND sircc ${CMAKE_CURRENT_LIST_DIR}/examples/eff_fence.sir.jsonl -o ${CMAKE_CURRENT_BINARY_DIR}/eff_fence.ll --emit-llvm
+)
+
+add_test(
   NAME sircc_verify_reject_cfg_early_term
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_bad_early_term.sir.jsonl
 )

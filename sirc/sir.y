@@ -87,7 +87,7 @@ params_opt
 
 params
   : param
-  | params ',' param
+  | params comma_sep param
   ;
 
 param
@@ -119,6 +119,7 @@ stmt_list
 stmt
   : let_stmt nl_opt
   | return_stmt nl_opt
+  | term_stmt nl_opt
   | expr_stmt nl_opt
   | block_stmt                   /* blocks include their own ends */
   ;
@@ -133,6 +134,25 @@ return_stmt
 
 expr_stmt
   : expr
+  ;
+
+term_stmt
+  : T_TERM '.' T_ID term_fields_opt
+  ;
+
+term_fields_opt
+  : /* empty */
+  | term_fields
+  ;
+
+term_fields
+  : term_field
+  | term_fields comma_sep term_field
+  ;
+
+term_field
+  : obj_key ':' value
+  | T_TO value
   ;
 
 block_stmt
@@ -150,12 +170,16 @@ expr
   ;
 
 call_expr
-  : dotted_name '(' args_opt ')'
+  : dotted_name '(' nl_opt args_opt nl_opt ')'
   ;
 
 dotted_name
   : T_ID
   | dotted_name '.' T_ID
+  ;
+
+comma_sep
+  : ',' nl_opt
   ;
 
 args_opt
@@ -165,13 +189,14 @@ args_opt
 
 args
   : expr
-  | args ',' expr
+  | args comma_sep expr
   ;
 
 /* ---- values / literals ---- */
 
 value
   : typed_int
+  | T_INT
   | T_BOOL
   | T_STRING
   | ref_value
@@ -189,7 +214,7 @@ ref_value
   ;
 
 array_lit
-  : '[' array_elems_opt ']'
+  : '[' nl_opt array_elems_opt nl_opt ']'
   ;
 
 array_elems_opt
@@ -199,11 +224,11 @@ array_elems_opt
 
 array_elems
   : value
-  | array_elems ',' value
+  | array_elems comma_sep value
   ;
 
 object_lit
-  : '{' obj_fields_opt '}'
+  : '{' nl_opt obj_fields_opt nl_opt '}'
   ;
 
 obj_fields_opt
@@ -213,11 +238,22 @@ obj_fields_opt
 
 obj_fields
   : obj_field
-  | obj_fields ',' obj_field
+  | obj_fields comma_sep obj_field
+  ;
+
+obj_key
+  : T_ID
+  | T_TO
+  | T_ARGS
+  | T_COND
+  | T_THEN
+  | T_ELSE
+  | T_VALUE
   ;
 
 obj_field
-  : T_ID ':' value
+  : obj_key ':' value
+  | T_TO value              /* sugar: { to done, args:[x] } */
   ;
 
 /* ---- types ---- */
