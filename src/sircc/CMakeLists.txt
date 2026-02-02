@@ -68,6 +68,16 @@ add_test(
 )
 
 add_test(
+  NAME sircc_verify_cfg_if
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_if.sir.jsonl
+)
+
+add_test(
+  NAME sircc_verify_cfg_switch
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_switch.sir.jsonl
+)
+
+add_test(
   NAME sircc_verify_reject_unknown_field
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/bad_unknown_field.sir.jsonl
 )

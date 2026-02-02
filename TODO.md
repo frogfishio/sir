@@ -105,8 +105,8 @@ Implement in the same order as below (earlier items unblock later ones). Each bu
 - [ ] `term.ret` / `term.unreachable` (or the table’s exact terminators) with CFG validation (implemented: `term.ret`, `term.unreachable`, `term.trap`)
 
 ### 3.13 Control flow (terminators) — 7
-- [ ] `term.br`, `term.condbr`, `term.switch`, etc. (exact names per table)
-- [ ] Enforce “no implicit fallthrough” rule (every block must end in a terminator)
+- [ ] `term.br`, `term.condbr`, `term.switch`, etc. (exact names per table) (implemented: `term.br`, `term.cbr`, `term.switch` in CFG-form `fn`; TODO: block args + `term.invoke`/`term.resume`)
+- [ ] Enforce “no implicit fallthrough” rule (every block must end in a terminator) (implemented for CFG blocks; TODO: full validator coverage)
 
 ## Milestone 4 — Mnemonics: Feature-gated packages
 
