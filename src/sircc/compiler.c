@@ -1588,6 +1588,81 @@ static LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     goto done;
   }
 
+  if (strcmp(n->tag, "decl.fn") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: decl.fn node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+    const char* name = json_get_string(json_obj_get(n->fields, "name"));
+    if (!name || !is_ident(name)) {
+      errf(f->p, "sircc: decl.fn node %lld requires fields.name Ident", (long long)node_id);
+      goto done;
+    }
+
+    int64_t sig_id = n->type_ref;
+    if (sig_id == 0) {
+      if (!parse_type_ref_id(json_obj_get(n->fields, "sig"), &sig_id)) {
+        errf(f->p, "sircc: decl.fn node %lld requires type_ref or fields.sig (fn type ref)", (long long)node_id);
+        goto done;
+      }
+    }
+    LLVMTypeRef fnty = lower_type(f->p, f->ctx, sig_id);
+    if (!fnty || LLVMGetTypeKind(fnty) != LLVMFunctionTypeKind) {
+      errf(f->p, "sircc: decl.fn node %lld signature must be a fn type (type %lld)", (long long)node_id, (long long)sig_id);
+      goto done;
+    }
+
+    LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
+    if (!fn) {
+      fn = LLVMAddFunction(f->mod, name, fnty);
+      LLVMSetLinkage(fn, LLVMExternalLinkage);
+    } else {
+      LLVMTypeRef have = LLVMGlobalGetValueType(fn);
+      if (have != fnty) {
+        errf(f->p, "sircc: decl.fn '%s' type mismatch vs existing declaration/definition", name);
+        goto done;
+      }
+    }
+    out = fn;
+    goto done;
+  }
+
+  if (strcmp(n->tag, "cstr") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: cstr node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+    const char* s = json_get_string(json_obj_get(n->fields, "value"));
+    if (!s) {
+      errf(f->p, "sircc: cstr node %lld requires fields.value string", (long long)node_id);
+      goto done;
+    }
+
+    size_t len = strlen(s);
+    LLVMValueRef init = LLVMConstStringInContext2(f->ctx, s, len, 0);
+    LLVMTypeRef aty = LLVMTypeOf(init); // [len+1 x i8]
+
+    char gname[64];
+    snprintf(gname, sizeof(gname), ".str.%lld", (long long)node_id);
+    LLVMValueRef g = LLVMGetNamedGlobal(f->mod, gname);
+    if (!g) {
+      g = LLVMAddGlobal(f->mod, aty, gname);
+      LLVMSetInitializer(g, init);
+      LLVMSetGlobalConstant(g, 1);
+      LLVMSetLinkage(g, LLVMPrivateLinkage);
+      LLVMSetUnnamedAddress(g, LLVMGlobalUnnamedAddr);
+      LLVMSetAlignment(g, 1);
+    }
+
+    LLVMTypeRef i32 = LLVMInt32TypeInContext(f->ctx);
+    LLVMValueRef idxs[2] = {LLVMConstInt(i32, 0, 0), LLVMConstInt(i32, 0, 0)};
+    LLVMValueRef p = LLVMBuildInBoundsGEP2(f->builder, aty, g, idxs, 2, "cstr");
+
+    LLVMTypeRef i8p = LLVMPointerType(LLVMInt8TypeInContext(f->ctx), 0);
+    out = LLVMBuildBitCast(f->builder, p, i8p, "cstr.ptr");
+    goto done;
+  }
+
   if (strcmp(n->tag, "binop.add") == 0) {
     JsonValue* lhs = n->fields ? json_obj_get(n->fields, "lhs") : NULL;
     JsonValue* rhs = n->fields ? json_obj_get(n->fields, "rhs") : NULL;

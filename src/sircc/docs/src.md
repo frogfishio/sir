@@ -5,7 +5,6 @@
 This repo’s “shipable bundle” is produced by the build target `dist`, which creates:
 
 - `dist/bin/<os>/sircc` (the compiler binary)
-- `dist/bin/<os>/sirc` (a convenience copy of the same binary)
 - `dist/test/` (a small normative example set you can run immediately)
 
 ## Quickstart
@@ -40,4 +39,3 @@ Notes:
 - `--emit-llvm` writes LLVM IR (`.ll`)
 - `--emit-obj` writes an object file (`.o`)
 - if `meta.ext.target.triple` is present, it is used unless `--target-triple` overrides it
-
