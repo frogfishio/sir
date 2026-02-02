@@ -190,8 +190,10 @@ STR_UNTERM2  \"([^\"\\\n]|\\.)*<<EOF>>
 "term"                      { col_advance(); return T_TERM; }
 "to"                        { col_advance(); return T_TO; }
 "args"                      { col_advance(); return T_ARGS; }
+"cond"                      { col_advance(); return T_COND; }
 "then"                      { col_advance(); return T_THEN; }
 "else"                      { col_advance(); return T_ELSE; }
+"value"                     { col_advance(); return T_VALUE; }
 
 /* multi-char operators */
 "->"                        { col_advance(); return T_ARROW; }
