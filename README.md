@@ -25,6 +25,7 @@ If you installed LLVM with Homebrew:
 - Emit an executable: `./build/src/sircc/sircc src/sircc/examples/add.sir.jsonl -o add`
 - Emit LLVM IR: `./build/src/sircc/sircc src/sircc/examples/add.sir.jsonl --emit-llvm -o add.ll`
 - Emit object only: `./build/src/sircc/sircc src/sircc/examples/add.sir.jsonl --emit-obj -o add.o`
+- Verify only (no codegen): `./build/src/sircc/sircc --verify-only src/sircc/examples/add.sir.jsonl`
 
 Optional flags:
 

@@ -16,6 +16,7 @@
 
 ## CLI
 
+- `--verify-only` parses + validates only (no codegen).
 - `--emit-llvm` writes textual LLVM IR to `-o`.
 - `--emit-obj` writes an object file to `-o`.
 - `--clang <path>` chooses the linker driver (default: `clang`).

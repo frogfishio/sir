@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "compiler.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <string.h>
 
 static void usage(FILE* out) {
   fprintf(out,
-          "Usage: sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj] [--clang <path>] [--target-triple "
-          "<triple>]\n");
+          "Usage:\n"
+          "  sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj] [--clang <path>] [--target-triple <triple>]\n"
+          "  sircc --verify-only <input.sir.jsonl>\n"
+          "  sircc --dump-records --verify-only <input.sir.jsonl>\n"
+          "  sircc --version\n");
 }
 
 int main(int argc, char** argv) {
@@ -19,6 +23,8 @@ int main(int argc, char** argv) {
       .emit = SIRCC_EMIT_EXE,
       .clang_path = NULL,
       .target_triple = NULL,
+      .verify_only = false,
+      .dump_records = false,
   };
 
   for (int i = 1; i < argc; i++) {
@@ -27,6 +33,18 @@ int main(int argc, char** argv) {
     if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
       usage(stdout);
       return 0;
+    }
+    if (strcmp(a, "--version") == 0) {
+      printf("sircc %s\n", SIRCC_VERSION);
+      return 0;
+    }
+    if (strcmp(a, "--verify-only") == 0) {
+      opt.verify_only = true;
+      continue;
+    }
+    if (strcmp(a, "--dump-records") == 0) {
+      opt.dump_records = true;
+      continue;
     }
     if (strcmp(a, "--emit-llvm") == 0) {
       opt.emit = SIRCC_EMIT_LLVM_IR;
@@ -76,7 +94,11 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  if (!opt.input_path || !opt.output_path) {
+  if (!opt.input_path) {
+    usage(stderr);
+    return 2;
+  }
+  if (!opt.verify_only && !opt.output_path) {
     usage(stderr);
     return 2;
   }

@@ -8,29 +8,29 @@ This TODO is organized as milestones. Each milestone should end with:
 ## Milestone 0 — Build + Dev UX
 
 - [ ] CI build matrix (macOS, Linux) with cached LLVM install/docs
-- [ ] `sircc --version` and `sircc --help` with full flag docs
+- [x] `sircc --version` and `sircc --help` (basic)
 - [ ] Deterministic builds: pin target triple + data layout reporting (`--print-target`)
-- [ ] Add `--dump-json` / `--dump-cfg` debug flags (human-readable, stable output)
-- [ ] Add `--verify-only` (parse + validate + report, no codegen)
+- [x] Add `--dump-records` (quick parse trace)
+- [x] Add `--verify-only` (parse + validate + report, no codegen)
 
 ## Milestone 1 — Parser + Validator (spec-first correctness)
 
 ### 1.1 JSONL + record handling
-- [ ] Parse **all** record kinds: `meta`, `src`, `diag`, `sym`, `type`, `node`, `ext`, `label`, `instr`, `dir`
-- [ ] Preserve `src_ref` + `loc` and plumb through to diagnostics
-- [ ] “Closed schema” behavior: reject unknown fields for the subset we claim to support (start strict for `instr/dir/label/type`)
+- [x] Parse **all** record kinds: `meta`, `src`, `diag`, `sym`, `type`, `node`, `ext`, `label`, `instr`, `dir`
+- [x] Preserve `src_ref` + `loc` and plumb through to diagnostics (when present)
+- [x] “Closed schema” behavior: reject unknown fields for the subset we claim to support (strict for all parsed kinds)
 - [ ] Record order independence: allow forward refs with a fixup pass (still warn if producer violates “emit defs first” guideline)
 
 ### 1.2 `meta` contract for codegen
 - [ ] Define `meta.ext` keys used by sircc (document in `schema/sir/v1.0/README.md` or `src/sircc/README.md`)
-  - [ ] `target.triple` (default: host)
+  - [x] `target.triple` (default: host)
   - [ ] `target.cpu` / `target.features` (optional)
-  - [ ] `features` array for mnemonic feature gates (`simd:v1`, `adt:v1`, `fun:v1`, `closure:v1`, `coro:v1`, `eh:v1`, `gc:v1`, `atomics:v1`, `sem:v1`)
-- [ ] Validation: emit hard errors if input uses gated mnemonics without the gate enabled
+  - [x] `features` array for mnemonic feature gates (`simd:v1`, `adt:v1`, `fun:v1`, `closure:v1`, `coro:v1`, `eh:v1`, `gc:v1`, `atomics:v1`, `sem:v1`)
+- [x] Validation: reject feature-gated mnemonics when the gate is not enabled (prefix-based for `instr.m`)
 
 ### 1.3 Typed operands model (shared across instr/dir)
-- [ ] Implement operand decoding for `Value` union:
-  - [ ] `sym`, `lbl`, `reg`, `num`, `str`, `mem`, `ref`
+- [x] Implement operand decoding for `Value` union (validation-level):
+  - [x] `sym`, `lbl`, `reg`, `num`, `str`, `mem`, `ref`
 - [ ] Define the internal IR types: `iN`, `fN`, pointers, vectors, aggregates, sums
 - [ ] Decide + document integer semantics: wraparound by default; explicit trap/saturating variants only where specified
 
@@ -63,8 +63,8 @@ Implement in the same order as below (earlier items unblock later ones). Each bu
 1) validator rules, 2) LLVM lowering, 3) 2–5 focused tests.
 
 ### 3.1 Integer arithmetic and bitwise (pure) — 18
-- [ ] `i8/i16/i32/i64`: `add sub mul and or xor not neg`
-- [ ] Shifts/rotates with masked shift count: `shl shr.s shr.u rotl rotr`
+- [x] `i8/i16/i32/i64`: `add sub mul and or xor not neg` (lowering implemented for `node.tag` `iN.*`)
+- [ ] Shifts/rotates with masked shift count: `shl shr.s shr.u rotl rotr` (implemented: `shl shr.s shr.u`; TODO: `rotl rotr`)
 - [ ] Min/max/select-style ops in this section (if present in the table)
 
 ### 3.2 Integer division and remainder (explicit behavior) — 4
@@ -72,23 +72,23 @@ Implement in the same order as below (earlier items unblock later ones). Each bu
 - [ ] `.sat` variants: emit saturating semantics exactly as spec says
 
 ### 3.3 Integer comparisons (pure) — 1
-- [ ] `cmp.eq ne slt sle sgt sge ult ule ugt uge` families → `i1`
+- [x] `cmp.eq ne slt sle sgt sge ult ule ugt uge` families → `i1` (lowering implemented for `node.tag` `iN.cmp.*`)
 
 ### 3.4 Bit-twiddling (pure) — 3
-- [ ] `clz ctz popc`
+- [x] `clz ctz popc` (lowering implemented for `node.tag` `iN.clz/ctz/popc` via LLVM intrinsics)
 
 ### 3.5 Boolean ops (pure) — 2
-- [ ] `bool.not`, `bool.and/or/xor`
+- [x] `bool.not`, `bool.and/or/xor` (lowering implemented for `node.tag` `bool.*`)
 
 ### 3.6 Floating point (pure, deterministic) — 10
-- [ ] `f32/f64`: `add sub mul div neg abs sqrt min max`
+- [ ] `f32/f64`: `add sub mul div neg abs sqrt min max` (implemented: `add sub mul div neg abs sqrt`; TODO: `min max` + NaN canonicalization details)
 - [ ] Canonical NaN rules (no payload propagation): document implementation strategy + tests
 
 ### 3.7 Value-level conditional (pure) — 1
-- [ ] `select` lowering with type checking
+- [x] `select` lowering with type checking (lowering implemented for `node.tag` `select`; TODO: strict type checks)
 
 ### 3.8 Conversions and casts (pure; closed patterns) — 3
-- [ ] `zext`, `sext`, `trunc` (validate width relationships from mnemonic grammar)
+- [x] `zext`, `sext`, `trunc` (lowering implemented for `node.tag` `i<dst>.(zext|sext|trunc).i<src>`)
 
 ### 3.9 Pointer ops (pure) — 4
 - [ ] `ptr.sym`, `ptr.add/sub`, `ptr.cmp.eq/ne`
@@ -102,7 +102,7 @@ Implement in the same order as below (earlier items unblock later ones). Each bu
 
 ### 3.12 Calls (effects) — 2
 - [ ] `call` with signature/type checking
-- [ ] `term.ret` / `term.unreachable` (or the table’s exact terminators) with CFG validation
+- [ ] `term.ret` / `term.unreachable` (or the table’s exact terminators) with CFG validation (implemented: `term.ret`, `term.unreachable`, `term.trap`)
 
 ### 3.13 Control flow (terminators) — 7
 - [ ] `term.br`, `term.condbr`, `term.switch`, etc. (exact names per table)

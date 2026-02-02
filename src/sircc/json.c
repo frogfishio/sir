@@ -5,6 +5,7 @@
 #include "sircc.h"
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct Parser {
@@ -332,6 +333,26 @@ JsonValue* json_obj_get(const JsonValue* obj, const char* key) {
   return obj_get_impl(obj, key);
 }
 
+bool json_obj_has_only_keys(const JsonValue* obj, const char* const* keys, size_t key_count, const char** out_bad) {
+  if (out_bad) *out_bad = NULL;
+  if (!obj || obj->type != JSON_OBJECT) return false;
+  for (size_t i = 0; i < obj->v.obj.len; i++) {
+    const char* k = obj->v.obj.items[i].key;
+    bool ok = false;
+    for (size_t j = 0; j < key_count; j++) {
+      if (strcmp(k, keys[j]) == 0) {
+        ok = true;
+        break;
+      }
+    }
+    if (!ok) {
+      if (out_bad) *out_bad = k;
+      return false;
+    }
+  }
+  return true;
+}
+
 const char* json_get_string(const JsonValue* v) {
   if (!v || v->type != JSON_STRING) return NULL;
   return v->v.s;
@@ -350,4 +371,3 @@ bool json_is_object(const JsonValue* v) {
 bool json_is_array(const JsonValue* v) {
   return v && v->type == JSON_ARRAY;
 }
-

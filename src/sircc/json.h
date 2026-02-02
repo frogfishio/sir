@@ -54,8 +54,8 @@ typedef struct JsonError {
 bool json_parse(Arena* arena, const char* input, JsonValue** out, JsonError* err);
 
 JsonValue* json_obj_get(const JsonValue* obj, const char* key);
+bool json_obj_has_only_keys(const JsonValue* obj, const char* const* keys, size_t key_count, const char** out_bad);
 const char* json_get_string(const JsonValue* v);
 bool json_get_i64(const JsonValue* v, int64_t* out);
 bool json_is_object(const JsonValue* v);
 bool json_is_array(const JsonValue* v);
-

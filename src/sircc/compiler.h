@@ -17,7 +17,8 @@ typedef struct SirccOptions {
   SirccEmitKind emit;
   const char* clang_path;
   const char* target_triple;
+  bool verify_only;
+  bool dump_records;
 } SirccOptions;
 
 bool sircc_compile(const SirccOptions* opt);
-
