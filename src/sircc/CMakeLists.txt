@@ -78,6 +78,11 @@ add_test(
 )
 
 add_test(
+  NAME sircc_verify_cfg_join_phi
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_join_phi.sir.jsonl
+)
+
+add_test(
   NAME sircc_verify_reject_unknown_field
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/bad_unknown_field.sir.jsonl
 )

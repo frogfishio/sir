@@ -1020,6 +1020,9 @@ static LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     errf(f->p, "sircc: unknown node id %lld", (long long)node_id);
     return NULL;
   }
+  if ((strcmp(n->tag, "param") == 0 || strcmp(n->tag, "bparam") == 0) && n->llvm_value) {
+    return n->llvm_value;
+  }
   if (n->llvm_value) return n->llvm_value;
   if (n->resolving) {
     errf(f->p, "sircc: cyclic node reference at %lld", (long long)node_id);
@@ -1587,6 +1590,65 @@ static LLVMBasicBlockRef bb_lookup(FunctionCtx* f, int64_t node_id) {
   return (i < f->p->nodes_cap) ? f->blocks_by_node[i] : NULL;
 }
 
+static bool add_block_args(FunctionCtx* f, LLVMBasicBlockRef from_bb, int64_t to_block_id, JsonValue* args) {
+  NodeRec* bn = get_node(f->p, to_block_id);
+  if (!bn || strcmp(bn->tag, "block") != 0) {
+    errf(f->p, "sircc: branch targets non-block node %lld", (long long)to_block_id);
+    return false;
+  }
+
+  JsonValue* params = bn->fields ? json_obj_get(bn->fields, "params") : NULL;
+  size_t pcount = 0;
+  if (params) {
+    if (params->type != JSON_ARRAY) {
+      errf(f->p, "sircc: block %lld params must be an array", (long long)to_block_id);
+      return false;
+    }
+    pcount = params->v.arr.len;
+  }
+
+  size_t acount = 0;
+  if (args) {
+    if (args->type != JSON_ARRAY) {
+      errf(f->p, "sircc: branch args must be an array");
+      return false;
+    }
+    acount = args->v.arr.len;
+  }
+
+  if (pcount != acount) {
+    errf(f->p, "sircc: block %lld param/arg count mismatch (params=%zu, args=%zu)", (long long)to_block_id, pcount,
+         acount);
+    return false;
+  }
+
+  for (size_t i = 0; i < pcount; i++) {
+    int64_t pid = 0;
+    if (!parse_node_ref_id(params->v.arr.items[i], &pid)) {
+      errf(f->p, "sircc: block %lld params[%zu] must be node refs", (long long)to_block_id, i);
+      return false;
+    }
+    NodeRec* pn = get_node(f->p, pid);
+    if (!pn || strcmp(pn->tag, "bparam") != 0 || !pn->llvm_value) {
+      errf(f->p, "sircc: block %lld params[%zu] must reference a lowered bparam node", (long long)to_block_id, i);
+      return false;
+    }
+
+    int64_t aid = 0;
+    if (!parse_node_ref_id(args->v.arr.items[i], &aid)) {
+      errf(f->p, "sircc: block %lld args[%zu] must be node refs", (long long)to_block_id, i);
+      return false;
+    }
+    LLVMValueRef av = lower_expr(f, aid);
+    if (!av) return false;
+
+    LLVMValueRef phi = pn->llvm_value;
+    LLVMAddIncoming(phi, &av, &from_bb, 1);
+  }
+
+  return true;
+}
+
 static bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
   NodeRec* n = get_node(f->p, node_id);
   if (!n) return false;
@@ -1608,10 +1670,7 @@ static bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     JsonValue* args = json_obj_get(n->fields, "args");
-    if (args && args->type == JSON_ARRAY && args->v.arr.len != 0) {
-      errf(f->p, "sircc: term.br block args not supported yet");
-      return false;
-    }
+    if (!add_block_args(f, LLVMGetInsertBlock(f->builder), bid, args)) return false;
     LLVMBuildBr(f->builder, bb);
     return true;
   }
@@ -1656,11 +1715,9 @@ static bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
 
     JsonValue* then_args = json_obj_get(thenb, "args");
     JsonValue* else_args = json_obj_get(elseb, "args");
-    if ((then_args && then_args->type == JSON_ARRAY && then_args->v.arr.len != 0) ||
-        (else_args && else_args->type == JSON_ARRAY && else_args->v.arr.len != 0)) {
-      errf(f->p, "sircc: term.cbr block args not supported yet");
-      return false;
-    }
+    LLVMBasicBlockRef from_bb = LLVMGetInsertBlock(f->builder);
+    if (!add_block_args(f, from_bb, then_id, then_args)) return false;
+    if (!add_block_args(f, from_bb, else_id, else_args)) return false;
 
     LLVMBuildCondBr(f->builder, cond, then_bb, else_bb);
     return true;
@@ -1699,6 +1756,8 @@ static bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
       errf(f->p, "sircc: term.switch default targets unknown block %lld", (long long)def_id);
       return false;
     }
+    JsonValue* def_args = json_obj_get(def, "args");
+    if (!add_block_args(f, LLVMGetInsertBlock(f->builder), def_id, def_args)) return false;
 
     JsonValue* cases = json_obj_get(n->fields, "cases");
     if (!cases || cases->type != JSON_ARRAY) {
@@ -1738,10 +1797,7 @@ static bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
       }
 
       JsonValue* args = json_obj_get(c, "args");
-      if (args && args->type == JSON_ARRAY && args->v.arr.len != 0) {
-        errf(f->p, "sircc: term.switch block args not supported yet");
-        return false;
-      }
+      if (!add_block_args(f, LLVMGetInsertBlock(f->builder), to_id, args)) return false;
 
       LLVMAddCase(sw, lit, to_bb);
     }
@@ -1924,6 +1980,7 @@ static bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod
       }
       LLVMValueRef pv = LLVMGetParam(fn, pi);
       LLVMSetValueName2(pv, pname, strlen(pname));
+      pn->llvm_value = pv;
       if (!bind_add(&f, pname, pv)) {
         errf(p, "sircc: duplicate binding for '%s' in fn %lld", pname, (long long)n->id);
         free(f.binds);
@@ -1991,14 +2048,51 @@ static bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod
         f.builder = builder;
         LLVMPositionBuilderAtEnd(builder, bb);
 
-        // Block params not supported yet.
+        // Block params: lowered as PHIs (to be populated by predecessors via branch args).
         JsonValue* params = bn->fields ? json_obj_get(bn->fields, "params") : NULL;
-        if (params && params->type == JSON_ARRAY && params->v.arr.len != 0) {
-          errf(p, "sircc: block params not supported yet (block %lld)", (long long)bid);
-          LLVMDisposeBuilder(builder);
-          free(f.blocks_by_node);
-          free(f.binds);
-          return false;
+        if (params) {
+          if (params->type != JSON_ARRAY) {
+            errf(p, "sircc: block %lld params must be an array", (long long)bid);
+            LLVMDisposeBuilder(builder);
+            free(f.blocks_by_node);
+            free(f.binds);
+            return false;
+          }
+          for (size_t pi = 0; pi < params->v.arr.len; pi++) {
+            int64_t pid = 0;
+            if (!parse_node_ref_id(params->v.arr.items[pi], &pid)) {
+              errf(p, "sircc: block %lld params[%zu] must be node refs", (long long)bid, pi);
+              LLVMDisposeBuilder(builder);
+              free(f.blocks_by_node);
+              free(f.binds);
+              return false;
+            }
+            NodeRec* pn = get_node(p, pid);
+            if (!pn || strcmp(pn->tag, "bparam") != 0) {
+              errf(p, "sircc: block %lld params[%zu] must reference bparam nodes", (long long)bid, pi);
+              LLVMDisposeBuilder(builder);
+              free(f.blocks_by_node);
+              free(f.binds);
+              return false;
+            }
+            if (pn->llvm_value) continue;
+            if (pn->type_ref == 0) {
+              errf(p, "sircc: bparam node %lld missing type_ref", (long long)pid);
+              LLVMDisposeBuilder(builder);
+              free(f.blocks_by_node);
+              free(f.binds);
+              return false;
+            }
+            LLVMTypeRef pty = lower_type(p, ctx, pn->type_ref);
+            if (!pty) {
+              errf(p, "sircc: bparam node %lld has invalid type_ref", (long long)pid);
+              LLVMDisposeBuilder(builder);
+              free(f.blocks_by_node);
+              free(f.binds);
+              return false;
+            }
+            pn->llvm_value = LLVMBuildPhi(builder, pty, "bparam");
+          }
         }
 
         JsonValue* stmts = bn->fields ? json_obj_get(bn->fields, "stmts") : NULL;
