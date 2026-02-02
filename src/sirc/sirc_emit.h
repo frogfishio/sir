@@ -9,6 +9,7 @@ typedef struct SircParamList SircParamList;
 typedef struct SircNodeList SircNodeList;
 typedef struct SircExprList SircExprList;
 typedef struct SircSwitchCaseList SircSwitchCaseList;
+typedef struct SircAttrList SircAttrList;
 
 // Diagnostics context (set by lexer).
 extern int sirc_last_line;
@@ -56,7 +57,22 @@ int64_t sirc_typed_float(double v, int64_t ty); // f32/f64
 
 char* sirc_dotted_join(char* a, char* b);
 char* sirc_colon_join(char* a, char* b);
-int64_t sirc_call(char* name, SircExprList* args);
+
+// Attribute tails (call/term metadata and flags)
+SircAttrList* sirc_attrs_empty(void);
+SircAttrList* sirc_attrs_merge(SircAttrList* a, SircAttrList* b);               // takes ownership of b
+SircAttrList* sirc_attrs_add_flag(SircAttrList* l, char* name);                 // takes ownership of name
+SircAttrList* sirc_attrs_add_field_scalar_str(SircAttrList* l, char* key, char* v); // takes ownership
+SircAttrList* sirc_attrs_add_field_scalar_int(SircAttrList* l, char* key, long long v); // takes ownership of key
+SircAttrList* sirc_attrs_add_field_scalar_bool(SircAttrList* l, char* key, int v); // takes ownership of key
+SircAttrList* sirc_attrs_add_flags_scalar_str(SircAttrList* l, char* key, char* v); // takes ownership
+SircAttrList* sirc_attrs_add_flags_scalar_int(SircAttrList* l, char* key, long long v); // takes ownership of key
+SircAttrList* sirc_attrs_add_flags_scalar_bool(SircAttrList* l, char* key, int v); // takes ownership of key
+SircAttrList* sirc_attrs_add_sig(SircAttrList* l, char* fn_name);               // takes ownership
+SircAttrList* sirc_attrs_add_count(SircAttrList* l, int64_t node_ref);
+void sirc_attrs_free(SircAttrList* l);
+
+int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs);
 int64_t sirc_select(int64_t ty, int64_t cond, int64_t then_v, int64_t else_v);
 int64_t sirc_ptr_sizeof(int64_t ty);
 int64_t sirc_ptr_alignof(int64_t ty);
@@ -71,6 +87,8 @@ int64_t sirc_term_br(char* to_block_name, SircExprList* args); // takes ownershi
 int64_t sirc_term_cbr(int64_t cond, char* then_block_name, char* else_block_name); // takes ownership
 int64_t sirc_term_switch(int64_t scrut, SircSwitchCaseList* cases, char* default_block_name); // takes ownership
 int64_t sirc_term_ret_opt(int has_value, int64_t value_node);
+int64_t sirc_term_unreachable(SircAttrList* attrs);
+int64_t sirc_term_trap(SircAttrList* attrs);
 
 int64_t sirc_block_def(char* name, SircParamList* bparams, SircNodeList* stmts); // takes ownership of name
 void sirc_fn_def_cfg(char* name, SircParamList* params, int64_t ret, int64_t entry_block, SircNodeList* blocks); // takes ownership of name

@@ -112,8 +112,16 @@ This is what we treat as “basic product” right now:
 - values: decimal float literals (`1.5` and `1.5:f64` / `1.5:f32`) (emitted as deterministic `const.f32/f64` bit-pattern records)
 - calls:
   - mnemonic calls via dotted names (e.g. `i32.add(a,b)`, `alloca.i32()`, `mem.copy(dst,src,len)`)
-  - `load.<ty>(addr)` / `store.<ty>(addr, value)` (emits proper `fields.addr/value` + inferred `align`)
+  - `load.<ty>(addr)` / `store.<ty>(addr, value)` (emits `fields.addr/value`; `align`/`vol` are optional via attributes)
   - `select(<ty>, cond, then, else)` (lowers to SIR `select`)
+  - attribute tail (flat, no braces):
+    - `+flag` ⇒ `fields.flags.flag=true`
+    - `flags key value` ⇒ `fields.flags.key=value` (e.g. `eff.fence() flags mode seqcst`)
+    - `key value` ⇒ `fields.key=value` (e.g. `term.trap code "bounds" msg "oob"`)
+    - `flags [a, b, c]` ⇒ sugar for `+a +b +c`
+    - special keys:
+      - `call.indirect(fp, ...) sig <fnname>` emits `call.indirect` with `fields.sig` taken from `<fnname>`’s signature
+      - `alloca(type) count <expr>` emits `alloca` with `fields.flags.count` as a node ref
 
 ## How lowering works (roughly)
 

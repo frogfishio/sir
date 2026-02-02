@@ -24,6 +24,7 @@ void yyerror(const char* s) {
   SircNodeList*  stmts;
   SircExprList*  args;
   SircSwitchCaseList* cases;
+  SircAttrList* attrs;
   int64_t       node;
 }
 
@@ -41,7 +42,9 @@ void yyerror(const char* s) {
 %token T_ARRAY
 %token T_PTR_SIZEOF T_PTR_ALIGNOF T_PTR_OFFSET
 %token T_TERM_BR T_TERM_CBR T_TERM_SWITCH T_TERM_RET
+%token T_TERM_UNREACHABLE T_TERM_TRAP
 %token T_SCRUT T_CASES T_DEFAULT T_LIT
+%token T_FLAGS T_COUNT
 
 /* declared in lexer (unused for now, but must exist) */
 %token T_FEATURES T_SIG T_DO
@@ -49,6 +52,7 @@ void yyerror(const char* s) {
 %token T_BLOCK T_TERM T_TO T_ARGS T_COND T_THEN T_ELSE T_VALUE
 
 %destructor { free($$); } T_ID T_STRING
+%destructor { sirc_attrs_free($$); } <attrs>
 
 %type <ty> type type_ctor
 %type <params> params_opt params
@@ -63,6 +67,10 @@ void yyerror(const char* s) {
 %type <cases> switch_cases_opt switch_cases
 %type <node> expr value int_lit float_lit dotted_or_call
 %type <s> dotted_name
+%type <attrs> attr_tail_opt attr_tail attr_item flags_list flags_id_list
+%type <i> attr_int
+%type <b> attr_bool
+%type <s> attr_ident
 
 %start program
 
@@ -164,6 +172,8 @@ term_stmt
   | term_cbr_stmt             { $$ = $1; }
   | term_switch_stmt          { $$ = $1; }
   | term_ret_stmt             { $$ = $1; }
+  | T_TERM_UNREACHABLE attr_tail_opt { $$ = sirc_term_unreachable($2); }
+  | T_TERM_TRAP attr_tail_opt        { $$ = sirc_term_trap($2); }
   ;
 
 term_args_opt
@@ -308,7 +318,55 @@ float_lit
 
 dotted_or_call
   : dotted_name                                { $$ = sirc_value_ident($1); }
-  | dotted_name '(' nl_star args_opt nl_star ')' { $$ = sirc_call($1, $4); }
+  | dotted_name '(' nl_star args_opt nl_star ')' attr_tail_opt { $$ = sirc_call($1, $4, $7); }
+  ;
+
+attr_tail_opt
+  : /* empty */                 { $$ = NULL; }
+  | attr_tail                   { $$ = $1; }
+  ;
+
+attr_tail
+  : attr_item                   { $$ = $1; }
+  | attr_tail attr_item         { $$ = sirc_attrs_merge($1, $2); }
+  ;
+
+attr_item
+  : '+' T_ID                    { $$ = sirc_attrs_add_flag(sirc_attrs_empty(), $2); }
+  | flags_list                  { $$ = $1; }
+  | T_FLAGS T_ID attr_int       { $$ = sirc_attrs_add_flags_scalar_int(sirc_attrs_empty(), $2, $3); }
+  | T_FLAGS T_ID T_STRING       { $$ = sirc_attrs_add_flags_scalar_str(sirc_attrs_empty(), $2, $3); }
+  | T_FLAGS T_ID attr_bool      { $$ = sirc_attrs_add_flags_scalar_bool(sirc_attrs_empty(), $2, $3); }
+  | T_FLAGS T_ID attr_ident     { $$ = sirc_attrs_add_flags_scalar_str(sirc_attrs_empty(), $2, $3); }
+  | T_ID attr_int               { $$ = sirc_attrs_add_field_scalar_int(sirc_attrs_empty(), $1, $2); }
+  | T_ID T_STRING               { $$ = sirc_attrs_add_field_scalar_str(sirc_attrs_empty(), $1, $2); }
+  | T_ID attr_bool              { $$ = sirc_attrs_add_field_scalar_bool(sirc_attrs_empty(), $1, $2); }
+  | T_ID attr_ident             { $$ = sirc_attrs_add_field_scalar_str(sirc_attrs_empty(), $1, $2); }
+  | T_SIG T_ID                  { $$ = sirc_attrs_add_sig(sirc_attrs_empty(), $2); }
+  | T_COUNT expr                { $$ = sirc_attrs_add_count(sirc_attrs_empty(), $2); }
+  ;
+
+flags_list
+  : T_FLAGS '[' nl_star flags_id_list nl_star ']'
+                                { $$ = $4; }
+  ;
+
+flags_id_list
+  : T_ID                        { $$ = sirc_attrs_add_flag(sirc_attrs_empty(), $1); }
+  | flags_id_list comma_sep T_ID { $$ = sirc_attrs_add_flag($1, $3); }
+  ;
+
+attr_int
+  : T_INT                       { $$ = $1; }
+  | T_INT ':' type              { $$ = $1; }
+  ;
+
+attr_bool
+  : T_BOOL                      { $$ = $1; }
+  ;
+
+attr_ident
+  : T_ID                        { $$ = $1; }
   ;
 
 type

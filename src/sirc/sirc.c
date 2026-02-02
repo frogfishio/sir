@@ -428,18 +428,6 @@ static int64_t emit_call_indirect(int64_t ret_type, int64_t sig_type, int64_t ca
   return id;
 }
 
-static int64_t emit_call_mnemonic(const char* tag, int64_t type_ref, const int64_t* args, size_t argc) {
-  int64_t id = emit_node_with_fields_begin(tag, type_ref);
-  emitf("\"args\":[");
-  for (size_t i = 0; i < argc; i++) {
-    if (i) emitf(",");
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)args[i]);
-  }
-  emitf("]");
-  emit_fields_end();
-  return id;
-}
-
 static int64_t emit_call_direct(int64_t ret_type, int64_t callee_fn_node, const int64_t* args, size_t argc) {
   int64_t id = emit_node_with_fields_begin("call", ret_type);
   emitf("\"callee\":{\"t\":\"ref\",\"id\":%lld},\"args\":[", (long long)callee_fn_node);
@@ -555,6 +543,42 @@ typedef struct SircExprList {
   size_t cap;
 } SircExprList;
 
+typedef enum AttrScalarKind {
+  ATTR_SCALAR_STR = 1,
+  ATTR_SCALAR_INT = 2,
+  ATTR_SCALAR_BOOL = 3,
+} AttrScalarKind;
+
+typedef struct AttrScalar {
+  AttrScalarKind kind;
+  union {
+    char* s;
+    long long i;
+    int b;
+  } v;
+} AttrScalar;
+
+typedef enum AttrKind {
+  ATTR_FLAG_BOOL = 1,    // +flag => fields.flags.flag = true
+  ATTR_FIELD_SCALAR = 2, // key v => fields[key] = v
+  ATTR_FLAGS_SCALAR = 3, // flags key v => fields.flags[key] = v
+  ATTR_SIG = 4,          // sig <fnname> (used by call.indirect)
+  ATTR_COUNT = 5,        // count <expr> (used by alloca)
+} AttrKind;
+
+typedef struct AttrItem {
+  AttrKind kind;
+  char* key; // flag name / field key / sig fn name
+  AttrScalar scalar;
+  int64_t node_ref;
+} AttrItem;
+
+typedef struct SircAttrList {
+  AttrItem* items;
+  size_t len;
+  size_t cap;
+} SircAttrList;
+
 static SircParamList* params_new(bool is_block) {
   SircParamList* p = (SircParamList*)calloc(1, sizeof(SircParamList));
   if (p) p->is_block = is_block;
@@ -644,6 +668,105 @@ SircExprList* sirc_args_append(SircExprList* l, int64_t n) {
   if (!l) l = exprlist_new();
   exprlist_add(l, n);
   return l;
+}
+
+static SircAttrList* attrs_new(void) {
+  SircAttrList* l = (SircAttrList*)calloc(1, sizeof(SircAttrList));
+  if (!l) die_at_last("sirc: out of memory");
+  return l;
+}
+
+static void attrs_reserve(SircAttrList* l, size_t add) {
+  if (!l) return;
+  size_t want = l->len + add;
+  if (want <= l->cap) return;
+  size_t nc = l->cap ? l->cap * 2 : 8;
+  while (nc < want) nc *= 2;
+  l->items = (AttrItem*)xrealloc(l->items, nc * sizeof(AttrItem));
+  l->cap = nc;
+}
+
+SircAttrList* sirc_attrs_empty(void) { return attrs_new(); }
+
+static SircAttrList* attrs_add_item(SircAttrList* l, AttrItem it) {
+  if (!l) l = attrs_new();
+  attrs_reserve(l, 1);
+  l->items[l->len++] = it;
+  return l;
+}
+
+SircAttrList* sirc_attrs_merge(SircAttrList* a, SircAttrList* b) {
+  if (!a) return b;
+  if (!b) return a;
+  if (!b->len) {
+    free(b->items);
+    free(b);
+    return a;
+  }
+  attrs_reserve(a, b->len);
+  memcpy(a->items + a->len, b->items, b->len * sizeof(AttrItem));
+  a->len += b->len;
+  free(b->items);
+  free(b);
+  return a;
+}
+
+SircAttrList* sirc_attrs_add_flag(SircAttrList* l, char* name) {
+  AttrItem it = {.kind = ATTR_FLAG_BOOL, .key = name};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_field_scalar_str(SircAttrList* l, char* key, char* v) {
+  AttrItem it = {.kind = ATTR_FIELD_SCALAR, .key = key, .scalar = {.kind = ATTR_SCALAR_STR, .v = {.s = v}}};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_field_scalar_int(SircAttrList* l, char* key, long long v) {
+  AttrItem it = {.kind = ATTR_FIELD_SCALAR, .key = key, .scalar = {.kind = ATTR_SCALAR_INT, .v = {.i = v}}};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_field_scalar_bool(SircAttrList* l, char* key, int v) {
+  AttrItem it = {.kind = ATTR_FIELD_SCALAR, .key = key, .scalar = {.kind = ATTR_SCALAR_BOOL, .v = {.b = v}}};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_flags_scalar_str(SircAttrList* l, char* key, char* v) {
+  AttrItem it = {.kind = ATTR_FLAGS_SCALAR, .key = key, .scalar = {.kind = ATTR_SCALAR_STR, .v = {.s = v}}};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_flags_scalar_int(SircAttrList* l, char* key, long long v) {
+  AttrItem it = {.kind = ATTR_FLAGS_SCALAR, .key = key, .scalar = {.kind = ATTR_SCALAR_INT, .v = {.i = v}}};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_flags_scalar_bool(SircAttrList* l, char* key, int v) {
+  AttrItem it = {.kind = ATTR_FLAGS_SCALAR, .key = key, .scalar = {.kind = ATTR_SCALAR_BOOL, .v = {.b = v}}};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_sig(SircAttrList* l, char* fn_name) {
+  AttrItem it = {.kind = ATTR_SIG, .key = fn_name};
+  return attrs_add_item(l, it);
+}
+
+SircAttrList* sirc_attrs_add_count(SircAttrList* l, int64_t node_ref) {
+  AttrItem it = {.kind = ATTR_COUNT, .node_ref = node_ref};
+  return attrs_add_item(l, it);
+}
+
+void sirc_attrs_free(SircAttrList* l) {
+  if (!l) return;
+  for (size_t i = 0; i < l->len; i++) {
+    AttrItem* it = &l->items[i];
+    if (it->key) free(it->key);
+    if ((it->kind == ATTR_FIELD_SCALAR || it->kind == ATTR_FLAGS_SCALAR) && it->scalar.kind == ATTR_SCALAR_STR && it->scalar.v.s) {
+      free(it->scalar.v.s);
+    }
+  }
+  free(l->items);
+  free(l);
 }
 
 int64_t sirc_value_ident(char* name) {
@@ -753,40 +876,98 @@ char* sirc_colon_join(char* a, char* b) {
 
 static bool has_dot(const char* s) { return s && strchr(s, '.') != NULL; }
 
-static unsigned natural_align_for_type_name(const char* tname) {
-  if (!tname) return 1;
-  if (strcmp(tname, "i8") == 0) return 1;
-  if (strcmp(tname, "i16") == 0) return 2;
-  if (strcmp(tname, "i32") == 0) return 4;
-  if (strcmp(tname, "i64") == 0) return 8;
-  if (strcmp(tname, "f32") == 0) return 4;
-  if (strcmp(tname, "f64") == 0) return 8;
-  if (strcmp(tname, "bool") == 0) return 1;
-  if (strcmp(tname, "ptr") == 0) return 8; // assumes 64-bit host for now
-  return 1;
-}
-
-static int64_t emit_load_node(const char* tname, int64_t type_ref, int64_t addr_node) {
-  char tag[32];
-  snprintf(tag, sizeof(tag), "load.%s", tname);
-  int64_t id = emit_node_with_fields_begin(tag, type_ref);
-  emitf("\"addr\":{\"t\":\"ref\",\"id\":%lld}", (long long)addr_node);
-  emitf(",\"align\":%u", natural_align_for_type_name(tname));
-  emit_fields_end();
-  return id;
-}
-
-static int64_t emit_store_node(const char* tname, int64_t addr_node, int64_t value_node) {
-  char tag[32];
-  snprintf(tag, sizeof(tag), "store.%s", tname);
-  int64_t id = emit_node_with_fields_begin(tag, 0);
-  emitf("\"addr\":{\"t\":\"ref\",\"id\":%lld},\"value\":{\"t\":\"ref\",\"id\":%lld}", (long long)addr_node, (long long)value_node);
-  emitf(",\"align\":%u", natural_align_for_type_name(tname));
-  emit_fields_end();
-  return id;
-}
-
 static void emit_type_ref_obj(int64_t ty) { emitf("{\"t\":\"ref\",\"k\":\"type\",\"id\":%lld}", (long long)ty); }
+
+static void emit_attr_scalar(const AttrScalar* s) {
+  if (!s) {
+    emitf("null");
+    return;
+  }
+  switch (s->kind) {
+    case ATTR_SCALAR_INT: emitf("%lld", (long long)s->v.i); return;
+    case ATTR_SCALAR_BOOL: emitf("%s", s->v.b ? "true" : "false"); return;
+    case ATTR_SCALAR_STR: json_write_escaped(g_emit.out, s->v.s ? s->v.s : ""); return;
+    default: emitf("null"); return;
+  }
+}
+
+typedef struct AttrAccum {
+  AttrItem* root;
+  size_t root_len;
+  AttrItem* flags;
+  size_t flags_len;
+  const char* sig_fn;
+  int64_t count_ref;
+  bool have_sig;
+  bool have_count;
+} AttrAccum;
+
+static void attrs_accum_init(AttrAccum* a) { memset(a, 0, sizeof(*a)); }
+
+static AttrItem* attrs_find_scalar_item(AttrItem* items, size_t n, const char* key) {
+  for (size_t i = 0; i < n; i++) {
+    if (items[i].key && strcmp(items[i].key, key) == 0) return &items[i];
+  }
+  return NULL;
+}
+
+static void attrs_accum_from_list(AttrAccum* acc, SircAttrList* l) {
+  attrs_accum_init(acc);
+  if (!l || !l->len) return;
+
+  for (size_t i = 0; i < l->len; i++) {
+    AttrItem* it = &l->items[i];
+    if (it->kind == ATTR_SIG) {
+      if (acc->have_sig) die_at_last("sirc: duplicate sig attribute");
+      acc->sig_fn = it->key;
+      acc->have_sig = true;
+    } else if (it->kind == ATTR_COUNT) {
+      if (acc->have_count) die_at_last("sirc: duplicate count attribute");
+      acc->count_ref = it->node_ref;
+      acc->have_count = true;
+    } else if (it->kind == ATTR_FIELD_SCALAR) {
+      acc->root_len++;
+    } else if (it->kind == ATTR_FLAG_BOOL || it->kind == ATTR_FLAGS_SCALAR) {
+      acc->flags_len++;
+    }
+  }
+
+  if (acc->root_len) acc->root = (AttrItem*)xmalloc(acc->root_len * sizeof(AttrItem));
+  if (acc->flags_len) acc->flags = (AttrItem*)xmalloc(acc->flags_len * sizeof(AttrItem));
+  size_t r = 0, f = 0;
+  for (size_t i = 0; i < l->len; i++) {
+    AttrItem* it = &l->items[i];
+    if (it->kind == ATTR_FIELD_SCALAR) acc->root[r++] = *it;
+    else if (it->kind == ATTR_FLAG_BOOL || it->kind == ATTR_FLAGS_SCALAR) acc->flags[f++] = *it;
+  }
+}
+
+static void attrs_accum_free(AttrAccum* acc) {
+  free(acc->root);
+  free(acc->flags);
+  attrs_accum_init(acc);
+}
+
+static bool attrs_has_any(const AttrAccum* a) {
+  return a && (a->root_len || a->flags_len || a->have_sig || a->have_count);
+}
+
+static void emit_flags_object(AttrItem* items, size_t n, bool leading_comma) {
+  if (!items || !n) return;
+  if (leading_comma) emitf(",");
+  emitf("\"flags\":{");
+  bool first = true;
+  for (size_t i = 0; i < n; i++) {
+    AttrItem* it = &items[i];
+    if (!it->key) continue;
+    if (!first) emitf(",");
+    first = false;
+    emitf("\"%s\":", it->key);
+    if (it->kind == ATTR_FLAG_BOOL) emitf("true");
+    else emit_attr_scalar(&it->scalar);
+  }
+  emitf("}");
+}
 
 void sirc_cfg_begin(void) {
   for (size_t i = 0; i < g_emit.blocks_len; i++) free(g_emit.blocks[i].name);
@@ -984,6 +1165,47 @@ int64_t sirc_term_ret_opt(int has_value, int64_t value_node) {
   return id;
 }
 
+static int64_t emit_term_simple_with_attrs(const char* tag, SircAttrList* attrs) {
+  AttrAccum acc;
+  attrs_accum_from_list(&acc, attrs);
+
+  int64_t id = emit_node_with_fields_begin(tag, 0);
+  bool first = true;
+
+  for (size_t i = 0; i < acc.root_len; i++) {
+    AttrItem* it = &acc.root[i];
+    if (!it->key) continue;
+    if (!first) emitf(",");
+    first = false;
+    emitf("\"%s\":", it->key);
+    emit_attr_scalar(&it->scalar);
+  }
+
+  if (acc.flags_len) {
+    emitf("%s\"flags\":{", first ? "" : ",");
+    bool ffirst = true;
+    for (size_t i = 0; i < acc.flags_len; i++) {
+      AttrItem* it = &acc.flags[i];
+      if (!it->key) continue;
+      if (!ffirst) emitf(",");
+      ffirst = false;
+      emitf("\"%s\":", it->key);
+      if (it->kind == ATTR_FLAG_BOOL) emitf("true");
+      else emit_attr_scalar(&it->scalar);
+    }
+    emitf("}");
+  }
+
+  emit_fields_end();
+  attrs_accum_free(&acc);
+  sirc_attrs_free(attrs);
+  return id;
+}
+
+int64_t sirc_term_unreachable(SircAttrList* attrs) { return emit_term_simple_with_attrs("term.unreachable", attrs); }
+
+int64_t sirc_term_trap(SircAttrList* attrs) { return emit_term_simple_with_attrs("term.trap", attrs); }
+
 int64_t sirc_block_def(char* name, SircParamList* bparams, SircNodeList* stmts) {
   if (!name) die_at_last("sirc: block requires a name");
   int64_t bid = block_id_for_name(name);
@@ -1097,9 +1319,21 @@ void sirc_fn_def_cfg(char* name, SircParamList* params, int64_t ret, int64_t ent
   }
 }
 
-int64_t sirc_call(char* name, SircExprList* args) {
+int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
   size_t argc = args ? args->len : 0;
   int64_t* argv = args ? args->nodes : NULL;
+
+  AttrAccum acc;
+  attrs_accum_from_list(&acc, attrs);
+
+#define SIRC_CALL_CLEANUP()            \
+  do {                                 \
+    free(name);                        \
+    if (args) free(args->nodes);       \
+    free(args);                        \
+    attrs_accum_free(&acc);            \
+    sirc_attrs_free(attrs);            \
+  } while (0)
 
   if (strcmp(name, "alloca") == 0) {
     if (argc < 1 || argc > 2) die_at_last("sirc: alloca(type[, count]) expected");
@@ -1107,45 +1341,113 @@ int64_t sirc_call(char* name, SircExprList* args) {
     if (!tname) die_at_last("sirc: alloca first arg must be a type name identifier");
     int64_t ty = type_from_name(tname);
 
+    int64_t count_ref = (argc == 2) ? argv[1] : 0;
+    if (acc.have_count) {
+      if (count_ref) die_at_last("sirc: alloca count specified twice (positional and tail)");
+      count_ref = acc.count_ref;
+    }
+
+    long long align_v = 0;
+    bool align_present = false;
+    AttrItem* al = attrs_find_scalar_item(acc.flags, acc.flags_len, "align");
+    if (!al) al = attrs_find_scalar_item(acc.root, acc.root_len, "align");
+    if (al && al->scalar.kind == ATTR_SCALAR_INT) {
+      align_present = true;
+      align_v = al->scalar.v.i;
+    }
+
     int64_t id = emit_node_with_fields_begin("alloca", 0);
     emitf("\"ty\":");
     emit_type_ref_obj(ty);
-    if (argc == 2) {
+
+    if (count_ref || align_present || acc.flags_len) {
       emitf(",\"flags\":{");
-      emitf("\"count\":{\"t\":\"ref\",\"id\":%lld}", (long long)argv[1]);
+      bool first = true;
+      if (count_ref) {
+        emitf("\"count\":{\"t\":\"ref\",\"id\":%lld}", (long long)count_ref);
+        first = false;
+      }
+      if (align_present) {
+        if (!first) emitf(",");
+        emitf("\"align\":%lld", (long long)align_v);
+        first = false;
+      }
+      for (size_t i = 0; i < acc.flags_len; i++) {
+        AttrItem* it = &acc.flags[i];
+        if (!it->key) continue;
+        if (strcmp(it->key, "align") == 0) continue;
+        if (!first) emitf(",");
+        emitf("\"%s\":", it->key);
+        if (it->kind == ATTR_FLAG_BOOL) emitf("true");
+        else emit_attr_scalar(&it->scalar);
+        first = false;
+      }
       emitf("}");
     }
+
+    emit_fields_end();
+    SIRC_CALL_CLEANUP();
+    return id;
+  }
+
+  if (strcmp(name, "call.indirect") == 0) {
+    if (argc < 1) die_at_last("sirc: call.indirect(fp, ...) requires at least 1 arg");
+    if (!acc.have_sig || !acc.sig_fn) die_at_last("sirc: call.indirect requires 'sig <fnname>' tail");
+    const FnEntry* fn = fn_find(acc.sig_fn);
+    if (!fn) die_at_last("sirc: call.indirect unknown sig function '%s'", acc.sig_fn);
+
+    int64_t id = emit_node_with_fields_begin("call.indirect", fn->ret_type);
+    emitf("\"sig\":{\"t\":\"ref\",\"id\":%lld},\"args\":[", (long long)fn->sig_type);
+    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)argv[0]);
+    for (size_t i = 1; i < argc; i++) emitf(",{\"t\":\"ref\",\"id\":%lld}", (long long)argv[i]);
+    emitf("]");
+
+    // allow optional extra fields/flags (rare, but consistent)
+    for (size_t i = 0; i < acc.root_len; i++) {
+      AttrItem* it = &acc.root[i];
+      if (!it->key) continue;
+      emitf(",\"%s\":", it->key);
+      emit_attr_scalar(&it->scalar);
+    }
+    if (acc.flags_len) emit_flags_object(acc.flags, acc.flags_len, true);
     emit_fields_end();
 
-    free(name);
-    free(args ? args->nodes : NULL);
-    free(args);
+    SIRC_CALL_CLEANUP();
     return id;
   }
 
   if (strncmp(name, "load.", 5) == 0) {
-    const char* tname = name + 5;
     if (argc != 1) die_at_last("sirc: %s requires 1 arg (addr)", name);
+    const char* tname = name + 5;
     int64_t ty = type_from_name(tname);
-    int64_t out = emit_load_node(tname, ty, argv[0]);
-    free(name);
-    free(args ? args->nodes : NULL);
-    free(args);
-    return out;
+    int64_t id = emit_node_with_fields_begin(name, ty);
+    emitf("\"addr\":{\"t\":\"ref\",\"id\":%lld}", (long long)argv[0]);
+    AttrItem* a = attrs_find_scalar_item(acc.root, acc.root_len, "align");
+    if (a && a->scalar.kind == ATTR_SCALAR_INT) emitf(",\"align\":%lld", (long long)a->scalar.v.i);
+    AttrItem* v = attrs_find_scalar_item(acc.root, acc.root_len, "vol");
+    if (v && v->scalar.kind == ATTR_SCALAR_BOOL) emitf(",\"vol\":%s", v->scalar.v.b ? "true" : "false");
+    emit_fields_end();
+    SIRC_CALL_CLEANUP();
+    return id;
   }
+
   if (strncmp(name, "store.", 6) == 0) {
-    const char* tname = name + 6;
     if (argc != 2) die_at_last("sirc: %s requires 2 args (addr, value)", name);
-    int64_t out = emit_store_node(tname, argv[0], argv[1]);
-    free(name);
-    free(args ? args->nodes : NULL);
-    free(args);
-    return out;
+    int64_t id = emit_node_with_fields_begin(name, 0);
+    emitf("\"addr\":{\"t\":\"ref\",\"id\":%lld},\"value\":{\"t\":\"ref\",\"id\":%lld}", (long long)argv[0], (long long)argv[1]);
+    AttrItem* a = attrs_find_scalar_item(acc.root, acc.root_len, "align");
+    if (a && a->scalar.kind == ATTR_SCALAR_INT) emitf(",\"align\":%lld", (long long)a->scalar.v.i);
+    AttrItem* v = attrs_find_scalar_item(acc.root, acc.root_len, "vol");
+    if (v && v->scalar.kind == ATTR_SCALAR_BOOL) emitf(",\"vol\":%s", v->scalar.v.b ? "true" : "false");
+    emit_fields_end();
+    SIRC_CALL_CLEANUP();
+    return id;
   }
 
   if (!has_dot(name)) {
     const FnEntry* fn = fn_find(name);
     if (!fn) die_at_last("sirc: unknown function '%s'", name);
+    if (attrs_has_any(&acc)) die_at_last("sirc: attribute tail not supported on direct function calls");
     int64_t call = 0;
     if (fn->is_extern) {
       int64_t callee = emit_decl_fn_node(name, fn->sig_type);
@@ -1155,18 +1457,37 @@ int64_t sirc_call(char* name, SircExprList* args) {
     } else {
       die_at_last("sirc: function '%s' is not callable (missing definition?)", name);
     }
-    free(name);
-    free(args ? args->nodes : NULL);
-    free(args);
+    SIRC_CALL_CLEANUP();
     return call;
   }
 
   // mnemonic-style call: tag is the dotted name.
-  int64_t call = emit_call_mnemonic(name, 0, argv, argc);
-  free(name);
-  free(args ? args->nodes : NULL);
-  free(args);
-  return call;
+  int64_t id = emit_node_with_fields_begin(name, 0);
+  bool first = true;
+  if (argc) {
+    emitf("\"args\":[");
+    for (size_t i = 0; i < argc; i++) {
+      if (i) emitf(",");
+      emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)argv[i]);
+    }
+    emitf("]");
+    first = false;
+  }
+  for (size_t i = 0; i < acc.root_len; i++) {
+    AttrItem* it = &acc.root[i];
+    if (!it->key) continue;
+    emitf("%s\"%s\":", first ? "" : ",", it->key);
+    emit_attr_scalar(&it->scalar);
+    first = false;
+  }
+  if (acc.flags_len) {
+    emit_flags_object(acc.flags, acc.flags_len, !first);
+    first = false;
+  }
+  emit_fields_end();
+
+  SIRC_CALL_CLEANUP();
+  return id;
 }
 
 int64_t sirc_stmt_let(char* name, int64_t ty, int64_t value) {

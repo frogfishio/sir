@@ -216,8 +216,12 @@ STR_UNTERM1  \"([^\"\\\n]|\\.)*\n
 "term.condbr"               { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_TERM_CBR; }
 "term.switch"               { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_TERM_SWITCH; }
 "term.ret"                  { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_TERM_RET; }
+"term.unreachable"          { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_TERM_UNREACHABLE; }
+"term.trap"                 { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_TERM_TRAP; }
 
 "scrut"                     { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_SCRUT; }
+"flags"                     { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_FLAGS; }
+"count"                     { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_COUNT; }
 "cases"                     { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_CASES; }
 "default"                   { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_DEFAULT; }
 "lit"                       { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_LIT; }
