@@ -25,6 +25,49 @@ static bool emit_ld(FILE* out, const char* dst_reg, const ZasmOp* src, int64_t l
   return true;
 }
 
+static const char* call_arg_reg(size_t idx1) {
+  // ZASM64 Lembeh ABI ordering: HL, DE, BC, IX
+  switch (idx1) {
+    case 1:
+      return "HL";
+    case 2:
+      return "DE";
+    case 3:
+      return "BC";
+    case 4:
+      return "IX";
+    default:
+      return NULL;
+  }
+}
+
+static bool emit_load_slot_into_reg(FILE* out, const char* dst_reg, const ZasmOp* slot, int64_t line_no) {
+  if (!out || !dst_reg || !slot || slot->k != ZOP_SLOT || !slot->s) return false;
+
+  ZasmOp base = {.k = ZOP_SYM, .s = slot->s};
+  if (slot->n == 1) {
+    zasm_write_ir_k(out, "instr");
+    fprintf(out, ",\"m\":\"LD8U\",\"ops\":[");
+    zasm_write_op_reg(out, dst_reg);
+    fprintf(out, ",");
+    zasm_write_op_mem(out, &base, 0, 1);
+    fprintf(out, "]");
+    zasm_write_loc(out, line_no);
+    fprintf(out, "}\n");
+    return true;
+  }
+
+  zasm_write_ir_k(out, "instr");
+  fprintf(out, ",\"m\":\"LD64\",\"ops\":[");
+  zasm_write_op_reg(out, dst_reg);
+  fprintf(out, ",");
+  zasm_write_op_mem(out, &base, 0, 8);
+  fprintf(out, "]");
+  zasm_write_loc(out, line_no);
+  fprintf(out, "}\n");
+  return true;
+}
+
 bool zasm_emit_call_stmt(
     FILE* out,
     SirProgram* p,
@@ -67,9 +110,21 @@ bool zasm_emit_call_stmt(
       return false;
     }
     ZasmOp op = {0};
-    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, aid, &op) || !zasm_op_is_value(&op)) {
-      errf(p, "sircc: zasm: %s node %lld arg[%zu] unsupported", n->tag, (long long)call_id, i);
-      return false;
+    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, aid, &op)) return false;
+
+    if (!zasm_op_is_value(&op)) {
+      if (op.k != ZOP_SLOT) {
+        errf(p, "sircc: zasm: %s node %lld arg[%zu] unsupported", n->tag, (long long)call_id, i);
+        return false;
+      }
+      const char* reg = call_arg_reg(i);
+      if (!reg) {
+        errf(p, "sircc: zasm: %s node %lld has too many args for current ABI model", n->tag, (long long)call_id);
+        return false;
+      }
+      if (!emit_load_slot_into_reg(out, reg, &op, line_no)) return false;
+      op.k = ZOP_REG;
+      op.s = reg;
     }
     fprintf(out, ",");
     if (!zasm_write_op(out, &op)) return false;
@@ -331,6 +386,7 @@ bool zasm_emit_ret_value_to_hl(
 
   ZasmOp rop = {0};
   if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, value_id, &rop)) return false;
+  if (rop.k == ZOP_SLOT) return emit_load_slot_into_reg(out, "HL", &rop, line_no);
   if (rop.k == ZOP_NUM || rop.k == ZOP_SYM) return emit_ld(out, "HL", &rop, line_no);
   if (rop.k == ZOP_REG) {
     if (!rop.s || strcmp(rop.s, "HL") == 0) return true;

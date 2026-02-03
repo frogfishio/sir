@@ -65,8 +65,10 @@ bool zasm_write_op(FILE* out, const ZasmOp* op) {
     case ZOP_NUM:
       zasm_write_op_num(out, op->n);
       return true;
+    case ZOP_SLOT:
+      // Slots are not valid as direct operands; caller must materialize into a reg or mem operand.
+      return false;
     default:
       return false;
   }
 }
-

@@ -405,6 +405,17 @@ add_test(
 )
 
 add_test(
+  NAME sircc_emit_zasm_name_call_result_spills
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/zasm_name_call_result_return.sir.jsonl
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/zasm_name_call_result_return.zasm.jsonl
+    "-DEXPECT=\"m\":\"ST64\""
+    "-DEXPECT2=\"m\":\"LD64\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_expect_contains.cmake
+)
+
+add_test(
   NAME sircc_verify_reject_cfg_early_term
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_bad_early_term.sir.jsonl
 )

@@ -17,6 +17,7 @@ typedef enum {
   ZOP_SYM,
   ZOP_LBL,
   ZOP_NUM,
+  ZOP_SLOT,
 } ZasmOpKind;
 
 typedef struct {
@@ -40,7 +41,9 @@ typedef struct {
 
 typedef struct {
   const char* name;
+  bool is_slot;
   ZasmOp op;
+  int64_t slot_size_bytes;
 } ZasmNameBinding;
 
 // emit helpers

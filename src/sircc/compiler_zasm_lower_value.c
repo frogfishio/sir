@@ -105,6 +105,12 @@ bool zasm_lower_value_to_op(
     }
     for (size_t i = 0; i < names_len; i++) {
       if (names[i].name && strcmp(names[i].name, name) == 0) {
+        if (names[i].is_slot) {
+          out->k = ZOP_SLOT;
+          out->s = names[i].op.s;
+          out->n = names[i].slot_size_bytes;
+          return true;
+        }
         *out = names[i].op;
         return true;
       }
