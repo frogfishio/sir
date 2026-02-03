@@ -1,16 +1,19 @@
-
 # SIRC - Sir Compiler
 
-**SIRC turns readable, reviewable “mid-level assembly” into a streaming, typed IR (SIR JSONL) you can pipe through real toolchains.**
+**SIRC turns a small, pleasant programming language (“.sir”) into SIR v1.0 — a well-specified, streaming, typed IR (JSONL) you can pipe through real toolchains.**
 
-Think: *write golden tests, repros, and low-level programs without drowning in JSON or raw assembly* — while keeping **full control over lowering**.
+SIR exists for the same reason every serious compiler stack has an IR: **one stable, language-agnostic representation** that many frontends can emit and many backends/tools can consume.
 
-**Why you’ll care**
+- **Decouple languages from targets:** frontends don’t need to know every backend, and backends don’t need to know every language.
+- **Reusable analysis + optimization:** build optimizers, reducers, linters, indexers, caches, and code generators once.
+- **Tooling hooks are first-class:** source spans + diagnostics travel with the program, not via side channels.
 
-- **Killer DX:** a tiny Oberon/Lua-ish syntax that still maps 1:1 to SIR records.
-- **Killer feature:** *total control over lowering* — inspect what abstractions become, tweak them, and teach the compiler cheaper patterns.
-- **Toolchain-native:** JSONL streaming (`cat | sirc | ...`) with source spans + diagnostics baked in.
-- **Correct-by-construction ergonomics:** typed ops + typed literals (`3:i32`) so ABI/width mistakes become diagnostics.
+**What’s different here (the pitch):**
+
+- **1:1 human ↔ machine:** the text form compiles into the same record shapes the pipeline already consumes (SIR JSONL).
+- **Streaming by design:** one record per line → stable diffs, grep/jq-friendly workflows, easy composition (`cat | sirc | …`).
+- **Much better DX:** the sugared syntax reads like a tiny Oberon/Lua-ish language while staying faithful to the IR.
+- **Killer feature:** *total control over lowering* — see what abstractions become, tweak them, patternise them, teach cheaper patterns.
 
 Quick taste:
 
@@ -184,7 +187,6 @@ becomes (schematically) a stream like:
 (The exact IDs/tags/fields are producer-defined details; the important part is that the output is a **typed, referenceable, streaming IR**.)
 
 If you only want a mnemonic-like view for debugging or a particular backend, that belongs either in `node.fields` (when it’s semantic) or in an `ext` record (when it’s tool/backend specific).
-
 
 ## Specimen program
 
