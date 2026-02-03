@@ -106,6 +106,9 @@ typedef struct NodeRec {
 typedef struct SirProgram {
   Arena arena;
 
+  const SirccOptions* opt;
+  int exit_code;
+
   const char* cur_path;
   size_t cur_line;
   const char* cur_kind;
@@ -140,14 +143,66 @@ typedef struct SirProgram {
   size_t nodes_cap;
 } SirProgram;
 
+static bool want_color(const SirccOptions* opt) {
+  if (!opt) return false;
+  if (opt->color == SIRCC_COLOR_NEVER) return false;
+  if (opt->color == SIRCC_COLOR_ALWAYS) return true;
+  // auto
+  if (!isatty(fileno(stderr))) return false;
+  const char* term = getenv("TERM");
+  if (!term || strcmp(term, "dumb") == 0) return false;
+  return true;
+}
+
+static void json_write_escaped(FILE* out, const char* s) {
+  fputc('"', out);
+  for (const unsigned char* p = (const unsigned char*)s; p && *p; p++) {
+    unsigned char c = *p;
+    switch (c) {
+      case '\\': fputs("\\\\", out); break;
+      case '"': fputs("\\\"", out); break;
+      case '\n': fputs("\\n", out); break;
+      case '\r': fputs("\\r", out); break;
+      case '\t': fputs("\\t", out); break;
+      default:
+        if (c < 0x20) fprintf(out, "\\u%04x", (unsigned)c);
+        else fputc((int)c, out);
+        break;
+    }
+  }
+  fputc('"', out);
+}
+
+static void bump_exit_code(SirProgram* p, int code) {
+  if (!p) return;
+  // Keep internal errors sticky, otherwise prefer toolchain over generic error.
+  if (p->exit_code == SIRCC_EXIT_INTERNAL) return;
+  if (code == SIRCC_EXIT_INTERNAL) {
+    p->exit_code = SIRCC_EXIT_INTERNAL;
+    return;
+  }
+  if (code == SIRCC_EXIT_TOOLCHAIN) {
+    p->exit_code = SIRCC_EXIT_TOOLCHAIN;
+    return;
+  }
+  if (p->exit_code == 0) p->exit_code = code;
+}
+
 static void errf(SirProgram* p, const char* fmt, ...) {
+  const SirccOptions* opt = p ? p->opt : NULL;
+  bool as_json = opt && opt->diagnostics == SIRCC_DIAG_JSON;
+  bool color = want_color(opt);
+
   va_list ap;
   va_start(ap, fmt);
-  if (p) {
-    const char* file = NULL;
-    int64_t line = 0;
-    int64_t col = 0;
 
+  // Determine best-effort location.
+  const char* file = NULL;
+  int64_t line = 0;
+  int64_t col = 0;
+  int64_t src_ref = -1;
+  if (p) {
+    src_ref = p->cur_src_ref;
     if (p->cur_loc.line > 0) {
       file = p->cur_loc.unit ? p->cur_loc.unit : p->cur_path;
       line = p->cur_loc.line;
@@ -163,7 +218,48 @@ static void errf(SirProgram* p, const char* fmt, ...) {
       file = p->cur_path;
       line = (int64_t)p->cur_line;
     }
+  }
 
+  // Format message once (so JSON mode can embed it).
+  int need = vsnprintf(NULL, 0, fmt, ap);
+  va_end(ap);
+  va_start(ap, fmt);
+  char* msg = NULL;
+  char stack_buf[512];
+  if (need >= 0 && (size_t)need < sizeof(stack_buf)) {
+    vsnprintf(stack_buf, sizeof(stack_buf), fmt, ap);
+    msg = stack_buf;
+  } else if (need >= 0) {
+    msg = (char*)malloc((size_t)need + 1);
+    if (msg) vsnprintf(msg, (size_t)need + 1, fmt, ap);
+  }
+  va_end(ap);
+
+  if (as_json) {
+    fprintf(stderr, "{\"ir\":\"sir-v1.0\",\"k\":\"diag\",\"level\":\"error\",\"msg\":");
+    json_write_escaped(stderr, msg ? msg : "(unknown)");
+    if (src_ref >= 0) fprintf(stderr, ",\"src_ref\":%lld", (long long)src_ref);
+    if (file || line > 0 || col > 0) {
+      fprintf(stderr, ",\"loc\":{");
+      bool any = false;
+      if (file) {
+        fprintf(stderr, "\"unit\":");
+        json_write_escaped(stderr, file);
+        any = true;
+      }
+      if (line > 0) {
+        if (any) fprintf(stderr, ",");
+        fprintf(stderr, "\"line\":%lld", (long long)line);
+        any = true;
+      }
+      if (col > 0) {
+        if (any) fprintf(stderr, ",");
+        fprintf(stderr, "\"col\":%lld", (long long)col);
+      }
+      fprintf(stderr, "}");
+    }
+    fprintf(stderr, "}\n");
+  } else {
     if (file) {
       if (line > 0) {
         if (col > 0) fprintf(stderr, "%s:%lld:%lld: ", file, (long long)line, (long long)col);
@@ -172,10 +268,12 @@ static void errf(SirProgram* p, const char* fmt, ...) {
         fprintf(stderr, "%s: ", file);
       }
     }
+    if (color) fprintf(stderr, "\x1b[31merror:\x1b[0m ");
+    else fprintf(stderr, "error: ");
+    fprintf(stderr, "%s\n", msg ? msg : "(unknown)");
   }
-  vfprintf(stderr, fmt, ap);
-  va_end(ap);
-  fputc('\n', stderr);
+
+  if (msg && msg != stack_buf) free(msg);
 }
 
 static bool ensure_src_slot(SirProgram* p, int64_t id) {
@@ -3830,23 +3928,69 @@ bool sircc_print_target(const char* triple) {
 
 static bool run_clang_link(SirProgram* p, const char* clang_path, const char* obj_path, const char* out_path) {
   const char* clang = clang_path ? clang_path : "clang";
+  const SirccOptions* opt = p ? p->opt : NULL;
+
+  if (opt && opt->verbose) {
+    fprintf(stderr, "sircc: link: %s -o %s %s\n", clang, out_path, obj_path);
+  }
 
   pid_t pid = fork();
   if (pid < 0) {
+    bump_exit_code(p, SIRCC_EXIT_INTERNAL);
     errf(p, "sircc: fork failed: %s", strerror(errno));
     return false;
   }
   if (pid == 0) {
     execlp(clang, clang, "-o", out_path, obj_path, (char*)NULL);
+    fprintf(stderr, "sircc: failed to exec '%s': %s\n", clang, strerror(errno));
     _exit(127);
   }
   int st = 0;
   if (waitpid(pid, &st, 0) < 0) {
+    bump_exit_code(p, SIRCC_EXIT_INTERNAL);
     errf(p, "sircc: waitpid failed: %s", strerror(errno));
     return false;
   }
   if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-    errf(p, "sircc: clang failed (exit=%d)", WIFEXITED(st) ? WEXITSTATUS(st) : 1);
+    int code = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
+    if (code == 127) bump_exit_code(p, SIRCC_EXIT_TOOLCHAIN);
+    errf(p, "sircc: clang failed (exit=%d)", code);
+    return false;
+  }
+  return true;
+}
+
+static bool run_strip(SirProgram* p, const char* exe_path) {
+  const SirccOptions* opt = p ? p->opt : NULL;
+  if (!opt || !opt->strip) return true;
+
+  const char* strip = "strip";
+  if (opt->verbose) {
+    fprintf(stderr, "sircc: strip: %s %s\n", strip, exe_path);
+  }
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    bump_exit_code(p, SIRCC_EXIT_INTERNAL);
+    errf(p, "sircc: fork failed: %s", strerror(errno));
+    return false;
+  }
+  if (pid == 0) {
+    execlp(strip, strip, exe_path, (char*)NULL);
+    fprintf(stderr, "sircc: failed to exec '%s': %s\n", strip, strerror(errno));
+    _exit(127);
+  }
+
+  int st = 0;
+  if (waitpid(pid, &st, 0) < 0) {
+    bump_exit_code(p, SIRCC_EXIT_INTERNAL);
+    errf(p, "sircc: waitpid failed: %s", strerror(errno));
+    return false;
+  }
+  if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+    int code = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
+    if (code == 127) bump_exit_code(p, SIRCC_EXIT_TOOLCHAIN);
+    errf(p, "sircc: strip failed (exit=%d)", code);
     return false;
   }
   return true;
@@ -4168,11 +4312,13 @@ static bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod
   return true;
 }
 
-bool sircc_compile(const SirccOptions* opt) {
-  if (!opt || !opt->input_path) return false;
-  if (!opt->verify_only && !opt->output_path) return false;
+int sircc_compile(const SirccOptions* opt) {
+  if (!opt || !opt->input_path) return SIRCC_EXIT_USAGE;
+  if (!opt->verify_only && !opt->output_path) return SIRCC_EXIT_USAGE;
 
   SirProgram p = {0};
+  p.opt = opt;
+  p.exit_code = SIRCC_EXIT_ERROR;
   arena_init(&p.arena);
   char* owned_triple = NULL;
 
@@ -4199,6 +4345,12 @@ bool sircc_compile(const SirccOptions* opt) {
   if (!use_triple) {
     owned_triple = LLVMGetDefaultTargetTriple();
     use_triple = owned_triple;
+  }
+
+  if (opt->require_pinned_triple && !opt->target_triple && !p.target_triple) {
+    errf(&p, "sircc: missing pinned target triple (set meta.ext.target.triple or pass --target-triple)");
+    ok = false;
+    goto done;
   }
 
   LLVMContextRef ctx = LLVMContextCreate();
@@ -4244,6 +4396,7 @@ bool sircc_compile(const SirccOptions* opt) {
 
   char tmp_obj[4096];
   if (!make_tmp_obj(tmp_obj, sizeof(tmp_obj))) {
+    bump_exit_code(&p, SIRCC_EXIT_INTERNAL);
     errf(&p, "sircc: failed to create temporary object path");
     LLVMDisposeModule(mod);
     LLVMContextDispose(ctx);
@@ -4261,6 +4414,7 @@ bool sircc_compile(const SirccOptions* opt) {
 
   ok = run_clang_link(&p, opt->clang_path, tmp_obj, opt->output_path);
   unlink(tmp_obj);
+  if (ok) ok = run_strip(&p, opt->output_path);
 
 done:
   if (owned_triple) LLVMDisposeMessage(owned_triple);
@@ -4269,5 +4423,5 @@ done:
   free(p.types);
   free(p.nodes);
   arena_free(&p.arena);
-  return ok;
+  return ok ? SIRCC_EXIT_OK : p.exit_code;
 }

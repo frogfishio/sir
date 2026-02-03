@@ -1,8 +1,31 @@
+
 # SIRC - Sir Compiler
 
-SIRC is the reference compiler for **SIR**.
+**SIRC turns readable, reviewable “mid-level assembly” into a streaming, typed IR (SIR JSONL) you can pipe through real toolchains.**
 
-It compiles a **small, readable, line-oriented language** ("SIRC", shown below) into **SIR v1.0 JSONL** — **one record per line**.
+Think: *write golden tests, repros, and low-level programs without drowning in JSON or raw assembly* — while keeping **full control over lowering**.
+
+**Why you’ll care**
+
+- **Killer DX:** a tiny Oberon/Lua-ish syntax that still maps 1:1 to SIR records.
+- **Killer feature:** *total control over lowering* — inspect what abstractions become, tweak them, and teach the compiler cheaper patterns.
+- **Toolchain-native:** JSONL streaming (`cat | sirc | ...`) with source spans + diagnostics baked in.
+- **Correct-by-construction ergonomics:** typed ops + typed literals (`3:i32`) so ABI/width mistakes become diagnostics.
+
+Quick taste:
+
+```sir
+unit u0 target wasm32 +agg:v1
+
+fn add(a:i32, b:i32) -> i32 public
+  return i32.add(a, b)
+end
+```
+
+---
+
+SIRC is the reference compiler for **SIR**.
+It compiles a **small, readable, line-oriented language** (“.sir”) into **SIR v1.0 JSONL** — **one record per line**.
 
 ## Why this exists
 

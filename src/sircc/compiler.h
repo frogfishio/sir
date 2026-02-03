@@ -11,6 +11,25 @@ typedef enum SirccEmitKind {
   SIRCC_EMIT_OBJ,
 } SirccEmitKind;
 
+typedef enum SirccExitCode {
+  SIRCC_EXIT_OK = 0,
+  SIRCC_EXIT_ERROR = 1,        // invalid input / validation / codegen / link failure
+  SIRCC_EXIT_INTERNAL = 2,     // internal error (OOM, invariants)
+  SIRCC_EXIT_TOOLCHAIN = 3,    // missing external tools (clang/strip)
+  SIRCC_EXIT_USAGE = 4,        // bad CLI args
+} SirccExitCode;
+
+typedef enum SirccDiagnosticsFormat {
+  SIRCC_DIAG_TEXT = 0,
+  SIRCC_DIAG_JSON = 1,
+} SirccDiagnosticsFormat;
+
+typedef enum SirccColorMode {
+  SIRCC_COLOR_AUTO = 0,
+  SIRCC_COLOR_ALWAYS = 1,
+  SIRCC_COLOR_NEVER = 2,
+} SirccColorMode;
+
 typedef struct SirccOptions {
   const char* input_path;
   const char* output_path;
@@ -20,7 +39,12 @@ typedef struct SirccOptions {
   bool verify_only;
   bool dump_records;
   bool print_target;
+  bool verbose;
+  bool strip;
+  bool require_pinned_triple;
+  SirccDiagnosticsFormat diagnostics;
+  SirccColorMode color;
 } SirccOptions;
 
-bool sircc_compile(const SirccOptions* opt);
+int sircc_compile(const SirccOptions* opt);
 bool sircc_print_target(const char* triple);

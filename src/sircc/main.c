@@ -4,6 +4,9 @@
 #include "compiler.h"
 #include "version.h"
 
+#include <llvm-c/Core.h>
+#include <llvm-c/TargetMachine.h>
+
 #include <stdio.h>
 #include <string.h>
 
@@ -14,7 +17,15 @@ static void usage(FILE* out) {
           "  sircc --verify-only <input.sir.jsonl>\n"
           "  sircc --dump-records --verify-only <input.sir.jsonl>\n"
           "  sircc --print-target [--target-triple <triple>]\n"
+          "  sircc [--diagnostics text|json] [--color auto|always|never] [--verbose] [--strip]\n"
+          "  sircc --require-pinned-triple ...\n"
           "  sircc --version\n");
+}
+
+static bool streq(const char* a, const char* b) { return a && b && strcmp(a, b) == 0; }
+
+static bool parse_enum_value(const char* v, const char* a, const char* b, const char* c) {
+  return streq(v, a) || streq(v, b) || (c && streq(v, c));
 }
 
 int main(int argc, char** argv) {
@@ -27,6 +38,11 @@ int main(int argc, char** argv) {
       .verify_only = false,
       .dump_records = false,
       .print_target = false,
+      .verbose = false,
+      .strip = false,
+      .require_pinned_triple = false,
+      .diagnostics = SIRCC_DIAG_TEXT,
+      .color = SIRCC_COLOR_AUTO,
   };
 
   for (int i = 1; i < argc; i++) {
@@ -37,7 +53,11 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (strcmp(a, "--version") == 0) {
-      printf("sircc %s\n", SIRCC_VERSION);
+      unsigned maj = 0, min = 0, pat = 0;
+      LLVMGetVersion(&maj, &min, &pat);
+      char* triple = LLVMGetDefaultTargetTriple();
+      printf("sircc %s (LLVM %u.%u.%u, default-triple=%s)\n", SIRCC_VERSION, maj, min, pat, triple ? triple : "(null)");
+      if (triple) LLVMDisposeMessage(triple);
       return 0;
     }
     if (strcmp(a, "--verify-only") == 0) {
@@ -79,15 +99,60 @@ int main(int argc, char** argv) {
     if (strcmp(a, "--target-triple") == 0) {
       if (i + 1 >= argc) {
         usage(stderr);
-        return 2;
+        return SIRCC_EXIT_USAGE;
       }
       opt.target_triple = argv[++i];
+      continue;
+    }
+    if (strcmp(a, "--verbose") == 0) {
+      opt.verbose = true;
+      continue;
+    }
+    if (strcmp(a, "--strip") == 0) {
+      opt.strip = true;
+      continue;
+    }
+    if (strcmp(a, "--require-pinned-triple") == 0) {
+      opt.require_pinned_triple = true;
+      continue;
+    }
+    if (strcmp(a, "--diagnostics") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      const char* v = argv[++i];
+      if (!parse_enum_value(v, "text", "json", NULL)) {
+        fprintf(stderr, "sircc: invalid --diagnostics value: %s\n", v);
+        return SIRCC_EXIT_USAGE;
+      }
+      opt.diagnostics = streq(v, "json") ? SIRCC_DIAG_JSON : SIRCC_DIAG_TEXT;
+      continue;
+    }
+    if (strncmp(a, "--color", 7) == 0) {
+      const char* v = NULL;
+      if (strcmp(a, "--color") == 0) {
+        if (i + 1 >= argc) {
+          usage(stderr);
+          return SIRCC_EXIT_USAGE;
+        }
+        v = argv[++i];
+      } else if (strncmp(a, "--color=", 8) == 0) {
+        v = a + 8;
+      }
+      if (!v || !parse_enum_value(v, "auto", "always", "never")) {
+        fprintf(stderr, "sircc: invalid --color value: %s\n", v ? v : "(missing)");
+        return SIRCC_EXIT_USAGE;
+      }
+      if (streq(v, "auto")) opt.color = SIRCC_COLOR_AUTO;
+      else if (streq(v, "always")) opt.color = SIRCC_COLOR_ALWAYS;
+      else opt.color = SIRCC_COLOR_NEVER;
       continue;
     }
     if (a[0] == '-') {
       fprintf(stderr, "sircc: unknown flag: %s\n", a);
       usage(stderr);
-      return 2;
+      return SIRCC_EXIT_USAGE;
     }
 
     if (!opt.input_path) {
@@ -97,7 +162,7 @@ int main(int argc, char** argv) {
 
     fprintf(stderr, "sircc: unexpected argument: %s\n", a);
     usage(stderr);
-    return 2;
+    return SIRCC_EXIT_USAGE;
   }
 
   if (opt.print_target) {
@@ -106,12 +171,12 @@ int main(int argc, char** argv) {
 
   if (!opt.input_path) {
     usage(stderr);
-    return 2;
+    return SIRCC_EXIT_USAGE;
   }
   if (!opt.verify_only && !opt.output_path) {
     usage(stderr);
-    return 2;
+    return SIRCC_EXIT_USAGE;
   }
 
-  return sircc_compile(&opt) ? 0 : 1;
+  return sircc_compile(&opt);
 }

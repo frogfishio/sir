@@ -39,6 +39,7 @@ sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj] [--clang <path>] [-
 sircc --verify-only <input.sir.jsonl>
 sircc --dump-records --verify-only <input.sir.jsonl>
 sircc --print-target [--target-triple <triple>]
+sircc [--diagnostics text|json] [--color auto|always|never] [--verbose] [--strip] ...
 sircc --version
 ```
 
@@ -47,3 +48,6 @@ Notes:
 - `--emit-llvm` writes LLVM IR (`.ll`)
 - `--emit-obj` writes an object file (`.o`)
 - if `meta.ext.target.triple` is present, it is used unless `--target-triple` overrides it
+ - `--strip` runs `strip` on the output executable (useful for smaller distrib artifacts)
+ - `--require-pinned-triple` fails if neither `--target-triple` nor `meta.ext.target.triple` is provided
+ - `--diagnostics json` emits errors as `diag` JSONL records (useful for tooling)

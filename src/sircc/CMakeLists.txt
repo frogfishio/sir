@@ -279,4 +279,14 @@ add_test(
   NAME sircc_verify_error_uses_src_ref
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/bad_src_ref.sir.jsonl
 )
+
+add_test(
+  NAME sircc_diag_json_unknown_field
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_unknown_field.sir.jsonl
+    -DEXPECT=\\\"k\\\":\\\"diag\\\"
+    -DEXPECT2=\\\"level\\\":\\\"error\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
 set_tests_properties(sircc_verify_error_uses_src_ref PROPERTIES WILL_FAIL TRUE)
