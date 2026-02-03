@@ -48,6 +48,9 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
   }
 
   int64_t line = 1;
+  size_t name_cap = 0;
+  size_t name_len = 0;
+  ZasmNameBinding* names = NULL;
 
   zasm_write_ir_k(out, "meta");
   fprintf(out, ",\"producer\":\"sircc\"");
@@ -119,6 +122,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
       free(strs);
       free(allocas);
       free(decls);
+      free(names);
       errf(p, "sircc: zasm: block stmt[%zu] must be node ref", si);
       return false;
     }
@@ -128,11 +132,13 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
       free(strs);
       free(allocas);
       free(decls);
+      free(names);
       errf(p, "sircc: zasm: unknown stmt node %lld", (long long)sid);
       return false;
     }
 
     if (strcmp(s->tag, "let") == 0) {
+      const char* bind_name = s->fields ? json_get_string(json_obj_get(s->fields, "name")) : NULL;
       JsonValue* v = s->fields ? json_obj_get(s->fields, "value") : NULL;
       int64_t vid = 0;
       if (!parse_node_ref_id(v, &vid)) {
@@ -140,6 +146,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(strs);
         free(allocas);
         free(decls);
+        free(names);
         errf(p, "sircc: zasm: let node %lld missing fields.value ref", (long long)sid);
         return false;
       }
@@ -149,27 +156,72 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(strs);
         free(allocas);
         free(decls);
+        free(names);
         errf(p, "sircc: zasm: let node %lld value references unknown node", (long long)sid);
         return false;
       }
       if (strcmp(vn->tag, "call") == 0 || strcmp(vn->tag, "call.indirect") == 0) {
-        if (!zasm_emit_call_stmt(out, p, strs, strs_len, allocas, allocas_len, vid, line++)) {
+        if (bind_name && strcmp(bind_name, "_") != 0) {
           fclose(out);
           free(strs);
           free(allocas);
           free(decls);
+          free(names);
+          errf(p, "sircc: zasm: let binding of call result not supported yet (name '%s')", bind_name);
           return false;
         }
+        if (!zasm_emit_call_stmt(out, p, strs, strs_len, allocas, allocas_len, names, name_len, vid, line++)) {
+          fclose(out);
+          free(strs);
+          free(allocas);
+          free(decls);
+          free(names);
+          return false;
+        }
+        continue;
+      }
+
+      // Pure-ish binding of stable values (consts/symbols); no code emitted.
+      if (bind_name && strcmp(bind_name, "_") != 0) {
+        ZasmOp op = {0};
+        if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, vid, &op)) {
+          fclose(out);
+          free(strs);
+          free(allocas);
+          free(decls);
+          free(names);
+          return false;
+        }
+
+        if (name_len == name_cap) {
+          size_t next = name_cap ? name_cap * 2 : 16;
+          ZasmNameBinding* bigger = (ZasmNameBinding*)realloc(names, next * sizeof(ZasmNameBinding));
+          if (!bigger) {
+            fclose(out);
+            free(strs);
+            free(allocas);
+            free(decls);
+            free(names);
+            errf(p, "sircc: zasm: out of memory");
+            return false;
+          }
+          names = bigger;
+          name_cap = next;
+        }
+
+        // Shadowing allowed; last binding wins during lookup.
+        names[name_len++] = (ZasmNameBinding){.name = bind_name, .op = op};
       }
       continue;
     }
 
     if (strcmp(s->tag, "mem.fill") == 0) {
-      if (!zasm_emit_mem_fill_stmt(out, p, strs, strs_len, allocas, allocas_len, s, line)) {
+      if (!zasm_emit_mem_fill_stmt(out, p, strs, strs_len, allocas, allocas_len, names, name_len, s, line)) {
         fclose(out);
         free(strs);
         free(allocas);
         free(decls);
+        free(names);
         return false;
       }
       line += 4;
@@ -177,11 +229,12 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
     }
 
     if (strcmp(s->tag, "mem.copy") == 0) {
-      if (!zasm_emit_mem_copy_stmt(out, p, strs, strs_len, allocas, allocas_len, s, line)) {
+      if (!zasm_emit_mem_copy_stmt(out, p, strs, strs_len, allocas, allocas_len, names, name_len, s, line)) {
         fclose(out);
         free(strs);
         free(allocas);
         free(decls);
+        free(names);
         return false;
       }
       line += 4;
@@ -189,11 +242,12 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
     }
 
     if (strncmp(s->tag, "store.", 6) == 0) {
-      if (!zasm_emit_store_stmt(out, p, strs, strs_len, allocas, allocas_len, s, line)) {
+      if (!zasm_emit_store_stmt(out, p, strs, strs_len, allocas, allocas_len, names, name_len, s, line)) {
         fclose(out);
         free(strs);
         free(allocas);
         free(decls);
+        free(names);
         return false;
       }
       line += 2;
@@ -204,11 +258,12 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
       JsonValue* rv = s->fields ? json_obj_get(s->fields, "value") : NULL;
       int64_t rid = 0;
       if (rv && parse_node_ref_id(rv, &rid)) {
-        if (!zasm_emit_ret_value_to_hl(out, p, strs, strs_len, allocas, allocas_len, rid, line++)) {
+        if (!zasm_emit_ret_value_to_hl(out, p, strs, strs_len, allocas, allocas_len, names, name_len, rid, line++)) {
           fclose(out);
           free(strs);
           free(allocas);
           free(decls);
+          free(names);
           return false;
         }
       } else {
@@ -233,6 +288,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
     free(strs);
     free(allocas);
     free(decls);
+    free(names);
     errf(p, "sircc: zasm: unsupported stmt tag '%s' in zir_main", s->tag);
     return false;
   }
@@ -265,6 +321,6 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
   free(strs);
   free(allocas);
   free(decls);
+  free(names);
   return true;
 }
-

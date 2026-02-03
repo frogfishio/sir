@@ -38,6 +38,11 @@ typedef struct {
   int64_t size_bytes;
 } ZasmAlloca;
 
+typedef struct {
+  const char* name;
+  ZasmOp op;
+} ZasmNameBinding;
+
 // emit helpers
 void zasm_write_ir_k(FILE* out, const char* k);
 void zasm_write_loc(FILE* out, int64_t line);
@@ -64,6 +69,8 @@ bool zasm_lower_value_to_op(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     int64_t node_id,
     ZasmOp* out);
 
@@ -75,6 +82,8 @@ bool zasm_emit_call_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     int64_t call_id,
     int64_t line_no);
 bool zasm_emit_store_stmt(
@@ -84,6 +93,8 @@ bool zasm_emit_store_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     NodeRec* s,
     int64_t line_no);
 bool zasm_emit_mem_fill_stmt(
@@ -93,6 +104,8 @@ bool zasm_emit_mem_fill_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     NodeRec* s,
     int64_t line_no);
 bool zasm_emit_mem_copy_stmt(
@@ -102,6 +115,8 @@ bool zasm_emit_mem_copy_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     NodeRec* s,
     int64_t line_no);
 bool zasm_emit_ret_value_to_hl(
@@ -111,8 +126,9 @@ bool zasm_emit_ret_value_to_hl(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     int64_t value_id,
     int64_t line_no);
 
 #endif
-

@@ -32,6 +32,8 @@ bool zasm_emit_call_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     int64_t call_id,
     int64_t line_no) {
   NodeRec* n = get_node(p, call_id);
@@ -49,7 +51,7 @@ bool zasm_emit_call_stmt(
     return false;
   }
   ZasmOp callee = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, callee_id, &callee) || callee.k != ZOP_SYM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, callee_id, &callee) || callee.k != ZOP_SYM) {
     errf(p, "sircc: zasm: %s node %lld callee must be a direct symbol (decl.fn/ptr.sym)", n->tag, (long long)call_id);
     return false;
   }
@@ -65,7 +67,7 @@ bool zasm_emit_call_stmt(
       return false;
     }
     ZasmOp op = {0};
-    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, aid, &op) || !zasm_op_is_value(&op)) {
+    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, aid, &op) || !zasm_op_is_value(&op)) {
       errf(p, "sircc: zasm: %s node %lld arg[%zu] unsupported", n->tag, (long long)call_id, i);
       return false;
     }
@@ -85,6 +87,8 @@ bool zasm_emit_store_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     NodeRec* s,
     int64_t line_no) {
   if (!out || !p || !s || !s->fields) return false;
@@ -103,12 +107,12 @@ bool zasm_emit_store_stmt(
   }
 
   ZasmOp addr = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, addr_id, &addr) || addr.k != ZOP_SYM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &addr) || addr.k != ZOP_SYM) {
     errf(p, "sircc: zasm: %s addr must be an alloca symbol (node %lld)", s->tag, (long long)addr_id);
     return false;
   }
   ZasmOp val = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, value_id, &val) || val.k != ZOP_NUM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, value_id, &val) || val.k != ZOP_NUM) {
     errf(p, "sircc: zasm: %s value must be an immediate const (node %lld)", s->tag, (long long)value_id);
     return false;
   }
@@ -134,6 +138,8 @@ bool zasm_emit_mem_fill_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     NodeRec* s,
     int64_t line_no) {
   if (!out || !p || !s || !s->fields) return false;
@@ -151,17 +157,17 @@ bool zasm_emit_mem_fill_stmt(
   }
 
   ZasmOp dst = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, dst_id, &dst) || dst.k != ZOP_SYM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, dst_id, &dst) || dst.k != ZOP_SYM) {
     errf(p, "sircc: zasm: mem.fill dst must be an alloca symbol (node %lld)", (long long)dst_id);
     return false;
   }
   ZasmOp byte = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, byte_id, &byte) || byte.k != ZOP_NUM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, byte_id, &byte) || byte.k != ZOP_NUM) {
     errf(p, "sircc: zasm: mem.fill byte must be an immediate const (node %lld)", (long long)byte_id);
     return false;
   }
   ZasmOp len = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, len_id, &len) || len.k != ZOP_NUM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, len_id, &len) || len.k != ZOP_NUM) {
     errf(p, "sircc: zasm: mem.fill len must be an immediate const (node %lld)", (long long)len_id);
     return false;
   }
@@ -185,6 +191,8 @@ bool zasm_emit_mem_copy_stmt(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     NodeRec* s,
     int64_t line_no) {
   if (!out || !p || !s || !s->fields) return false;
@@ -202,17 +210,17 @@ bool zasm_emit_mem_copy_stmt(
   }
 
   ZasmOp dst = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, dst_id, &dst) || dst.k != ZOP_SYM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, dst_id, &dst) || dst.k != ZOP_SYM) {
     errf(p, "sircc: zasm: mem.copy dst must be an alloca symbol (node %lld)", (long long)dst_id);
     return false;
   }
   ZasmOp src = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, src_id, &src) || src.k != ZOP_SYM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, src_id, &src) || src.k != ZOP_SYM) {
     errf(p, "sircc: zasm: mem.copy src must be an alloca symbol (node %lld)", (long long)src_id);
     return false;
   }
   ZasmOp len = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, len_id, &len) || len.k != ZOP_NUM) {
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, len_id, &len) || len.k != ZOP_NUM) {
     errf(p, "sircc: zasm: mem.copy len must be an immediate const (node %lld)", (long long)len_id);
     return false;
   }
@@ -235,6 +243,8 @@ bool zasm_emit_ret_value_to_hl(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     int64_t value_id,
     int64_t line_no) {
   if (!out || !p) return false;
@@ -270,7 +280,7 @@ bool zasm_emit_ret_value_to_hl(
         return false;
       }
       ZasmOp base = {0};
-      if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, addr_id, &base) || base.k != ZOP_SYM) {
+      if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base) || base.k != ZOP_SYM) {
         errf(p, "sircc: zasm: load.i8 addr must be an alloca symbol (node %lld)", (long long)addr_id);
         return false;
       }
@@ -287,7 +297,7 @@ bool zasm_emit_ret_value_to_hl(
     }
 
     ZasmOp op = {0};
-    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, x_id, &op) || op.k != ZOP_NUM) {
+    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, x_id, &op) || op.k != ZOP_NUM) {
       errf(p, "sircc: zasm: i32.zext.i8 arg must be load.i8 or const.i8 (node %lld)", (long long)x_id);
       return false;
     }
@@ -303,7 +313,7 @@ bool zasm_emit_ret_value_to_hl(
       return false;
     }
     ZasmOp base = {0};
-    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, addr_id, &base) || base.k != ZOP_SYM) {
+    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base) || base.k != ZOP_SYM) {
       errf(p, "sircc: zasm: load.i8 addr must be an alloca symbol (node %lld)", (long long)addr_id);
       return false;
     }
@@ -320,7 +330,7 @@ bool zasm_emit_ret_value_to_hl(
   }
 
   ZasmOp rop = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, value_id, &rop)) return false;
+  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, value_id, &rop)) return false;
   if (rop.k == ZOP_NUM || rop.k == ZOP_SYM) return emit_ld(out, "HL", &rop, line_no);
   if (rop.k == ZOP_REG) {
     if (!rop.s || strcmp(rop.s, "HL") == 0) return true;
@@ -330,4 +340,3 @@ bool zasm_emit_ret_value_to_hl(
   errf(p, "sircc: zasm: unsupported return value shape");
   return false;
 }
-

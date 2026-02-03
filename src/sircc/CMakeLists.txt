@@ -395,6 +395,16 @@ if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ze
 endif()
 
 add_test(
+  NAME sircc_emit_zasm_name_const_return_binds
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/zasm_name_const_return.sir.jsonl
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/zasm_name_const_return.zasm.jsonl
+    "-DEXPECT=\"m\":\"LD\",\"ops\":[{\"t\":\"reg\",\"v\":\"HL\"},{\"t\":\"num\",\"v\":7}]"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_expect_contains.cmake
+)
+
+add_test(
   NAME sircc_verify_reject_cfg_early_term
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_bad_early_term.sir.jsonl
 )

@@ -13,6 +13,8 @@ bool zasm_lower_value_to_op(
     size_t strs_len,
     ZasmAlloca* allocas,
     size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
     int64_t node_id,
     ZasmOp* out) {
   if (!p || !out) return false;
@@ -92,16 +94,25 @@ bool zasm_lower_value_to_op(
       errf(p, "sircc: zasm: ptr.to_i64 node %lld arg must be node ref", (long long)node_id);
       return false;
     }
-    return zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, x_id, out);
+    return zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, x_id, out);
   }
 
   if (strcmp(n->tag, "name") == 0) {
     const char* name = n->fields ? json_get_string(json_obj_get(n->fields, "name")) : NULL;
-    errf(p, "sircc: zasm: name '%s' not supported yet (node %lld)", name ? name : "(null)", (long long)node_id);
+    if (!name) {
+      errf(p, "sircc: zasm: name node %lld missing fields.name", (long long)node_id);
+      return false;
+    }
+    for (size_t i = 0; i < names_len; i++) {
+      if (names[i].name && strcmp(names[i].name, name) == 0) {
+        *out = names[i].op;
+        return true;
+      }
+    }
+    errf(p, "sircc: zasm: unknown name '%s' (node %lld)", name, (long long)node_id);
     return false;
   }
 
   errf(p, "sircc: zasm: unsupported value node '%s' (node %lld)", n->tag, (long long)node_id);
   return false;
 }
-
