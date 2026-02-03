@@ -39,7 +39,7 @@ sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj] [--clang <path>] [-
 sircc --verify-only <input.sir.jsonl>
 sircc --dump-records --verify-only <input.sir.jsonl>
 sircc --print-target [--target-triple <triple>]
-sircc [--diagnostics text|json] [--color auto|always|never] [--verbose] [--strip] ...
+sircc [--diagnostics text|json] [--color auto|always|never] [--diag-context N] [--verbose] [--strip] ...
 sircc --version
 ```
 
@@ -51,3 +51,4 @@ Notes:
  - `--strip` runs `strip` on the output executable (useful for smaller distrib artifacts)
  - `--require-pinned-triple` fails if neither `--target-triple` nor `meta.ext.target.triple` is provided
  - `--diagnostics json` emits errors as `diag` JSONL records (useful for tooling)
+ - `--diag-context N` prints the offending JSONL record plus `N` surrounding lines (text diagnostics only)

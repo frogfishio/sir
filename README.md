@@ -32,7 +32,7 @@ Optional flags:
 
 - Pick a linker: `--clang clang` (default: `clang`)
 - Override the LLVM target triple: `--target-triple <triple>`
-- More tooling: `--verbose`, `--strip`, `--diagnostics json`, `--color auto|always|never`
+- More tooling: `--verbose`, `--strip`, `--diagnostics json`, `--color auto|always|never`, `--diag-context N`
 
 ## Build `sirc` (experimental .sir parser)
 

@@ -289,4 +289,14 @@ add_test(
     -DEXPECT2=\\\"level\\\":\\\"error\\\"
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
 )
+
+add_test(
+  NAME sircc_diag_context_snippet_unknown_field
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diag-context\\;1\\;--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_unknown_field.sir.jsonl
+    -DEXPECT=record:\\ k=type
+    -DEXPECT2=oops
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
 set_tests_properties(sircc_verify_error_uses_src_ref PROPERTIES WILL_FAIL TRUE)

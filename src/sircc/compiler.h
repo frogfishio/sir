@@ -44,6 +44,7 @@ typedef struct SirccOptions {
   bool require_pinned_triple;
   SirccDiagnosticsFormat diagnostics;
   SirccColorMode color;
+  int diag_context; // number of surrounding JSONL lines to print on error (text diagnostics only)
 } SirccOptions;
 
 int sircc_compile(const SirccOptions* opt);

@@ -24,6 +24,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+static bool read_line(FILE* f, char** buf, size_t* cap, size_t* out_len);
+
 static void llvm_init_targets_once(void) {
   static int inited = 0;
   if (inited) return;
@@ -112,6 +114,8 @@ typedef struct SirProgram {
   const char* cur_path;
   size_t cur_line;
   const char* cur_kind;
+  int64_t cur_rec_id;
+  const char* cur_rec_tag; // node.tag / instr.m / dir.d when available
   int64_t cur_src_ref;
   LocRec cur_loc;
 
@@ -238,6 +242,17 @@ static void errf(SirProgram* p, const char* fmt, ...) {
   if (as_json) {
     fprintf(stderr, "{\"ir\":\"sir-v1.0\",\"k\":\"diag\",\"level\":\"error\",\"msg\":");
     json_write_escaped(stderr, msg ? msg : "(unknown)");
+    if (p && p->cur_kind) {
+      fprintf(stderr, ",\"about\":{");
+      fprintf(stderr, "\"k\":");
+      json_write_escaped(stderr, p->cur_kind);
+      if (p->cur_rec_id >= 0) fprintf(stderr, ",\"id\":%lld", (long long)p->cur_rec_id);
+      if (p->cur_rec_tag) {
+        fprintf(stderr, ",\"tag\":");
+        json_write_escaped(stderr, p->cur_rec_tag);
+      }
+      fprintf(stderr, "}");
+    }
     if (src_ref >= 0) fprintf(stderr, ",\"src_ref\":%lld", (long long)src_ref);
     if (file || line > 0 || col > 0) {
       fprintf(stderr, ",\"loc\":{");
@@ -271,6 +286,47 @@ static void errf(SirProgram* p, const char* fmt, ...) {
     if (color) fprintf(stderr, "\x1b[31merror:\x1b[0m ");
     else fprintf(stderr, "error: ");
     fprintf(stderr, "%s\n", msg ? msg : "(unknown)");
+
+    if (p && p->cur_kind) {
+      fprintf(stderr, "  record: k=%s", p->cur_kind);
+      if (p->cur_rec_id >= 0) fprintf(stderr, " id=%lld", (long long)p->cur_rec_id);
+      if (p->cur_rec_tag) fprintf(stderr, " tag=%s", p->cur_rec_tag);
+      fputc('\n', stderr);
+    }
+
+    // Print source context from the JSONL input (best-effort). Keep this out of JSON diagnostics.
+    if (p && opt && opt->diag_context > 0 && p->cur_path && p->cur_line > 0) {
+      FILE* ctxf = fopen(p->cur_path, "rb");
+      if (ctxf) {
+        size_t ctx = (size_t)opt->diag_context;
+        size_t lo = (p->cur_line > ctx) ? (p->cur_line - ctx) : 1;
+        size_t hi = p->cur_line + ctx;
+
+        // Determine width for line numbers.
+        size_t tmp = hi;
+        int w = 1;
+        while (tmp >= 10) {
+          tmp /= 10;
+          w++;
+        }
+
+        fprintf(stderr, "  |\n");
+        char* lbuf = NULL;
+        size_t lcap = 0;
+        size_t llen = 0;
+        size_t lno = 0;
+        while (read_line(ctxf, &lbuf, &lcap, &llen)) {
+          lno++;
+          if (lno < lo) continue;
+          if (lno > hi) break;
+          char marker = (lno == p->cur_line) ? '>' : ' ';
+          fprintf(stderr, "%c %*zu| %s\n", marker, w, lno, lbuf ? lbuf : "");
+        }
+        free(lbuf);
+        fclose(ctxf);
+        fprintf(stderr, "  |\n");
+      }
+    }
   }
 
   if (msg && msg != stack_buf) free(msg);
@@ -878,6 +934,9 @@ static bool parse_program(SirProgram* p, const SirccOptions* opt, const char* in
 
     p->cur_path = input_path;
     p->cur_line = line_no;
+    p->cur_kind = NULL;
+    p->cur_rec_id = -1;
+    p->cur_rec_tag = NULL;
     p->cur_src_ref = -1;
     p->cur_loc.unit = NULL;
     p->cur_loc.line = 0;
@@ -904,6 +963,14 @@ static bool parse_program(SirProgram* p, const SirccOptions* opt, const char* in
       fclose(f);
       return false;
     }
+    p->cur_kind = k;
+
+    // Best-effort record metadata for diagnostics.
+    JsonValue* idv = json_obj_get(root, "id");
+    if (idv) (void)json_get_i64(idv, &p->cur_rec_id);
+    if (strcmp(k, "node") == 0) p->cur_rec_tag = json_get_string(json_obj_get(root, "tag"));
+    else if (strcmp(k, "instr") == 0) p->cur_rec_tag = json_get_string(json_obj_get(root, "m"));
+    else if (strcmp(k, "dir") == 0) p->cur_rec_tag = json_get_string(json_obj_get(root, "d"));
 
     JsonValue* src_ref = json_obj_get(root, "src_ref");
     if (src_ref) {

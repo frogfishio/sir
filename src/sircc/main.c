@@ -8,6 +8,7 @@
 #include <llvm-c/TargetMachine.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void usage(FILE* out) {
@@ -17,7 +18,7 @@ static void usage(FILE* out) {
           "  sircc --verify-only <input.sir.jsonl>\n"
           "  sircc --dump-records --verify-only <input.sir.jsonl>\n"
           "  sircc --print-target [--target-triple <triple>]\n"
-          "  sircc [--diagnostics text|json] [--color auto|always|never] [--verbose] [--strip]\n"
+          "  sircc [--diagnostics text|json] [--color auto|always|never] [--diag-context N] [--verbose] [--strip]\n"
           "  sircc --require-pinned-triple ...\n"
           "  sircc --version\n");
 }
@@ -43,6 +44,7 @@ int main(int argc, char** argv) {
       .require_pinned_triple = false,
       .diagnostics = SIRCC_DIAG_TEXT,
       .color = SIRCC_COLOR_AUTO,
+      .diag_context = 0,
   };
 
   for (int i = 1; i < argc; i++) {
@@ -83,7 +85,7 @@ int main(int argc, char** argv) {
     if (strcmp(a, "-o") == 0) {
       if (i + 1 >= argc) {
         usage(stderr);
-        return 2;
+        return SIRCC_EXIT_USAGE;
       }
       opt.output_path = argv[++i];
       continue;
@@ -91,7 +93,7 @@ int main(int argc, char** argv) {
     if (strcmp(a, "--clang") == 0) {
       if (i + 1 >= argc) {
         usage(stderr);
-        return 2;
+        return SIRCC_EXIT_USAGE;
       }
       opt.clang_path = argv[++i];
       continue;
@@ -127,6 +129,21 @@ int main(int argc, char** argv) {
         return SIRCC_EXIT_USAGE;
       }
       opt.diagnostics = streq(v, "json") ? SIRCC_DIAG_JSON : SIRCC_DIAG_TEXT;
+      continue;
+    }
+    if (strcmp(a, "--diag-context") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      const char* v = argv[++i];
+      char* end = NULL;
+      long n = strtol(v, &end, 10);
+      if (!end || *end != 0 || n < 0 || n > 1000000) {
+        fprintf(stderr, "sircc: invalid --diag-context value: %s\n", v);
+        return SIRCC_EXIT_USAGE;
+      }
+      opt.diag_context = (int)n;
       continue;
     }
     if (strncmp(a, "--color", 7) == 0) {
