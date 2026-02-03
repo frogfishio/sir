@@ -187,3 +187,14 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
   - [ ] Determinism: NaN canonicalization, stable switch ordering, stable layout reporting
   - [x] Diagnostics: include `src_ref/loc` in every error when available (and always prefix at least the input file for non-record errors)
   - [x] Diagnostics: `--diagnostics json` includes `context` when `--diag-context N` is set
+
+## Experimental — ZASM (zir v1.1) backend
+
+This is a separate emission path (`sircc --emit-zasm`) targeting `zasm-v1.1` JSONL (zir), intended for `zem` execution and future “real lowering” beyond LLVM.
+
+- [x] `--emit-zasm` emits `zasm-v1.1` JSONL for `zir_main`
+- [x] Emits `EXTERN` for `decl.fn` and `PUBLIC zir_main`
+- [x] Emits `STR` for `cstr` nodes
+- [x] Lowers simple memory statements in `zir_main`: `mem.fill`, `mem.copy`, `store.i8` (via `FILL`, `LDIR`, `ST8`)
+- [x] Supports return-time `load.i8` and `i32.zext.i8` (via `LD8U`)
+- [ ] Add name binding + basic register allocation (support `name` nodes in expressions)

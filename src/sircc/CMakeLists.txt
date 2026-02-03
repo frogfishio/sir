@@ -376,6 +376,18 @@ if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ze
       "-DEXPECT_STDOUT=hello from zABI25"
       -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
   )
+
+  add_test(
+    NAME sircc_emit_zasm_run_zem_mem_copy_fill_prints_star
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/mem_copy_fill_zir_main.sir.jsonl
+      -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/mem_copy_fill_zir_main.zem.zasm.jsonl
+      "-DEXPECT_STDOUT=*"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
+  )
 endif()
 
 add_test(
