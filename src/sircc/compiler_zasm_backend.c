@@ -350,15 +350,15 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
           errf(p, "sircc: zasm: %s node %lld requires fields.addr node ref", vn->tag, (long long)vn->id);
           return false;
         }
-        ZasmOp addr = {0};
-        if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, addr_id, &addr) || addr.k != ZOP_SYM) {
+        ZasmOp base = {0};
+        int64_t disp = 0;
+        if (!zasm_lower_addr_to_mem(p, strs, strs_len, allocas, allocas_len, names, name_len, addr_id, &base, &disp)) {
           fclose(out);
           free(strs);
           free(allocas);
           free(decls);
           free(names);
           free(tmps);
-          errf(p, "sircc: zasm: %s addr must be an alloca symbol (node %lld)", vn->tag, (long long)addr_id);
           return false;
         }
 
@@ -368,7 +368,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         fprintf(out, ",\"ops\":[");
         zasm_write_op_reg(out, dst_reg);
         fprintf(out, ",");
-        zasm_write_op_mem(out, &addr, 0, width);
+        zasm_write_op_mem(out, &base, disp, width);
         fprintf(out, "]");
         zasm_write_loc(out, line++);
         fprintf(out, "}\n");

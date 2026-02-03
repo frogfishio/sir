@@ -134,4 +134,17 @@ bool zasm_emit_ret_value_to_hl(
     int64_t value_id,
     int64_t line_no);
 
+// address lowering (for mem operands)
+bool zasm_lower_addr_to_mem(
+    SirProgram* p,
+    ZasmStr* strs,
+    size_t strs_len,
+    ZasmAlloca* allocas,
+    size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t names_len,
+    int64_t addr_id,
+    ZasmOp* out_base,
+    int64_t* out_disp);
+
 #endif

@@ -206,11 +206,9 @@ bool zasm_emit_store_stmt(
     return false;
   }
 
-  ZasmOp addr = {0};
-  if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &addr) || addr.k != ZOP_SYM) {
-    errf(p, "sircc: zasm: %s addr must be an alloca symbol (node %lld)", s->tag, (long long)addr_id);
-    return false;
-  }
+  ZasmOp base = {0};
+  int64_t disp = 0;
+  if (!zasm_lower_addr_to_mem(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base, &disp)) return false;
   ZasmOp val = {0};
   if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, value_id, &val)) return false;
 
@@ -241,7 +239,7 @@ bool zasm_emit_store_stmt(
   fprintf(out, ",\"m\":");
   json_write_escaped(out, mnemonic);
   fprintf(out, ",\"ops\":[");
-  zasm_write_op_mem(out, &addr, 0, width);
+  zasm_write_op_mem(out, &base, disp, width);
   fprintf(out, ",");
   zasm_write_op_reg(out, value_reg);
   fprintf(out, "]");
@@ -399,16 +397,14 @@ bool zasm_emit_ret_value_to_hl(
         return false;
       }
       ZasmOp base = {0};
-      if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base) || base.k != ZOP_SYM) {
-        errf(p, "sircc: zasm: load.i8 addr must be an alloca symbol (node %lld)", (long long)addr_id);
-        return false;
-      }
+      int64_t disp = 0;
+      if (!zasm_lower_addr_to_mem(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base, &disp)) return false;
 
       zasm_write_ir_k(out, "instr");
       fprintf(out, ",\"m\":\"LD8U\",\"ops\":[");
       zasm_write_op_reg(out, "HL");
       fprintf(out, ",");
-      zasm_write_op_mem(out, &base, 0, 1);
+      zasm_write_op_mem(out, &base, disp, 1);
       fprintf(out, "]");
       zasm_write_loc(out, line_no);
       fprintf(out, "}\n");
@@ -432,16 +428,14 @@ bool zasm_emit_ret_value_to_hl(
       return false;
     }
     ZasmOp base = {0};
-    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base) || base.k != ZOP_SYM) {
-      errf(p, "sircc: zasm: load.i8 addr must be an alloca symbol (node %lld)", (long long)addr_id);
-      return false;
-    }
+    int64_t disp = 0;
+    if (!zasm_lower_addr_to_mem(p, strs, strs_len, allocas, allocas_len, names, names_len, addr_id, &base, &disp)) return false;
 
     zasm_write_ir_k(out, "instr");
     fprintf(out, ",\"m\":\"LD8U\",\"ops\":[");
     zasm_write_op_reg(out, "HL");
     fprintf(out, ",");
-    zasm_write_op_mem(out, &base, 0, 1);
+    zasm_write_op_mem(out, &base, disp, 1);
     fprintf(out, "]");
     zasm_write_loc(out, line_no);
     fprintf(out, "}\n");
