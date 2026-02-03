@@ -11,13 +11,13 @@ This TODO is organized as milestones. Each milestone should end with:
 
 - [ ] CI build matrix (macOS, Linux) with cached LLVM install/docs
 - [x] `sircc --version` and `sircc --help` (basic)
-- [x] `dist` bundle target: `dist/bin/<os>`, `dist/doc/src.md`, `dist/test/examples`
+- [x] `dist` bundle target: `dist/bin/<os>`, `dist/doc/sircc.md`, `dist/test/examples`
 - [ ] Deterministic builds: pin target triple + data layout reporting
   - [x] `sircc --print-target` prints `triple`, `data_layout`, `endianness`, `ptrBits`
   - [x] Codegen always sets module `target triple` + `datalayout` (opt override > `meta.ext.target.triple` > host)
-  - [ ] Make “pinned triple” a producer requirement for reproducible artifacts (docs + validator)
-- [x] Add `--dump-records` (quick parse trace)
-- [x] Add `--verify-only` (parse + validate + report, no codegen)
+  - [x] Make “pinned triple” a producer requirement for reproducible artifacts (docs + validator: `--require-pinned-triple`)
+  - [x] Add `--dump-records` (quick parse trace)
+  - [x] Add `--verify-only` (parse + validate + report, no codegen)
 
 ## Milestone 1 — Parser + Validator (spec-first correctness)
 

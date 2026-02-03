@@ -127,6 +127,15 @@ add_test(
 )
 
 add_test(
+  NAME sircc_require_pinned_triple_missing_fails
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    "-DARGS=--require-pinned-triple;${CMAKE_CURRENT_LIST_DIR}/examples/add.sir.jsonl;-o;${CMAKE_CURRENT_BINARY_DIR}/should_not_exist.exe"
+    "-DEXPECT=missing pinned target triple"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_run_mem_copy_fill
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -295,8 +304,9 @@ add_test(
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
     -DARGS=--diag-context\\;1\\;--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_unknown_field.sir.jsonl
-    -DEXPECT=record:\\ k=type
-    -DEXPECT2=oops
+    -DEXPECT=record:
+    -DEXPECT2=k=type
+    -DEXPECT3=oops
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
 )
 set_tests_properties(sircc_verify_error_uses_src_ref PROPERTIES WILL_FAIL TRUE)

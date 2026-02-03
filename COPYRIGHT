@@ -1,0 +1,10 @@
+SPDX-FileCopyrightText: 2026 Frogfish
+Copyright (c) 2026 Frogfish
+
+All files in this repository are Copyright (c) 2026 Frogfish, unless otherwise stated in an individual file header or in a third-party notice.
+
+This project is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. Examples and libraries (`*.sir`, `lib/*.sir.jsonl`) are MIT licensed (see `LICENSE-LIB`).
+
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This repository’s license does not grant permission to use Frogfish trademarks (including associated logos) except as required for reasonable and customary use in describing the origin of the work and reproducing the content of notices.
