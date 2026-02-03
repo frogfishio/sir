@@ -202,5 +202,5 @@ This is a separate emission path (`sircc --emit-zasm`) targeting `zasm-v1.1` JSO
 - [x] Addressing: `alloca.*`, `ptr.sym`, `ptr.add` (const disp), `ptr.offset` (const idx*size) via `mem` disp
 - [x] CFG form `zir_main`: `fields.entry` + `fields.blocks`, `term.{br,condbr,ret}`, block params (`bparam`) + `term.br args`
 - [x] CFG blocks support core non-terminators: `let`, `store.*`, `mem.copy`, `mem.fill`, and simple arithmetic lets
-- [ ] Expand CFG conditions: comparisons beyond `i32.cmp.eq` (and support slot operands)
+- [x] Expand CFG conditions: `i32.cmp.{eq,ne,slt,sle,sgt,sge,ult,ule,ugt,uge}` and `i64.cmp.*` (slot operands supported)
 - [ ] Dynamic pointer arithmetic (non-const `ptr.add` / `ptr.offset`)

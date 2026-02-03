@@ -465,6 +465,42 @@ if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ze
       "-DEXPECT_STDOUT=Z"
       -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
   )
+
+  add_test(
+    NAME sircc_emit_zasm_run_zem_cfg_condbr_ne_prints_T
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/zasm_cfg_condbr_ne_print_T.sir.jsonl
+      -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/zasm_cfg_condbr_ne_print_T.zem.zasm.jsonl
+      "-DEXPECT_STDOUT=T"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
+  )
+
+  add_test(
+    NAME sircc_emit_zasm_run_zem_cfg_condbr_ult_prints_T
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/zasm_cfg_condbr_ult_print_T.sir.jsonl
+      -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/zasm_cfg_condbr_ult_print_T.zem.zasm.jsonl
+      "-DEXPECT_STDOUT=T"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
+  )
+
+  add_test(
+    NAME sircc_emit_zasm_run_zem_cfg_condbr_sgt_slot_prints_T
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/zasm_cfg_condbr_sgt_slot_print_T.sir.jsonl
+      -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/zasm_cfg_condbr_sgt_slot_print_T.zem.zasm.jsonl
+      "-DEXPECT_STDOUT=T"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
+  )
 endif()
 
 add_test(

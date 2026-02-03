@@ -529,6 +529,51 @@ static bool emit_cp_hl(FILE* out, const ZasmOp* rhs, int64_t line_no) {
   return true;
 }
 
+static const char* zasm_cmp_set_mnemonic_for_node_tag(const char* tag) {
+  if (!tag) return NULL;
+  const char* op = NULL;
+  bool is64 = false;
+  if (strncmp(tag, "i32.cmp.", 8) == 0) {
+    op = tag + 8;
+    is64 = false;
+  } else if (strncmp(tag, "i64.cmp.", 8) == 0) {
+    op = tag + 8;
+    is64 = true;
+  } else {
+    return NULL;
+  }
+
+  if (strcmp(op, "eq") == 0) return is64 ? "EQ64" : "EQ";
+  if (strcmp(op, "ne") == 0) return is64 ? "NE64" : "NE";
+
+  if (strcmp(op, "slt") == 0) return is64 ? "LTS64" : "LTS";
+  if (strcmp(op, "sle") == 0) return is64 ? "LES64" : "LES";
+  if (strcmp(op, "sgt") == 0) return is64 ? "GTS64" : "GTS";
+  if (strcmp(op, "sge") == 0) return is64 ? "GES64" : "GES";
+
+  if (strcmp(op, "ult") == 0) return is64 ? "LTU64" : "LTU";
+  if (strcmp(op, "ule") == 0) return is64 ? "LEU64" : "LEU";
+  if (strcmp(op, "ugt") == 0) return is64 ? "GTU64" : "GTU";
+  if (strcmp(op, "uge") == 0) return is64 ? "GEU64" : "GEU";
+
+  return NULL;
+}
+
+static bool emit_cmp_set_hl(FILE* out, const char* mnemonic, const ZasmOp* rhs, int64_t line_no) {
+  if (!out || !mnemonic || !rhs) return false;
+  zasm_write_ir_k(out, "instr");
+  fprintf(out, ",\"m\":");
+  json_write_escaped(out, mnemonic);
+  fprintf(out, ",\"ops\":[");
+  zasm_write_op_reg(out, "HL");
+  fprintf(out, ",");
+  if (!zasm_write_op(out, rhs)) return false;
+  fprintf(out, "]");
+  zasm_write_loc(out, line_no);
+  fprintf(out, "}\n");
+  return true;
+}
+
 static const char* label_for_block(SirProgram* p, int64_t entry_id, int64_t block_id) {
   if (!p) return NULL;
   if (block_id == entry_id) return "zir_main";
@@ -989,51 +1034,137 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             errf(p, "sircc: zasm: condbr references unknown cond node %lld", (long long)cond_id);
             return false;
           }
-          if (strcmp(c->tag, "i32.cmp.eq") != 0) {
-            fclose(out);
-            free(strs);
-            free(allocas);
-            free(decls);
-            free(names);
-            free(tmps);
-            errf(p, "sircc: zasm: CFG condbr only supports i32.cmp.eq for now");
-            return false;
-          }
-          JsonValue* args = c->fields ? json_obj_get(c->fields, "args") : NULL;
-          if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
-            fclose(out);
-            free(strs);
-            free(allocas);
-            free(decls);
-            free(names);
-            free(tmps);
-            errf(p, "sircc: zasm: i32.cmp.eq node %lld requires args:[a,b]", (long long)cond_id);
-            return false;
-          }
-          int64_t a_id = 0, b_id = 0;
-          if (!parse_node_ref_id(args->v.arr.items[0], &a_id) || !parse_node_ref_id(args->v.arr.items[1], &b_id)) {
-            fclose(out);
-            free(strs);
-            free(allocas);
-            free(decls);
-            free(names);
-            free(tmps);
-            errf(p, "sircc: zasm: i32.cmp.eq node %lld args must be node refs", (long long)cond_id);
-            return false;
+          const char* cmp_m = zasm_cmp_set_mnemonic_for_node_tag(c->tag);
+          if (cmp_m) {
+            JsonValue* args = c->fields ? json_obj_get(c->fields, "args") : NULL;
+            if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
+              fclose(out);
+              free(strs);
+              free(allocas);
+              free(decls);
+              free(names);
+              free(tmps);
+              errf(p, "sircc: zasm: %s node %lld requires args:[a,b]", c->tag, (long long)cond_id);
+              return false;
+            }
+            int64_t a_id = 0, b_id = 0;
+            if (!parse_node_ref_id(args->v.arr.items[0], &a_id) || !parse_node_ref_id(args->v.arr.items[1], &b_id)) {
+              fclose(out);
+              free(strs);
+              free(allocas);
+              free(decls);
+              free(names);
+              free(tmps);
+              errf(p, "sircc: zasm: %s node %lld args must be node refs", c->tag, (long long)cond_id);
+              return false;
+            }
+
+            ZasmOp a = {0};
+            if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, bps, bp_len, a_id, &a)) {
+              fclose(out);
+              free(strs);
+              free(allocas);
+              free(decls);
+              free(names);
+              free(tmps);
+              free(bps);
+              return false;
+            }
+            if (a.k == ZOP_SLOT) {
+              if (!emit_load_slot_to_reg(out, a.s, a.n, "HL", line++)) {
+                fclose(out);
+                free(strs);
+                free(allocas);
+                free(decls);
+                free(names);
+                free(tmps);
+                return false;
+              }
+            } else {
+              if (!emit_ld_reg_or_imm(out, "HL", &a, line++)) {
+                fclose(out);
+                free(strs);
+                free(allocas);
+                free(decls);
+                free(names);
+                free(tmps);
+                return false;
+              }
+            }
+
+            ZasmOp b_op = {0};
+            if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, bps, bp_len, b_id, &b_op)) {
+              fclose(out);
+              free(strs);
+              free(allocas);
+              free(decls);
+              free(names);
+              free(tmps);
+              free(bps);
+              return false;
+            }
+            ZasmOp rhs = b_op;
+            if (b_op.k == ZOP_SLOT) {
+              if (!emit_load_slot_to_reg(out, b_op.s, b_op.n, "DE", line++)) {
+                fclose(out);
+                free(strs);
+                free(allocas);
+                free(decls);
+                free(names);
+                free(tmps);
+                return false;
+              }
+              rhs.k = ZOP_REG;
+              rhs.s = "DE";
+            }
+
+            if (!emit_cmp_set_hl(out, cmp_m, &rhs, line++)) {
+              fclose(out);
+              free(strs);
+              free(allocas);
+              free(decls);
+              free(names);
+              free(tmps);
+              return false;
+            }
+          } else {
+            // Treat the condition as a boolean-like value; branch on (cond != 0).
+            ZasmOp v = {0};
+            if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, bps, bp_len, cond_id, &v)) {
+              fclose(out);
+              free(strs);
+              free(allocas);
+              free(decls);
+              free(names);
+              free(tmps);
+              free(bps);
+              return false;
+            }
+            if (v.k == ZOP_SLOT) {
+              if (!emit_load_slot_to_reg(out, v.s, v.n, "HL", line++)) {
+                fclose(out);
+                free(strs);
+                free(allocas);
+                free(decls);
+                free(names);
+                free(tmps);
+                return false;
+              }
+            } else {
+              if (!emit_ld_reg_or_imm(out, "HL", &v, line++)) {
+                fclose(out);
+                free(strs);
+                free(allocas);
+                free(decls);
+                free(names);
+                free(tmps);
+                return false;
+              }
+            }
           }
 
-          ZasmOp a = {0};
-          if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, bps, bp_len, a_id, &a)) {
-            fclose(out);
-            free(strs);
-            free(allocas);
-            free(decls);
-            free(names);
-            free(tmps);
-            free(bps);
-            return false;
-          }
-          if (!emit_ld_reg_or_imm(out, "HL", &a, line++)) {
+          ZasmOp zero = {.k = ZOP_NUM, .n = 0};
+          if (!emit_cp_hl(out, &zero, line++)) {
             fclose(out);
             free(strs);
             free(allocas);
@@ -1042,27 +1173,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(tmps);
             return false;
           }
-          ZasmOp b_op = {0};
-          if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, bps, bp_len, b_id, &b_op)) {
-            fclose(out);
-            free(strs);
-            free(allocas);
-            free(decls);
-            free(names);
-            free(tmps);
-            free(bps);
-            return false;
-          }
-          if (!emit_cp_hl(out, &b_op, line++)) {
-            fclose(out);
-            free(strs);
-            free(allocas);
-            free(decls);
-            free(names);
-            free(tmps);
-            return false;
-          }
-          if (!emit_jr_cond(out, "EQ", then_lbl, line++)) {
+          if (!emit_jr_cond(out, "NE", then_lbl, line++)) {
             fclose(out);
             free(strs);
             free(allocas);
