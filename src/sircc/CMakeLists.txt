@@ -3,6 +3,17 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(sircc
   main.c
   compiler.c
+  compiler_diag.c
+  compiler_emit.c
+  compiler_link.c
+  compiler_lower_cfg.c
+  compiler_lower_expr_a.c
+  compiler_lower_expr_b.c
+  compiler_lower_util.c
+  compiler_parse.c
+  compiler_tables.c
+  compiler_types.c
+  compiler_validate.c
   support.c
   check.c
   sircc.c
@@ -16,16 +27,22 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(SIRCC_SUPPORT_GEN_C ${CMAKE_CURRENT_BINARY_DIR}/sircc_support_table.generated.c)
 set(SIRCC_SUPPORT_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/sircc_support_table.generated.h)
+
+# Keep the generated support table in sync with the current compiler sources.
+file(GLOB SIRCC_COMPILER_SOURCES
+  ${CMAKE_CURRENT_LIST_DIR}/compiler*.c
+  ${CMAKE_CURRENT_LIST_DIR}/compiler*.h
+)
 add_custom_command(
   OUTPUT ${SIRCC_SUPPORT_GEN_C} ${SIRCC_SUPPORT_GEN_H}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/mnemonic_coverage.py
     --emit-support-c ${SIRCC_SUPPORT_GEN_C}
     --emit-support-h ${SIRCC_SUPPORT_GEN_H}
     --spec ${CMAKE_CURRENT_LIST_DIR}/../../schema/sir/v1.0/mnemonics.html
-    --compiler ${CMAKE_CURRENT_LIST_DIR}/compiler.c
+    --compiler ${CMAKE_CURRENT_LIST_DIR}
   DEPENDS
     ${CMAKE_CURRENT_LIST_DIR}/tools/mnemonic_coverage.py
-    ${CMAKE_CURRENT_LIST_DIR}/compiler.c
+    ${SIRCC_COMPILER_SOURCES}
     ${CMAKE_CURRENT_LIST_DIR}/../../schema/sir/v1.0/mnemonics.html
   VERBATIM
 )
@@ -175,7 +192,7 @@ add_test(
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/mnemonic_coverage.py
     --enforce-m3
     --spec ${CMAKE_CURRENT_LIST_DIR}/../../schema/sir/v1.0/mnemonics.html
-    --compiler ${CMAKE_CURRENT_LIST_DIR}/compiler.c
+    --compiler ${CMAKE_CURRENT_LIST_DIR}
 )
 
 add_test(

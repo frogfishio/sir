@@ -4,7 +4,7 @@ Mnemonic coverage checker for sircc.
 
 Goal:
 - Parse the normative mnemonic vocabulary from schema/sir/v1.0/mnemonics.html
-- Infer what sircc currently implements (best-effort) from src/sircc/compiler.c
+- Infer what sircc currently implements (best-effort) from the compiler sources in src/sircc/
 - Enforce Milestone 3 (core / ungated) coverage for a curated “base set”
 
 This tool intentionally avoids dependencies (no BeautifulSoup) to keep the repo
@@ -105,7 +105,7 @@ def parse_spec_mnemonics(mnemonics_html: str) -> list[SpecMnemonic]:
 
 def extract_prims_from_compiler(csrc: str) -> set[str]:
     # Parse the lower_type_prim table to keep this in sync with sircc.
-    m = re.search(r"static\s+LLVMTypeRef\s+lower_type_prim\([^{]+\)\s*\{", csrc)
+    m = re.search(r"(?:static\s+)?LLVMTypeRef\s+lower_type_prim\([^{]+\)\s*\{", csrc)
     if not m:
         return set()
     start = m.end()
@@ -141,7 +141,7 @@ def infer_implemented_mnemonics(csrc: str) -> set[str]:
     # ptr.*
     impl |= {f"ptr.{op}" for op in ["sym", "sizeof", "alignof", "offset", "cmp.eq", "cmp.ne", "add", "sub", "to_i64", "from_i64"]}
 
-    # f32.* / f64.* (as implemented in compiler.c).
+    # f32.* / f64.* (as implemented in sircc lowering).
     float_ops = ["add", "sub", "mul", "div", "neg", "abs", "sqrt", "min", "max"]
     float_cmps = [
         "cmp.oeq",
@@ -162,7 +162,7 @@ def infer_implemented_mnemonics(csrc: str) -> set[str]:
         for op in float_ops + float_cmps + float_from:
             impl.add(f"f{w}.{op}")
 
-    # i8/i16/i32/i64 mnemonics (as implemented in compiler.c).
+    # i8/i16/i32/i64 mnemonics (as implemented in sircc lowering).
     int_widths = [8, 16, 32, 64]
     int_ops = [
         "add",
@@ -396,7 +396,11 @@ def emit_support_table(spec: list[SpecMnemonic], impl: set[str], out_c: pathlib.
 def main() -> int:
     ap = argparse.ArgumentParser(description="sircc mnemonic coverage checker")
     ap.add_argument("--spec", default="schema/sir/v1.0/mnemonics.html", help="path to mnemonics.html")
-    ap.add_argument("--compiler", default="src/sircc/compiler.c", help="path to sircc compiler.c")
+    ap.add_argument(
+        "--compiler",
+        default="src/sircc",
+        help="path to sircc compiler source file or directory (directory scans compiler*.c, compiler*.h)",
+    )
     ap.add_argument("--enforce-m3", action="store_true", help="fail if any Milestone 3 core mnemonic is missing")
     ap.add_argument("--emit-support-c", help="write generated support table C source to this path")
     ap.add_argument("--emit-support-h", help="write generated support table C header to this path")
@@ -412,7 +416,17 @@ def main() -> int:
         return 2
 
     spec = parse_spec_mnemonics(spec_path.read_text(encoding="utf-8"))
-    impl = infer_implemented_mnemonics(comp_path.read_text(encoding="utf-8"))
+
+    if comp_path.is_dir():
+        parts: list[str] = []
+        for p in sorted(comp_path.glob("compiler*.c")) + sorted(comp_path.glob("compiler*.h")):
+            if p.is_file():
+                parts.append(p.read_text(encoding="utf-8"))
+        csrc = "\n".join(parts)
+    else:
+        csrc = comp_path.read_text(encoding="utf-8")
+
+    impl = infer_implemented_mnemonics(csrc)
 
     if args.emit_support_c or args.emit_support_h:
         if not args.emit_support_c or not args.emit_support_h:
