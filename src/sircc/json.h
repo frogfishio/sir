@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 typedef struct Arena Arena;
 
@@ -59,3 +60,6 @@ const char* json_get_string(const JsonValue* v);
 bool json_get_i64(const JsonValue* v, int64_t* out);
 bool json_is_object(const JsonValue* v);
 bool json_is_array(const JsonValue* v);
+
+// Writes a JSON string literal (including surrounding quotes) with proper escaping.
+void json_write_escaped(FILE* out, const char* s);

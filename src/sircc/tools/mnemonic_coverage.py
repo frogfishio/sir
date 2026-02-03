@@ -321,11 +321,16 @@ def emit_support_table(spec: list[SpecMnemonic], impl: set[str], out_c: pathlib.
     )
 
     def emit_str_array(name: str, items: list[str]) -> str:
+        # In C11 with -Werror, empty initializer lists / zero-length arrays are
+        # rejected, so always emit at least a NULL sentinel and keep count
+        # separately as the logical size.
         lines = [f"const char* const {name}[] = {{"]
-        for it in items:
-            lines.append(f'  "{c_escape(it)}",')
+        if items:
+            for it in items:
+                lines.append(f'  "{c_escape(it)}",')
+        lines.append("  NULL,")
         lines.append("};")
-        lines.append(f"const size_t {name}_count = sizeof({name}) / sizeof({name}[0]);")
+        lines.append(f"const size_t {name}_count = {len(items)};")
         return "\n".join(lines)
 
     # Source (defs).

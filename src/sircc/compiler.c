@@ -158,25 +158,6 @@ static bool want_color(const SirccOptions* opt) {
   return true;
 }
 
-static void json_write_escaped(FILE* out, const char* s) {
-  fputc('"', out);
-  for (const unsigned char* p = (const unsigned char*)s; p && *p; p++) {
-    unsigned char c = *p;
-    switch (c) {
-      case '\\': fputs("\\\\", out); break;
-      case '"': fputs("\\\"", out); break;
-      case '\n': fputs("\\n", out); break;
-      case '\r': fputs("\\r", out); break;
-      case '\t': fputs("\\t", out); break;
-      default:
-        if (c < 0x20) fprintf(out, "\\u%04x", (unsigned)c);
-        else fputc((int)c, out);
-        break;
-    }
-  }
-  fputc('"', out);
-}
-
 static void bump_exit_code(SirProgram* p, int code) {
   if (!p) return;
   // Keep internal errors sticky, otherwise prefer toolchain over generic error.
@@ -273,6 +254,39 @@ static void errf(SirProgram* p, const char* fmt, ...) {
       }
       fprintf(stderr, "}");
     }
+
+    // JSON source context (mirrors --diag-context in text mode).
+    if (p && opt && opt->diag_context > 0 && p->cur_path && p->cur_line > 0) {
+      size_t ctx = (size_t)opt->diag_context;
+      if (ctx > 200) ctx = 200;  // avoid accidentally emitting huge blobs
+
+      FILE* ctxf = fopen(p->cur_path, "rb");
+      if (ctxf) {
+        size_t lo = (p->cur_line > ctx) ? (p->cur_line - ctx) : 1;
+        size_t hi = p->cur_line + ctx;
+        fprintf(stderr, ",\"context\":[");
+
+        char* lbuf = NULL;
+        size_t lcap = 0;
+        size_t llen = 0;
+        size_t lno = 0;
+        bool first = true;
+        while (read_line(ctxf, &lbuf, &lcap, &llen)) {
+          lno++;
+          if (lno < lo) continue;
+          if (lno > hi) break;
+          if (!first) fprintf(stderr, ",");
+          first = false;
+          fprintf(stderr, "{\"line\":%zu,\"text\":", lno);
+          json_write_escaped(stderr, lbuf ? lbuf : "");
+          fprintf(stderr, "}");
+        }
+        free(lbuf);
+        fclose(ctxf);
+        fprintf(stderr, "],\"context_line\":%zu", (size_t)p->cur_line);
+      }
+    }
+
     fprintf(stderr, "}\n");
   } else {
     if (file) {

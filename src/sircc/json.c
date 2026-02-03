@@ -5,6 +5,7 @@
 #include "sircc.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -160,6 +161,32 @@ static bool parse_string(Parser* p, JsonValue** out) {
   str->v.s = s;
   *out = str;
   return true;
+}
+
+void json_write_escaped(FILE* out, const char* s) {
+  if (!out) return;
+  if (!s) s = "";
+  fputc('"', out);
+  for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+    unsigned char c = *p;
+    switch (c) {
+      case '"': fputs("\\\"", out); break;
+      case '\\': fputs("\\\\", out); break;
+      case '\b': fputs("\\b", out); break;
+      case '\f': fputs("\\f", out); break;
+      case '\n': fputs("\\n", out); break;
+      case '\r': fputs("\\r", out); break;
+      case '\t': fputs("\\t", out); break;
+      default:
+        if (c < 0x20) {
+          fprintf(out, "\\u%04x", (unsigned)c);
+        } else {
+          fputc((int)c, out);
+        }
+        break;
+    }
+  }
+  fputc('"', out);
 }
 
 static bool parse_array(Parser* p, JsonValue** out) {

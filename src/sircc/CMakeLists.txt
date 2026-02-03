@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(sircc
   main.c
   compiler.c
+  support.c
+  check.c
   sircc.c
   json.c
 )
@@ -11,6 +13,25 @@ target_include_directories(sircc PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
 find_package(LLVM REQUIRED CONFIG)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(SIRCC_SUPPORT_GEN_C ${CMAKE_CURRENT_BINARY_DIR}/sircc_support_table.generated.c)
+set(SIRCC_SUPPORT_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/sircc_support_table.generated.h)
+add_custom_command(
+  OUTPUT ${SIRCC_SUPPORT_GEN_C} ${SIRCC_SUPPORT_GEN_H}
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/mnemonic_coverage.py
+    --emit-support-c ${SIRCC_SUPPORT_GEN_C}
+    --emit-support-h ${SIRCC_SUPPORT_GEN_H}
+    --spec ${CMAKE_CURRENT_LIST_DIR}/../../schema/sir/v1.0/mnemonics.html
+    --compiler ${CMAKE_CURRENT_LIST_DIR}/compiler.c
+  DEPENDS
+    ${CMAKE_CURRENT_LIST_DIR}/tools/mnemonic_coverage.py
+    ${CMAKE_CURRENT_LIST_DIR}/compiler.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../schema/sir/v1.0/mnemonics.html
+  VERBATIM
+)
+
+target_sources(sircc PRIVATE ${SIRCC_SUPPORT_GEN_C})
+target_include_directories(sircc PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(sircc PRIVATE ${LLVM_INCLUDE_DIRS})
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND "${LLVM_DEFINITIONS}")

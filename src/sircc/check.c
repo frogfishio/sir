@@ -58,20 +58,6 @@ static int run_exe(const char* exe_path) {
   return 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
 }
 
-static bool infer_dist_root_from_argv0(const char* argv0, char* out, size_t out_cap) {
-  if (!argv0 || !out || !out_cap) return false;
-  // Expect something like: .../dist/bin/<os>/sircc
-  const char* needle = "/dist/bin/";
-  const char* p = strstr(argv0, needle);
-  if (!p) return false;
-  size_t prefix = (size_t)(p - argv0);
-  if (prefix >= out_cap) return false;
-  memcpy(out, argv0, prefix);
-  out[prefix] = 0;
-  // append /dist
-  return path_join(out, out_cap, out, "dist");
-}
-
 static bool resolve_examples_dir(const SirccCheckOptions* chk, char* out, size_t out_cap) {
   if (!chk || !out || !out_cap) return false;
 
@@ -263,4 +249,3 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
 
   return ok_all ? 0 : SIRCC_EXIT_ERROR;
 }
-

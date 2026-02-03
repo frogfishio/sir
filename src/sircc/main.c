@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "compiler.h"
+#include "check.h"
+#include "support.h"
 #include "version.h"
 
 #include <llvm-c/Core.h>
@@ -18,6 +20,8 @@ static void usage(FILE* out) {
           "  sircc --verify-only <input.sir.jsonl>\n"
           "  sircc --dump-records --verify-only <input.sir.jsonl>\n"
           "  sircc --print-target [--target-triple <triple>]\n"
+          "  sircc --print-support [--format text|json] [--full]\n"
+          "  sircc --check [--dist-root <path>|--examples-dir <path>] [--format text|json]\n"
           "  sircc [--diagnostics text|json] [--color auto|always|never] [--diag-context N] [--verbose] [--strip]\n"
           "  sircc --require-pinned-triple ...\n"
           "  sircc --version\n");
@@ -30,6 +34,13 @@ static bool parse_enum_value(const char* v, const char* a, const char* b, const 
 }
 
 int main(int argc, char** argv) {
+  bool print_support = false;
+  bool support_full = false;
+  bool check = false;
+  const char* dist_root = NULL;
+  const char* examples_dir = NULL;
+  const char* format = "text";
+
   SirccOptions opt = {
       .input_path = NULL,
       .output_path = NULL,
@@ -66,12 +77,53 @@ int main(int argc, char** argv) {
       opt.verify_only = true;
       continue;
     }
+    if (strcmp(a, "--print-support") == 0) {
+      print_support = true;
+      continue;
+    }
+    if (strcmp(a, "--full") == 0) {
+      support_full = true;
+      continue;
+    }
+    if (strcmp(a, "--check") == 0) {
+      check = true;
+      continue;
+    }
+    if (strcmp(a, "--dist-root") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      dist_root = argv[++i];
+      continue;
+    }
+    if (strcmp(a, "--examples-dir") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      examples_dir = argv[++i];
+      continue;
+    }
     if (strcmp(a, "--dump-records") == 0) {
       opt.dump_records = true;
       continue;
     }
     if (strcmp(a, "--print-target") == 0) {
       opt.print_target = true;
+      continue;
+    }
+    if (strcmp(a, "--format") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      const char* v = argv[++i];
+      if (!parse_enum_value(v, "text", "json", NULL)) {
+        fprintf(stderr, "sircc: invalid --format value: %s\n", v);
+        return SIRCC_EXIT_USAGE;
+      }
+      format = v;
       continue;
     }
     if (strcmp(a, "--emit-llvm") == 0) {
@@ -184,6 +236,20 @@ int main(int argc, char** argv) {
 
   if (opt.print_target) {
     return sircc_print_target(opt.target_triple) ? 0 : 1;
+  }
+
+  if (print_support) {
+    SirccSupportFormat sf = streq(format, "json") ? SIRCC_SUPPORT_JSON : SIRCC_SUPPORT_TEXT;
+    return sircc_print_support(stdout, sf, support_full) ? 0 : SIRCC_EXIT_INTERNAL;
+  }
+
+  if (check) {
+    SirccCheckOptions chk = {
+        .dist_root = dist_root,
+        .examples_dir = examples_dir,
+        .format = streq(format, "json") ? SIRCC_CHECK_JSON : SIRCC_CHECK_TEXT,
+    };
+    return sircc_run_check(stdout, &opt, &chk);
   }
 
   if (!opt.input_path) {
