@@ -743,6 +743,84 @@ static const char* label_for_block(SirProgram* p, int64_t entry_id, int64_t bloc
   return arena_strdup(&p->arena, buf);
 }
 
+static const char* label_for_cbr_edge(SirProgram* p, int64_t term_id, const char* which) {
+  if (!p || !which) return NULL;
+  char buf[96];
+  snprintf(buf, sizeof(buf), "cbr_%s_%lld", which, (long long)term_id);
+  return arena_strdup(&p->arena, buf);
+}
+
+static bool emit_cfg_branch_args(
+    FILE* out,
+    SirProgram* p,
+    ZasmStr* strs,
+    size_t strs_len,
+    ZasmAlloca* allocas,
+    size_t allocas_len,
+    ZasmNameBinding* names,
+    size_t name_len,
+    ZasmBParamSlot** bps,
+    size_t* bp_len,
+    size_t* bp_cap,
+    int64_t to_id,
+    JsonValue* args,
+    int64_t* line) {
+  if (!args || args->type != JSON_ARRAY || args->v.arr.len == 0) return true;
+  if (!out || !p || !bps || !bp_len || !bp_cap || !line) return false;
+
+  NodeRec* to_blk = get_node(p, to_id);
+  JsonValue* to_params = (to_blk && to_blk->fields) ? json_obj_get(to_blk->fields, "params") : NULL;
+  if (!to_params || to_params->type != JSON_ARRAY || to_params->v.arr.len != args->v.arr.len) {
+    errf(p, "sircc: zasm: branch args must match destination block params");
+    return false;
+  }
+
+  for (size_t ai = 0; ai < args->v.arr.len; ai++) {
+    int64_t arg_id = 0;
+    int64_t param_id = 0;
+    if (!parse_node_ref_id(args->v.arr.items[ai], &arg_id) || !parse_node_ref_id(to_params->v.arr.items[ai], &param_id)) {
+      errf(p, "sircc: zasm: branch arg/param must be node refs");
+      return false;
+    }
+
+    const char* slot_sym = NULL;
+    int64_t slot_w = 0;
+    for (size_t bi = 0; bi < *bp_len; bi++) {
+      if ((*bps)[bi].node_id == param_id) {
+        slot_sym = (*bps)[bi].sym;
+        slot_w = (*bps)[bi].size_bytes;
+        break;
+      }
+    }
+    if (!slot_sym) {
+      NodeRec* pn = get_node(p, param_id);
+      slot_w = pn ? width_for_type_id(p, pn->type_ref) : 0;
+      if (!slot_w) slot_w = 8;
+      if (!ensure_bparam_slot(p, bps, bp_len, bp_cap, param_id, slot_w, &slot_sym)) {
+        errf(p, "sircc: zasm: out of memory");
+        return false;
+      }
+    }
+
+    const char* reg = reg_for_width(slot_w);
+    if (!reg) {
+      errf(p, "sircc: zasm: unsupported bparam width %lld", (long long)slot_w);
+      return false;
+    }
+
+    ZasmOp op = {0};
+    if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, name_len, *bps, *bp_len, arg_id, &op)) return false;
+    if (op.k == ZOP_SLOT) {
+      if (!emit_load_slot_to_reg(out, op.s, op.n, reg, (*line)++)) return false;
+    } else {
+      if (!emit_ld_reg_or_imm(out, reg, &op, (*line)++)) return false;
+    }
+    if (!emit_store_reg_to_slot(out, slot_sym, slot_w, reg, (*line)++)) return false;
+  }
+
+  return true;
+}
+
 bool emit_zasm_v11(SirProgram* p, const char* out_path) {
   if (!p || !out_path) return false;
 
@@ -839,7 +917,19 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
       return false;
     }
 
-    for (size_t bi = 0; bi < blocks->v.arr.len; bi++) {
+    size_t blocks_len = blocks->v.arr.len;
+    int64_t* block_ids = (int64_t*)calloc(blocks_len, sizeof(int64_t));
+    if (!block_ids) {
+      fclose(out);
+      free(strs);
+      free(allocas);
+      free(decls);
+      errf(p, "sircc: zasm: out of memory");
+      return false;
+    }
+
+    // Pass 1: validate blocks and pre-allocate bparam slots for all params.
+    for (size_t bi = 0; bi < blocks_len; bi++) {
       int64_t bid = 0;
       if (!parse_node_ref_id(blocks->v.arr.items[bi], &bid)) {
         fclose(out);
@@ -848,9 +938,11 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(decls);
         free(names);
         free(tmps);
+        free(block_ids);
         errf(p, "sircc: zasm: blocks[%zu] must be node ref", bi);
         return false;
       }
+      block_ids[bi] = bid;
       NodeRec* b = get_node(p, bid);
       if (!b || strcmp(b->tag, "block") != 0 || !b->fields) {
         fclose(out);
@@ -859,6 +951,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(decls);
         free(names);
         free(tmps);
+        free(block_ids);
         errf(p, "sircc: zasm: blocks[%zu] must be a block node", bi);
         return false;
       }
@@ -875,6 +968,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(names);
             free(tmps);
             free(bps);
+            free(block_ids);
             errf(p, "sircc: zasm: block %lld params[%zu] must be node ref", (long long)bid, pi);
             return false;
           }
@@ -887,6 +981,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(names);
             free(tmps);
             free(bps);
+            free(block_ids);
             errf(p, "sircc: zasm: block %lld param %lld must be bparam", (long long)bid, (long long)pid);
             return false;
           }
@@ -901,11 +996,46 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(names);
             free(tmps);
             free(bps);
+            free(block_ids);
             errf(p, "sircc: zasm: out of memory");
             return false;
           }
         }
       }
+    }
+
+    // Pass 2: emit blocks, forcing entry block first so tools that start at the first label
+    // (e.g. zem) run the same initialization path as native execution via `zir_main`.
+    ssize_t entry_index = -1;
+    for (size_t i = 0; i < blocks_len; i++) {
+      if (block_ids[i] == entry_id) {
+        entry_index = (ssize_t)i;
+        break;
+      }
+    }
+
+    for (size_t pass = 0; pass < 2; pass++) {
+      for (size_t bi = 0; bi < blocks_len; bi++) {
+        if (pass == 0) {
+          if (entry_index < 0 || (ssize_t)bi != entry_index) continue;
+        } else {
+          if (entry_index >= 0 && (ssize_t)bi == entry_index) continue;
+        }
+
+        int64_t bid = block_ids[bi];
+        NodeRec* b = get_node(p, bid);
+        if (!b || strcmp(b->tag, "block") != 0 || !b->fields) {
+          fclose(out);
+          free(strs);
+          free(allocas);
+          free(decls);
+          free(names);
+          free(tmps);
+          free(bps);
+          free(block_ids);
+          errf(p, "sircc: zasm: blocks[%zu] must be a block node", bi);
+          return false;
+        }
 
       const char* lbl = label_for_block(p, entry_id, bid);
       if (!lbl) {
@@ -915,6 +1045,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(decls);
         free(names);
         free(tmps);
+        free(block_ids);
         return false;
       }
 
@@ -933,6 +1064,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(decls);
         free(names);
         free(tmps);
+        free(block_ids);
         errf(p, "sircc: zasm: block %lld missing stmts array", (long long)bid);
         return false;
       }
@@ -975,6 +1107,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(names);
             free(tmps);
             free(bps);
+            free(block_ids);
             return false;
           }
           continue;
@@ -1178,6 +1311,8 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
           }
           JsonValue* thenv = json_obj_get(s->fields, "then");
           JsonValue* elsev = json_obj_get(s->fields, "else");
+          JsonValue* then_args = thenv ? json_obj_get(thenv, "args") : NULL;
+          JsonValue* else_args = elsev ? json_obj_get(elsev, "args") : NULL;
           int64_t then_id = 0, else_id = 0;
           if (!parse_node_ref_id(thenv ? json_obj_get(thenv, "to") : NULL, &then_id) ||
               !parse_node_ref_id(elsev ? json_obj_get(elsev, "to") : NULL, &else_id)) {
@@ -1348,13 +1483,37 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(tmps);
             return false;
           }
-          if (!emit_jr_cond(out, "NE", then_lbl, line++)) {
+
+          const char* then_edge = label_for_cbr_edge(p, s->id, "then");
+          if (!then_edge) {
             fclose(out);
             free(strs);
             free(allocas);
             free(decls);
             free(names);
             free(tmps);
+            errf(p, "sircc: zasm: out of memory");
+            return false;
+          }
+
+          if (!emit_jr_cond(out, "NE", then_edge, line++)) {
+            fclose(out);
+            free(strs);
+            free(allocas);
+            free(decls);
+            free(names);
+            free(tmps);
+            return false;
+          }
+
+          if (!emit_cfg_branch_args(out, p, strs, strs_len, allocas, allocas_len, names, name_len, &bps, &bp_len, &bp_cap, else_id, else_args, &line)) {
+            fclose(out);
+            free(strs);
+            free(allocas);
+            free(decls);
+            free(names);
+            free(tmps);
+            free(bps);
             return false;
           }
           if (!emit_jr(out, else_lbl, line++)) {
@@ -1366,6 +1525,34 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
             free(tmps);
             return false;
           }
+
+          zasm_write_ir_k(out, "label");
+          fprintf(out, ",\"name\":");
+          json_write_escaped(out, then_edge);
+          zasm_write_loc(out, line++);
+          fprintf(out, "}\n");
+
+          if (!emit_cfg_branch_args(out, p, strs, strs_len, allocas, allocas_len, names, name_len, &bps, &bp_len, &bp_cap, then_id, then_args, &line)) {
+            fclose(out);
+            free(strs);
+            free(allocas);
+            free(decls);
+            free(names);
+            free(tmps);
+            free(bps);
+            return false;
+          }
+          if (!emit_jr(out, then_lbl, line++)) {
+            fclose(out);
+            free(strs);
+            free(allocas);
+            free(decls);
+            free(names);
+            free(tmps);
+            free(block_ids);
+            return false;
+          }
+
           regcache_clear_all();
           terminated = true;
           break;
@@ -1377,6 +1564,7 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(decls);
         free(names);
         free(tmps);
+        free(block_ids);
         errf(p, "sircc: zasm: unsupported CFG stmt tag '%s'", s->tag);
         return false;
       }
@@ -1389,12 +1577,16 @@ bool emit_zasm_v11(SirProgram* p, const char* out_path) {
         free(decls);
         free(names);
         free(tmps);
+        free(block_ids);
         errf(p, "sircc: zasm: CFG block %lld missing terminator", (long long)bid);
         return false;
       }
 
       fprintf(out, "\n");
+      }
     }
+
+    free(block_ids);
 
     goto emit_data;
   }

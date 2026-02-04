@@ -17,6 +17,14 @@ cmake -S . -B build
 cmake --build build --target dist
 ```
 
+Optional (macOS arm64 only): enable LLVM-vs-lower comparison tests (for improving `lower`):
+
+```sh
+cmake -S . -B build -DSIRCC_ENABLE_LOWER_COMPARE_TESTS=ON
+cmake --build build
+ctest --test-dir build -R '^sircc_compare_lower_vs_llvm_' --output-on-failure
+```
+
 Then run:
 
 ```sh

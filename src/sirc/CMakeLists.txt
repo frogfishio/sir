@@ -104,7 +104,93 @@ if(TARGET sircc)
 	  sirc_add_verify_test(sirc_verify_call_indirect_ptrsym examples/call_indirect_ptrsym.sir)
 	  sirc_add_verify_test(sirc_verify_load_store_no_align examples/load_store_no_align.sir)
 	  sirc_add_verify_test(sirc_verify_trap examples/trap.sir)
-	  sirc_add_verify_test(sirc_verify_cfg_if examples/cfg_if.sir)
-	  sirc_add_verify_test(sirc_verify_cfg_switch examples/cfg_switch.sir)
-	  sirc_add_verify_test(sirc_verify_cfg_join_phi examples/cfg_join_phi.sir)
-	endif()
+  sirc_add_verify_test(sirc_verify_cfg_if examples/cfg_if.sir)
+  sirc_add_verify_test(sirc_verify_cfg_switch examples/cfg_switch.sir)
+  sirc_add_verify_test(sirc_verify_cfg_join_phi examples/cfg_join_phi.sir)
+  sirc_add_verify_test(sirc_verify_sendloop_mono examples/sendloop_mono.sir)
+  sirc_add_verify_test(sirc_verify_sendloop_uniform examples/sendloop_uniform.sir)
+
+  if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem" AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck")
+    function(sirc_add_zem_test name input_rel expect_stdout)
+      add_test(
+        NAME ${name}
+        COMMAND ${CMAKE_COMMAND}
+          -DSIRC=$<TARGET_FILE:sirc>
+          -DSIRCC=$<TARGET_FILE:sircc>
+          -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+          -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+          -DINPUT_SIR=${CMAKE_CURRENT_LIST_DIR}/${input_rel}
+          -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${name}
+          "-DEXPECT_STDOUT=${expect_stdout}"
+          -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_then_emit_zasm_and_run_zem.cmake
+      )
+    endfunction()
+
+    sirc_add_zem_test(sirc_zem_sendloop_mono examples/sendloop_mono.sir "A")
+    sirc_add_zem_test(sirc_zem_sendloop_uniform examples/sendloop_uniform.sir "D")
+  endif()
+
+  if(SIRCC_ENABLE_LOWER_COMPARE_TESTS AND APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower" AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck" AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/lib/libzingcore25.a")
+    function(sirc_add_compare_lower_test name input_rel expect_stdout)
+      add_test(
+        NAME ${name}
+        COMMAND ${CMAKE_COMMAND}
+          -DSIRC=$<TARGET_FILE:sirc>
+          -DSIRCC=$<TARGET_FILE:sircc>
+          -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+          -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+          -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+          -DINPUT_SIR=${CMAKE_CURRENT_LIST_DIR}/${input_rel}
+          -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${name}
+          "-DEXPECT_STDOUT=${expect_stdout}"
+          -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_then_compare_lower_vs_llvm.cmake
+      )
+    endfunction()
+
+    sirc_add_compare_lower_test(sirc_compare_lower_vs_llvm_sendloop_mono examples/sendloop_mono.sir "A")
+    sirc_add_compare_lower_test(sirc_compare_lower_vs_llvm_sendloop_uniform examples/sendloop_uniform.sir "D")
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem")
+      function(sirc_add_compare_lower_pgo_test name input_rel expect_stdout)
+        add_test(
+          NAME ${name}
+          COMMAND ${CMAKE_COMMAND}
+            -DSIRC=$<TARGET_FILE:sirc>
+            -DSIRCC=$<TARGET_FILE:sircc>
+            -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+            -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+            -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+            -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+            -DINPUT_SIR=${CMAKE_CURRENT_LIST_DIR}/${input_rel}
+            -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${name}
+            "-DEXPECT_STDOUT=${expect_stdout}"
+            -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_then_compare_lower_vs_llvm.cmake
+        )
+      endfunction()
+
+      sirc_add_compare_lower_pgo_test(sirc_compare_lower_vs_llvm_sendloop_mono_pgo_len examples/sendloop_mono.sir "A")
+      sirc_add_compare_lower_pgo_test(sirc_compare_lower_vs_llvm_sendloop_uniform_pgo_len examples/sendloop_uniform.sir "D")
+
+      function(sirc_add_compare_lower_strip_test name input_rel expect_stdout)
+        add_test(
+          NAME ${name}
+          COMMAND ${CMAKE_COMMAND}
+            -DSIRC=$<TARGET_FILE:sirc>
+            -DSIRCC=$<TARGET_FILE:sircc>
+            -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+            -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+            -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+            -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+            -DINPUT_SIR=${CMAKE_CURRENT_LIST_DIR}/${input_rel}
+            -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${name}
+            "-DEXPECT_STDOUT=${expect_stdout}"
+            -DSTRIP_MODE=uncovered-delete
+            -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_then_compare_lower_vs_llvm.cmake
+        )
+      endfunction()
+
+      sirc_add_compare_lower_strip_test(sirc_compare_lower_vs_llvm_sendloop_mono_strip_uncovered examples/sendloop_mono.sir "A")
+      sirc_add_compare_lower_strip_test(sirc_compare_lower_vs_llvm_sendloop_uniform_strip_uncovered examples/sendloop_uniform.sir "D")
+    endif()
+  endif()
+endif()

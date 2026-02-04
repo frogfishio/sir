@@ -1116,7 +1116,17 @@ int64_t sirc_term_br(char* to_block_name, SircExprList* args) {
   return id;
 }
 
-int64_t sirc_term_cbr(int64_t cond, char* then_block_name, char* else_block_name) {
+static void emit_branch_args_obj(SircExprList* args) {
+  if (!args || !args->len) return;
+  emitf(",\"args\":[");
+  for (size_t i = 0; i < args->len; i++) {
+    if (i) emitf(",");
+    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)args->nodes[i]);
+  }
+  emitf("]");
+}
+
+int64_t sirc_term_cbr(int64_t cond, char* then_block_name, SircExprList* then_args, char* else_block_name, SircExprList* else_args) {
   if (!then_block_name || !else_block_name) die_at_last("sirc: term.cbr requires then/else targets");
   int64_t then_id = block_id_for_name(then_block_name);
   int64_t else_id = block_id_for_name(else_block_name);
@@ -1125,9 +1135,23 @@ int64_t sirc_term_cbr(int64_t cond, char* then_block_name, char* else_block_name
 
   int64_t id = emit_node_with_fields_begin("term.cbr", 0);
   emitf("\"cond\":{\"t\":\"ref\",\"id\":%lld}", (long long)cond);
-  emitf(",\"then\":{\"to\":{\"t\":\"ref\",\"id\":%lld}}", (long long)then_id);
-  emitf(",\"else\":{\"to\":{\"t\":\"ref\",\"id\":%lld}}", (long long)else_id);
+  emitf(",\"then\":{");
+  emitf("\"to\":{\"t\":\"ref\",\"id\":%lld}", (long long)then_id);
+  emit_branch_args_obj(then_args);
+  emitf("}");
+  emitf(",\"else\":{");
+  emitf("\"to\":{\"t\":\"ref\",\"id\":%lld}", (long long)else_id);
+  emit_branch_args_obj(else_args);
+  emitf("}");
   emit_fields_end();
+  if (then_args) {
+    free(then_args->nodes);
+    free(then_args);
+  }
+  if (else_args) {
+    free(else_args->nodes);
+    free(else_args);
+  }
   return id;
 }
 

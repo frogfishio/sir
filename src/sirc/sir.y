@@ -188,8 +188,8 @@ term_br_stmt
   ;
 
 term_cbr_stmt
-  : T_TERM_CBR T_COND ':' expr ',' nl_star T_THEN ':' T_ID ',' nl_star T_ELSE ':' T_ID
-    { $$ = sirc_term_cbr($4, $9, $14); }
+  : T_TERM_CBR T_COND ':' expr ',' nl_star T_THEN ':' T_ID term_args_opt ',' nl_star T_ELSE ':' T_ID term_args_opt
+    { $$ = sirc_term_cbr($4, $9, $10, $15, $16); }
   ;
 
 switch_cases_opt

@@ -84,7 +84,7 @@ SircSwitchCaseList* sirc_cases_empty(void);
 SircSwitchCaseList* sirc_cases_append(SircSwitchCaseList* l, int64_t lit_node, char* to_block_name); // takes ownership of to_block_name
 
 int64_t sirc_term_br(char* to_block_name, SircExprList* args); // takes ownership of to_block_name
-int64_t sirc_term_cbr(int64_t cond, char* then_block_name, char* else_block_name); // takes ownership
+int64_t sirc_term_cbr(int64_t cond, char* then_block_name, SircExprList* then_args, char* else_block_name, SircExprList* else_args); // takes ownership
 int64_t sirc_term_switch(int64_t scrut, SircSwitchCaseList* cases, char* default_block_name); // takes ownership
 int64_t sirc_term_ret_opt(int has_value, int64_t value_node);
 int64_t sirc_term_unreachable(SircAttrList* attrs);

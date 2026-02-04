@@ -749,6 +749,69 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
         return false;
       }
 
+      // Pre-create PHIs for block params so branches can add incoming values regardless of block order.
+      // (Otherwise, a forward branch would see pn->llvm_value == NULL.)
+      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
+        int64_t bid = 0;
+        if (!parse_node_ref_id(blocks_v->v.arr.items[bi], &bid)) continue;
+        NodeRec* bn = get_node(p, bid);
+        LLVMBasicBlockRef bb = f.blocks_by_node[bid];
+        if (!bn || !bb || !bn->fields) continue;
+
+        JsonValue* params = json_obj_get(bn->fields, "params");
+        if (!params) continue;
+        if (params->type != JSON_ARRAY) {
+          errf(p, "sircc: block %lld params must be an array", (long long)bid);
+          free(f.blocks_by_node);
+          free(f.binds);
+          return false;
+        }
+
+        LLVMBuilderRef b = LLVMCreateBuilderInContext(ctx);
+        LLVMValueRef first = LLVMGetFirstInstruction(bb);
+        if (first) LLVMPositionBuilderBefore(b, first);
+        else LLVMPositionBuilderAtEnd(b, bb);
+
+        for (size_t pi = 0; pi < params->v.arr.len; pi++) {
+          int64_t pid = 0;
+          if (!parse_node_ref_id(params->v.arr.items[pi], &pid)) {
+            errf(p, "sircc: block %lld params[%zu] must be node refs", (long long)bid, pi);
+            LLVMDisposeBuilder(b);
+            free(f.blocks_by_node);
+            free(f.binds);
+            return false;
+          }
+          NodeRec* pn = get_node(p, pid);
+          if (!pn || strcmp(pn->tag, "bparam") != 0) {
+            errf(p, "sircc: block %lld params[%zu] must reference bparam nodes", (long long)bid, pi);
+            LLVMDisposeBuilder(b);
+            free(f.blocks_by_node);
+            free(f.binds);
+            return false;
+          }
+          if (!pn->llvm_value) {
+            if (pn->type_ref == 0) {
+              errf(p, "sircc: bparam node %lld missing type_ref", (long long)pid);
+              LLVMDisposeBuilder(b);
+              free(f.blocks_by_node);
+              free(f.binds);
+              return false;
+            }
+            LLVMTypeRef pty = lower_type(p, ctx, pn->type_ref);
+            if (!pty) {
+              errf(p, "sircc: bparam node %lld has invalid type_ref", (long long)pid);
+              LLVMDisposeBuilder(b);
+              free(f.blocks_by_node);
+              free(f.binds);
+              return false;
+            }
+            pn->llvm_value = LLVMBuildPhi(b, pty, "bparam");
+          }
+        }
+
+        LLVMDisposeBuilder(b);
+      }
+
       // Lower blocks in listed order.
       for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
         int64_t bid = 0;
@@ -790,23 +853,13 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
               free(f.binds);
               return false;
             }
-            if (pn->llvm_value) continue;
-            if (pn->type_ref == 0) {
-              errf(p, "sircc: bparam node %lld missing type_ref", (long long)pid);
+            if (!pn->llvm_value) {
+              errf(p, "sircc: bparam node %lld missing lowered phi", (long long)pid);
               LLVMDisposeBuilder(builder);
               free(f.blocks_by_node);
               free(f.binds);
               return false;
             }
-            LLVMTypeRef pty = lower_type(p, ctx, pn->type_ref);
-            if (!pty) {
-              errf(p, "sircc: bparam node %lld has invalid type_ref", (long long)pid);
-              LLVMDisposeBuilder(builder);
-              free(f.blocks_by_node);
-              free(f.binds);
-              return false;
-            }
-            pn->llvm_value = LLVMBuildPhi(builder, pty, "bparam");
             const char* bname = pn->fields ? json_get_string(json_obj_get(pn->fields, "name")) : NULL;
             if (bname) {
               LLVMSetValueName2(pn->llvm_value, bname, strlen(bname));

@@ -17,6 +17,14 @@ cmake -S . -B build
 cmake --build build --target dist
 ```
 
+Optional (macOS arm64 only): enable LLVM-vs-lower comparison tests (for improving `lower`):
+
+```sh
+cmake -S . -B build -DSIRCC_ENABLE_LOWER_COMPARE_TESTS=ON
+cmake --build build
+ctest --test-dir build -R '^sircc_compare_lower_vs_llvm_' --output-on-failure
+```
+
 Then run:
 
 ```sh
@@ -35,7 +43,7 @@ If you also built `sirc`, you can do the full pipeline from `.sir`:
 ## CLI
 
 ```text
-sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj] [--clang <path>] [--target-triple <triple>]
+sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj|--emit-zasm] [--clang <path>] [--target-triple <triple>]
 sircc --verify-only <input.sir.jsonl>
 sircc --dump-records --verify-only <input.sir.jsonl>
 sircc --print-target [--target-triple <triple>]
@@ -50,6 +58,7 @@ Notes:
 - default output is a native executable (links via `clang`)
 - `--emit-llvm` writes LLVM IR (`.ll`)
 - `--emit-obj` writes an object file (`.o`)
+- `--emit-zasm` writes a `zasm-v1.1` JSONL stream (zir) (`.jsonl`)
 - if `meta.ext.target.triple` is present, it is used unless `--target-triple` overrides it
 - `--strip` runs `strip` on the output executable (useful for smaller distribution artifacts)
 - `--require-pinned-triple` fails if neither `--target-triple` nor `meta.ext.target.triple` is provided
@@ -59,3 +68,16 @@ Notes:
 - `--check` runs a small “try immediately” suite over `dist/test/examples` (or a custom `--examples-dir`)
 - `--runtime zabi25` links against the zABI 2.5 host runtime (default root is autodetected; override via `--zabi25-root` or `SIRCC_ZABI25_ROOT`)
   - zABI mode expects you to export an entrypoint named `zir_main` (the host shim provides `main()` and calls `zir_main()` after installing the zABI host).
+
+## ZASM backend (zir) notes
+
+`--emit-zasm` is an experimental backend that emits a `zasm-v1.1` JSONL stream intended to be checked by `ircheck` and executed by `zem`.
+
+Current calling convention model (ZASM64 “Lembeh” ABI, as used by the backend):
+- integer/pointer args are passed in registers in order: `HL`, `DE`, `BC`, `IX`
+- integer return value is in `HL`
+- `CALL` is treated as clobbering all general registers (`HL`, `DE`, `BC`, `IX`, `A`) unless explicitly saved/restored by the caller
+
+If you call an extern from ZASM output, design it as if it were a freestanding ABI:
+- don’t rely on preserved registers unless you save them yourself
+- pass only primitive ints/pointers (no structs, no varargs) until the ABI model is extended

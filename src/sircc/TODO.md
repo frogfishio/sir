@@ -215,3 +215,7 @@ This is a separate emission path (`sircc --emit-zasm`) targeting `zasm-v1.1` JSO
 - [x] ZASM micro-opt: avoid duplicate slot loads for `a op a`
 - [x] ZASM block-local reg cache: reuse repeated slot loads into `HL`/`DE` (conservative; reset at labels and around calls)
 - [x] ZASM reg-cache regression test: store then reload same slot must reflect new value
+
+### Optional: compare LLVM vs `lower`
+
+- [ ] Add an opt-in test suite comparing `sircc` (LLVM) output vs `lower` output on the same inputs (stdout + exit code + size)

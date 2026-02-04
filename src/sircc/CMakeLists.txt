@@ -33,6 +33,8 @@ target_include_directories(sircc PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 find_package(LLVM REQUIRED CONFIG)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+option(SIRCC_ENABLE_LOWER_COMPARE_TESTS "Enable LLVM-vs-lower comparison tests (requires ext/integration-pack/macos-arm64/bin/lower; may fail while lower is WIP)" OFF)
+
 set(SIRCC_SUPPORT_GEN_C ${CMAKE_CURRENT_BINARY_DIR}/sircc_support_table.generated.c)
 set(SIRCC_SUPPORT_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/sircc_support_table.generated.h)
 
@@ -750,6 +752,79 @@ add_test(
     -DEXPECT3=\\\"tag\\\":\\\"call.indirect\\\"
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
 )
+
+if(SIRCC_ENABLE_LOWER_COMPARE_TESTS AND APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower" AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck" AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/lib/libzingcore25.a")
+  add_test(
+    NAME sircc_compare_lower_vs_llvm_hello_zabi25_write
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/hello_zabi25_write.sir.jsonl
+      -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/compare_lower_hello_zabi25_write
+      "-DEXPECT_STDOUT=hello from zABI25"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/compare_llvm_vs_lower.cmake
+  )
+
+  add_test(
+    NAME sircc_compare_lower_vs_llvm_mem_copy_fill_zir_main
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/mem_copy_fill_zir_main.sir.jsonl
+      -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/compare_lower_mem_copy_fill_zir_main
+      "-DEXPECT_STDOUT=*"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/compare_llvm_vs_lower.cmake
+  )
+
+  if(EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem")
+    add_test(
+      NAME sircc_compare_lower_vs_llvm_hello_zabi25_write_pgo_len
+      COMMAND ${CMAKE_COMMAND}
+        -DSIRCC=$<TARGET_FILE:sircc>
+        -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+        -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+        -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+        -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+        -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/hello_zabi25_write.sir.jsonl
+        -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/compare_lower_hello_zabi25_write_pgo_len
+        "-DEXPECT_STDOUT=hello from zABI25"
+        -P ${CMAKE_CURRENT_LIST_DIR}/tests/compare_llvm_vs_lower.cmake
+    )
+
+    add_test(
+      NAME sircc_compare_lower_vs_llvm_mem_copy_fill_zir_main_pgo_len
+      COMMAND ${CMAKE_COMMAND}
+        -DSIRCC=$<TARGET_FILE:sircc>
+        -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+        -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+        -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+        -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+        -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/mem_copy_fill_zir_main.sir.jsonl
+        -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/compare_lower_mem_copy_fill_zir_main_pgo_len
+        "-DEXPECT_STDOUT=*"
+        -P ${CMAKE_CURRENT_LIST_DIR}/tests/compare_llvm_vs_lower.cmake
+    )
+
+    add_test(
+      NAME sircc_compare_lower_vs_llvm_mem_copy_fill_zir_main_strip_uncovered
+      COMMAND ${CMAKE_COMMAND}
+        -DSIRCC=$<TARGET_FILE:sircc>
+        -DLOWER=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/lower
+        -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+        -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+        -DZABI25_ROOT=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64
+        -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/mem_copy_fill_zir_main.sir.jsonl
+        -DOUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/compare_lower_mem_copy_fill_zir_main_strip_uncovered
+        "-DEXPECT_STDOUT=*"
+        -DSTRIP_MODE=uncovered-delete
+        -P ${CMAKE_CURRENT_LIST_DIR}/tests/compare_llvm_vs_lower.cmake
+    )
+  endif()
+endif()
 
 add_test(
   NAME sircc_verify_reject_cfg_early_term
