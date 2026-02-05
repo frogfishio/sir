@@ -95,15 +95,16 @@ Goal: make the LLVM backend + node frontend stable enough that an integrator can
 
 - [ ] **Diagnostics hardening**
   - [ ] Replace remaining `errf(...)` in new packs with `err_codef(...)` (stable codes)
+    - [x] `fun:v1` / `closure:v1` / `adt:v1` / `sem:v1`: all pack-specific errors use `err_codef(...)`
   - [ ] Ensure every error produced during lowering includes record context (`k/id/tag`) when available
 
 - [ ] **Conformance suite expansion**
-  - [ ] Add a “pack corpus” under `dist/test/examples` covering fun/closure/adt/sem (positive + negative)
-  - [ ] Add `sircc --check` coverage for these new examples
+  - [x] Add a “pack corpus” under `dist/test/examples` covering fun/closure/adt/sem (positive)
+  - [x] Add `sircc --check` coverage for these new examples
 
 - [ ] **Integrator-facing docs**
-  - [ ] Document the exact supported node tags/shapes for fun/closure/adt/sem (including current limitations like closure env equality)
-  - [ ] Add “producer rules” checklist: required features, type defs, and ordering expectations
+  - [x] Document the exact supported node tags/shapes for fun/closure/adt/sem (including current limitations like closure env equality)
+  - [x] Add “producer rules” checklist: required features, type defs, and ordering expectations
 
 ## Milestone 2 — Core backend architecture (so “all mnemonics” is tractable)
 

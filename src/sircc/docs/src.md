@@ -69,6 +69,60 @@ Notes:
 - `--runtime zabi25` links against the zABI 2.5 host runtime (default root is autodetected; override via `--zabi25-root` or `SIRCC_ZABI25_ROOT`)
   - zABI mode expects you to export an entrypoint named `zir_main` (the host shim provides `main()` and calls `zir_main()` after installing the zABI host).
 
+## Packs (node frontend)
+
+These feature gates are enabled via `meta.ext.features` (array of strings). If a gate is missing, `sircc` rejects gated node tags.
+
+### `fun:v1` (higher-order functions)
+
+- Types:
+  - `type.kind:"fun"` with `sig:<fn-type-id>`
+- Nodes:
+  - `fun.sym` produces a function value for a symbol name
+    - producer rule: the symbol must have a prior `fn` or `decl.fn` node in the stream, and the referenced signature must match `fun.sig`
+    - `fun.sym` rejects collisions with data globals (`sym(kind=var|const)`)
+  - `call.fun` calls a `fun` value: `fields.args:[callee, arg0, ...]`
+  - `fun.cmp.eq/ne` compares function values for equality
+- Opaqueness rule:
+  - `fun` values are opaque (no `ptr.*` arithmetic/casts on `fun`-typed nodes; use `fun.*` / `call.fun`).
+
+### `closure:v1` (closures)
+
+- Types:
+  - `type.kind:"closure"` with `callSig:<fn-type-id>` and `env:<type-id>`
+- Nodes:
+  - `closure.make` builds a closure from `{code, env}`:
+    - `code` must be a `fun` value of derived signature `codeSig = (envTy, callSig.params...) -> callSig.ret`
+    - `env` type must match `envTy`
+  - `closure.sym` builds a closure from an extern `code` symbol + `env` value
+  - `call.closure` calls a closure value: `fields.args:[callee, arg0, ...]`
+  - `closure.code` / `closure.env` project components
+  - `closure.cmp.eq/ne` compares closures (currently supports integer/pointer env equality only)
+- Opaqueness rule:
+  - `closure` values are opaque (no `ptr.*` arithmetic/casts on `closure`-typed nodes; use `closure.*` / `call.closure`).
+
+### `adt:v1` (sum types)
+
+- Types:
+  - `type.kind:"sum"` with `variants:[{name, ty?}, ...]` where `ty` is optional for nullary variants
+- Nodes:
+  - `adt.make` constructs a sum value (`flags.variant` selects the variant)
+  - `adt.tag` extracts the `i32` tag
+  - `adt.is` compares tag against `flags.variant` (out-of-range variant deterministically traps)
+  - `adt.get` extracts the payload for `flags.variant` (wrong-variant deterministically traps; nullary get is rejected)
+
+### `sem:v1` (semantic algebra; deterministic desugaring)
+
+- Nodes:
+  - `sem.if` (value-level conditional): `args:[cond, thenBranch, elseBranch]`
+  - `sem.and_sc` / `sem.or_sc` (short-circuit)
+  - `sem.match_sum` (sum matching): `fields.sum`, `args:[scrut]`, `fields.cases[]`, `fields.default`
+- Branch operands are objects:
+  - `{ "kind":"val", "v": <node-ref> }`
+  - `{ "kind":"thunk", "f": <fun/closure node-ref> }`
+    - thunks are 0-arg for `sem.if/and_sc/or_sc`
+    - for `sem.match_sum`, case bodies may be 0-arg thunks or 1-arg thunks (payload passed); the thunk parameter type must match the payload type
+
 ## ZASM backend (zir) notes
 
 `--emit-zasm` is an experimental backend that emits a `zasm-v1.1` JSONL stream intended to be checked by `ircheck` and executed by `zem`.

@@ -12,6 +12,11 @@ $SIRCC ./dist/test/examples/mem_copy_fill.sir.jsonl -o /tmp/mem_copy_fill && /tm
 $SIRCC ./dist/test/examples/cfg_if.sir.jsonl -o /tmp/cfg_if && /tmp/cfg_if; echo $?
 $SIRCC ./dist/test/examples/cfg_switch.sir.jsonl -o /tmp/cfg_switch && /tmp/cfg_switch; echo $?
 $SIRCC ./dist/test/examples/hello_world_puts.sir.jsonl -o /tmp/hello && /tmp/hello; echo $?
+$SIRCC ./dist/test/examples/fun_sym_call.sir.jsonl -o /tmp/fun_sym_call && /tmp/fun_sym_call; echo $?
+$SIRCC ./dist/test/examples/closure_make_call.sir.jsonl -o /tmp/closure_make_call && /tmp/closure_make_call; echo $?
+$SIRCC ./dist/test/examples/adt_make_get.sir.jsonl -o /tmp/adt_make_get && /tmp/adt_make_get; echo $?
+$SIRCC ./dist/test/examples/sem_if_thunk_trap_not_taken.sir.jsonl -o /tmp/sem_if && /tmp/sem_if; echo $?
+$SIRCC ./dist/test/examples/sem_match_sum_option_i32.sir.jsonl -o /tmp/sem_match_sum && /tmp/sem_match_sum; echo $?
 ```
 
 If you also built `sirc`, `dist/test/examples/` includes matching `.sir` sources for many examples:
@@ -29,6 +34,11 @@ Expected exit codes:
 - `cfg_if.sir.jsonl` → `222` (with no CLI args; the program’s `main(x)` receives `argc` as `x`, so `argc==1` ⇒ returns `222`)
 - `cfg_switch.sir.jsonl` → `20` (with no CLI args; `argc==1` selects case `1` ⇒ returns `20`)
 - `hello_world_puts.sir.jsonl` → `0` (also prints a line via `puts`)
+- `fun_sym_call.sir.jsonl` → `7`
+- `closure_make_call.sir.jsonl` → `12`
+- `adt_make_get.sir.jsonl` → `12`
+- `sem_if_thunk_trap_not_taken.sir.jsonl` → `7`
+- `sem_match_sum_option_i32.sir.jsonl` → `12`
 
 ## Mnemonic coverage (dev)
 

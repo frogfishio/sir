@@ -160,28 +160,30 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "cmp.eq") == 0 || strcmp(op, "cmp.ne") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.fun.cmp.missing_fields", "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
         goto done;
       }
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
-        errf(f->p, "sircc: %s node %lld requires fields.args:[a,b]", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.fun.cmp.args_bad", "sircc: %s node %lld requires fields.args:[a,b]", n->tag, (long long)node_id);
         goto done;
       }
       int64_t a_id = 0, b_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
-        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.fun.cmp.arg_ref_bad", "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
       LLVMValueRef a = lower_expr(f, a_id);
       LLVMValueRef b = lower_expr(f, b_id);
       if (!a || !b) goto done;
       if (LLVMTypeOf(a) != LLVMTypeOf(b)) {
-        errf(f->p, "sircc: %s node %lld requires both operands to have same fun type", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.fun.cmp.type_mismatch",
+                  "sircc: %s node %lld requires both operands to have same fun type", n->tag, (long long)node_id);
         goto done;
       }
       if (LLVMGetTypeKind(LLVMTypeOf(a)) != LLVMPointerTypeKind) {
-        errf(f->p, "sircc: %s node %lld operands must be function values", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.fun.cmp.operand_bad", "sircc: %s node %lld operands must be function values", n->tag,
+                  (long long)node_id);
         goto done;
       }
       LLVMIntPredicate pred = (strcmp(op, "cmp.eq") == 0) ? LLVMIntEQ : LLVMIntNE;
@@ -861,27 +863,31 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "make") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: closure.make node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.closure.make.missing_fields", "sircc: closure.make node %lld missing fields", (long long)node_id);
         goto done;
       }
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: closure.make node %lld missing type_ref (closure type)", (long long)node_id);
+        err_codef(f->p, "sircc.closure.make.missing_type_ref",
+                  "sircc: closure.make node %lld missing type_ref (closure type)", (long long)node_id);
         goto done;
       }
       TypeRec* cty = get_type(f->p, n->type_ref);
       if (!cty || cty->kind != TYPE_CLOSURE || cty->call_sig == 0 || cty->env_ty == 0) {
-        errf(f->p, "sircc: closure.make node %lld type_ref must be a closure type", (long long)node_id);
+        err_codef(f->p, "sircc.closure.make.type_ref.bad",
+                  "sircc: closure.make node %lld type_ref must be a closure type", (long long)node_id);
         goto done;
       }
 
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
-        errf(f->p, "sircc: closure.make node %lld requires fields.args:[code, env]", (long long)node_id);
+        err_codef(f->p, "sircc.closure.make.args_bad",
+                  "sircc: closure.make node %lld requires fields.args:[code, env]", (long long)node_id);
         goto done;
       }
       int64_t code_id = 0, env_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &code_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &env_id)) {
-        errf(f->p, "sircc: closure.make node %lld args must be node refs", (long long)node_id);
+        err_codef(f->p, "sircc.closure.make.arg_ref_bad",
+                  "sircc: closure.make node %lld args must be node refs", (long long)node_id);
         goto done;
       }
 
@@ -939,7 +945,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       LLVMTypeRef clo_ty = lower_type(f->p, f->ctx, n->type_ref);
       if (!clo_ty || LLVMGetTypeKind(clo_ty) != LLVMStructTypeKind) {
-        errf(f->p, "sircc: closure.make node %lld invalid closure type_ref", (long long)node_id);
+        err_codef(f->p, "sircc.closure.make.llvm_type.bad",
+                  "sircc: closure.make node %lld invalid closure type_ref", (long long)node_id);
         goto done;
       }
 
@@ -952,27 +959,31 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "sym") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: closure.sym node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.closure.sym.missing_fields", "sircc: closure.sym node %lld missing fields", (long long)node_id);
         goto done;
       }
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: closure.sym node %lld missing type_ref (closure type)", (long long)node_id);
+        err_codef(f->p, "sircc.closure.sym.missing_type_ref",
+                  "sircc: closure.sym node %lld missing type_ref (closure type)", (long long)node_id);
         goto done;
       }
       TypeRec* cty = get_type(f->p, n->type_ref);
       if (!cty || cty->kind != TYPE_CLOSURE || cty->call_sig == 0 || cty->env_ty == 0) {
-        errf(f->p, "sircc: closure.sym node %lld type_ref must be a closure type", (long long)node_id);
+        err_codef(f->p, "sircc.closure.sym.type_ref.bad",
+                  "sircc: closure.sym node %lld type_ref must be a closure type", (long long)node_id);
         goto done;
       }
 
       const char* name = json_get_string(json_obj_get(n->fields, "name"));
       if (!name || !is_ident(name)) {
-        errf(f->p, "sircc: closure.sym node %lld requires fields.name Ident", (long long)node_id);
+        err_codef(f->p, "sircc.closure.sym.name.bad",
+                  "sircc: closure.sym node %lld requires fields.name Ident", (long long)node_id);
         goto done;
       }
       int64_t env_id = 0;
       if (!parse_node_ref_id(f->p, json_obj_get(n->fields, "env"), &env_id)) {
-        errf(f->p, "sircc: closure.sym node %lld missing fields.env ref", (long long)node_id);
+        err_codef(f->p, "sircc.closure.sym.env.ref.missing",
+                  "sircc: closure.sym node %lld missing fields.env ref", (long long)node_id);
         goto done;
       }
       LLVMValueRef env = lower_expr(f, env_id);
@@ -985,7 +996,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       TypeRec* cs = get_type(f->p, cty->call_sig);
       if (!cs || cs->kind != TYPE_FN) {
-        errf(f->p, "sircc: closure.sym node %lld closure.callSig must reference fn type", (long long)node_id);
+        err_codef(f->p, "sircc.closure.sym.callSig.bad",
+                  "sircc: closure.sym node %lld closure.callSig must reference fn type", (long long)node_id);
         goto done;
       }
       LLVMTypeRef env_ty = lower_type(f->p, f->ctx, cty->env_ty);
@@ -1016,7 +1028,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       } else {
         LLVMTypeRef have = LLVMGlobalGetValueType(fn);
         if (have != code_sig) {
-          errf(f->p, "sircc: closure.sym '%s' type mismatch vs existing declaration/definition", name);
+          err_codef(f->p, "sircc.closure.sym.sig_mismatch",
+                    "sircc: closure.sym '%s' type mismatch vs existing declaration/definition", name);
           goto done;
         }
       }
@@ -1033,17 +1046,19 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "code") == 0 || strcmp(op, "env") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.closure.access.missing_fields", "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
         goto done;
       }
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
-        errf(f->p, "sircc: %s node %lld requires fields.args:[c]", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.closure.access.args_bad",
+                  "sircc: %s node %lld requires fields.args:[c]", n->tag, (long long)node_id);
         goto done;
       }
       int64_t cid = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &cid)) {
-        errf(f->p, "sircc: %s node %lld arg must be node ref", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.closure.access.arg_ref_bad",
+                  "sircc: %s node %lld arg must be node ref", n->tag, (long long)node_id);
         goto done;
       }
       LLVMValueRef c = lower_expr(f, cid);
@@ -1055,17 +1070,19 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "cmp.eq") == 0 || strcmp(op, "cmp.ne") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.closure.cmp.missing_fields", "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
         goto done;
       }
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
-        errf(f->p, "sircc: %s node %lld requires fields.args:[a,b]", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.closure.cmp.args_bad",
+                  "sircc: %s node %lld requires fields.args:[a,b]", n->tag, (long long)node_id);
         goto done;
       }
       int64_t a_id = 0, b_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
-        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.closure.cmp.arg_ref_bad",
+                  "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
       LLVMValueRef a = lower_expr(f, a_id);
@@ -1086,7 +1103,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (k == LLVMIntegerTypeKind || k == LLVMPointerTypeKind) {
         env_eq = LLVMBuildICmp(f->builder, LLVMIntEQ, aenv, benv, "env.eq");
       } else {
-        errf(f->p, "sircc: %s env equality unsupported for non-integer/non-pointer env type", n->tag);
+        err_codef(f->p, "sircc.closure.cmp.env_unsupported",
+                  "sircc: %s env equality unsupported for non-integer/non-pointer env type", n->tag);
         goto done;
       }
 
@@ -1109,18 +1127,18 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     TypeRec* sum_ty = NULL;
     if (strcmp(op, "make") == 0) {
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: adt.make node %lld missing type_ref (sum type)", (long long)node_id);
+        err_codef(f->p, "sircc.adt.make.missing_type_ref", "sircc: adt.make node %lld missing type_ref (sum type)", (long long)node_id);
         goto done;
       }
       sum_ty = get_type(f->p, n->type_ref);
     } else if (strcmp(op, "get") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: adt.get node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.missing_fields", "sircc: adt.get node %lld missing fields", (long long)node_id);
         goto done;
       }
       int64_t ty_id = 0;
       if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &ty_id)) {
-        errf(f->p, "sircc: adt.get node %lld missing fields.ty (sum type)", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.missing_ty", "sircc: adt.get node %lld missing fields.ty (sum type)", (long long)node_id);
         goto done;
       }
       sum_ty = get_type(f->p, ty_id);
@@ -1147,17 +1165,17 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "tag") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: adt.tag node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.adt.tag.missing_fields", "sircc: adt.tag node %lld missing fields", (long long)node_id);
         goto done;
       }
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
-        errf(f->p, "sircc: adt.tag node %lld requires fields.args:[v]", (long long)node_id);
+        err_codef(f->p, "sircc.adt.tag.args_bad", "sircc: adt.tag node %lld requires fields.args:[v]", (long long)node_id);
         goto done;
       }
       int64_t vid = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &vid)) {
-        errf(f->p, "sircc: adt.tag node %lld arg must be node ref", (long long)node_id);
+        err_codef(f->p, "sircc.adt.tag.arg_ref_bad", "sircc: adt.tag node %lld arg must be node ref", (long long)node_id);
         goto done;
       }
       LLVMValueRef v = lower_expr(f, vid);
@@ -1168,17 +1186,17 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "is") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: adt.is node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.adt.is.missing_fields", "sircc: adt.is node %lld missing fields", (long long)node_id);
         goto done;
       }
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
-        errf(f->p, "sircc: adt.is node %lld requires fields.args:[v]", (long long)node_id);
+        err_codef(f->p, "sircc.adt.is.args_bad", "sircc: adt.is node %lld requires fields.args:[v]", (long long)node_id);
         goto done;
       }
       JsonValue* flags = json_obj_get(n->fields, "flags");
       if (!flags || flags->type != JSON_OBJECT) {
-        errf(f->p, "sircc: adt.is node %lld missing fields.flags", (long long)node_id);
+        err_codef(f->p, "sircc.adt.is.flags_missing", "sircc: adt.is node %lld missing fields.flags", (long long)node_id);
         goto done;
       }
       int64_t variant = -1;
@@ -1186,7 +1204,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       int64_t vid = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &vid)) {
-        errf(f->p, "sircc: adt.is node %lld arg must be node ref", (long long)node_id);
+        err_codef(f->p, "sircc.adt.is.arg_ref_bad", "sircc: adt.is node %lld arg must be node ref", (long long)node_id);
         goto done;
       }
       LLVMValueRef v = lower_expr(f, vid);
@@ -1210,21 +1228,21 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "make") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: adt.make node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.adt.make.missing_fields", "sircc: adt.make node %lld missing fields", (long long)node_id);
         goto done;
       }
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: adt.make node %lld missing type_ref (sum type)", (long long)node_id);
+        err_codef(f->p, "sircc.adt.make.missing_type_ref", "sircc: adt.make node %lld missing type_ref (sum type)", (long long)node_id);
         goto done;
       }
       TypeRec* sty = get_type(f->p, n->type_ref);
       if (!sty || sty->kind != TYPE_SUM) {
-        errf(f->p, "sircc: adt.make node %lld type_ref must be a sum type", (long long)node_id);
+        err_codef(f->p, "sircc.adt.make.type_ref.bad", "sircc: adt.make node %lld type_ref must be a sum type", (long long)node_id);
         goto done;
       }
       JsonValue* flags = json_obj_get(n->fields, "flags");
       if (!flags || flags->type != JSON_OBJECT) {
-        errf(f->p, "sircc: adt.make node %lld missing fields.flags", (long long)node_id);
+        err_codef(f->p, "sircc.adt.make.flags_missing", "sircc: adt.make node %lld missing fields.flags", (long long)node_id);
         goto done;
       }
       int64_t variant = -1;
@@ -1241,19 +1259,22 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       size_t argc = 0;
       if (args) {
         if (args->type != JSON_ARRAY) {
-          errf(f->p, "sircc: adt.make node %lld fields.args must be array when present", (long long)node_id);
+          err_codef(f->p, "sircc.adt.make.args_type_bad",
+                    "sircc: adt.make node %lld fields.args must be array when present", (long long)node_id);
           goto done;
         }
         argc = args->v.arr.len;
       }
       if (pay_ty_id == 0) {
         if (argc != 0) {
-          errf(f->p, "sircc: adt.make node %lld variant %lld is nullary; args must be empty", (long long)node_id, (long long)variant);
+          err_codef(f->p, "sircc.adt.make.args_nullary_bad",
+                    "sircc: adt.make node %lld variant %lld is nullary; args must be empty", (long long)node_id, (long long)variant);
           goto done;
         }
       } else {
         if (argc != 1) {
-          errf(f->p, "sircc: adt.make node %lld variant %lld requires one payload arg", (long long)node_id, (long long)variant);
+          err_codef(f->p, "sircc.adt.make.args_payload_bad",
+                    "sircc: adt.make node %lld variant %lld requires one payload arg", (long long)node_id, (long long)variant);
           goto done;
         }
       }
@@ -1263,7 +1284,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       int64_t sum_sz = 0, sum_al = 0;
       if (!type_size_align(f->p, n->type_ref, &sum_sz, &sum_al)) {
-        errf(f->p, "sircc: adt.make node %lld could not compute sum layout", (long long)node_id);
+        err_codef(f->p, "sircc.adt.layout.bad", "sircc: adt.make node %lld could not compute sum layout", (long long)node_id);
         goto done;
       }
 
@@ -1299,22 +1320,23 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "get") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: adt.get node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.missing_fields", "sircc: adt.get node %lld missing fields", (long long)node_id);
         goto done;
       }
       int64_t sum_ty_id = 0;
       if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &sum_ty_id)) {
-        errf(f->p, "sircc: adt.get node %lld missing fields.ty (sum type)", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.missing_ty", "sircc: adt.get node %lld missing fields.ty (sum type)", (long long)node_id);
         goto done;
       }
       TypeRec* sty = get_type(f->p, sum_ty_id);
       if (!sty || sty->kind != TYPE_SUM) {
-        errf(f->p, "sircc: adt.get node %lld fields.ty must reference a sum type", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.ty.bad",
+                  "sircc: adt.get node %lld fields.ty must reference a sum type", (long long)node_id);
         goto done;
       }
       JsonValue* flags = json_obj_get(n->fields, "flags");
       if (!flags || flags->type != JSON_OBJECT) {
-        errf(f->p, "sircc: adt.get node %lld missing fields.flags", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.flags_missing", "sircc: adt.get node %lld missing fields.flags", (long long)node_id);
         goto done;
       }
       int64_t variant = -1;
@@ -1327,18 +1349,19 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       int64_t pay_ty_id = sty->variants[(size_t)variant].ty;
       if (pay_ty_id == 0) {
-        errf(f->p, "sircc: adt.get node %lld variant %lld is nullary (no payload)", (long long)node_id, (long long)variant);
+        err_codef(f->p, "sircc.adt.get.nullary",
+                  "sircc: adt.get node %lld variant %lld is nullary (no payload)", (long long)node_id, (long long)variant);
         goto done;
       }
 
       JsonValue* args = json_obj_get(n->fields, "args");
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
-        errf(f->p, "sircc: adt.get node %lld requires fields.args:[v]", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.args_bad", "sircc: adt.get node %lld requires fields.args:[v]", (long long)node_id);
         goto done;
       }
       int64_t vid = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &vid)) {
-        errf(f->p, "sircc: adt.get node %lld arg must be node ref", (long long)node_id);
+        err_codef(f->p, "sircc.adt.get.arg_ref_bad", "sircc: adt.get node %lld arg must be node ref", (long long)node_id);
         goto done;
       }
       LLVMValueRef v = lower_expr(f, vid);

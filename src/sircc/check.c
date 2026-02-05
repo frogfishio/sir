@@ -174,6 +174,11 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
       {.name = "cfg_if", .file = "cfg_if.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 222},
       {.name = "cfg_switch", .file = "cfg_switch.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 20},
       {.name = "hello_world_puts", .file = "hello_world_puts.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 0},
+      {.name = "fun_sym_call", .file = "fun_sym_call.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 7},
+      {.name = "closure_make_call", .file = "closure_make_call.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 12},
+      {.name = "adt_make_get", .file = "adt_make_get.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 12},
+      {.name = "sem_if_thunk_trap_not_taken", .file = "sem_if_thunk_trap_not_taken.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 7},
+      {.name = "sem_match_sum_option_i32", .file = "sem_match_sum_option_i32.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 12},
   };
 
   char tmpdir[PATH_MAX];

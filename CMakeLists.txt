@@ -61,6 +61,13 @@ add_custom_target(dist_sircc
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/misaligned_load_traps.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/misaligned_load_traps.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/ptr_layout.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/ptr_layout.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/hello_zabi25_write.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/hello_zabi25_write.sir.jsonl
+
+  # pack corpus (fun/closure/adt/sem)
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/fun_sym_call.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/fun_sym_call.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/closure_make_call.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/closure_make_call.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/adt_make_get.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/adt_make_get.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/sem_if_thunk_trap_not_taken.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/sem_if_thunk_trap_not_taken.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/sem_match_sum_option_i32.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/sem_match_sum_option_i32.sir.jsonl
 )
 
 # Optional: bundle zABI 2.5 integration-pack runtime for macOS/arm64 in dist/

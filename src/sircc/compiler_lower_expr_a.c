@@ -40,12 +40,12 @@ static LLVMTypeRef build_closure_code_sig(FunctionCtx* f, TypeRec* cty) {
 static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueRef* argv, size_t argc, LLVMTypeRef want_ret) {
   NodeRec* callee_n = get_node(f->p, callee_id);
   if (!callee_n || callee_n->type_ref == 0) {
-    errf(f->p, "sircc: expected fun callee with type_ref");
+    err_codef(f->p, "sircc.call.fun.callee_missing_type_ref", "sircc: expected fun callee with type_ref");
     return NULL;
   }
   TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
   if (!callee_ty || callee_ty->kind != TYPE_FUN || callee_ty->sig == 0) {
-    errf(f->p, "sircc: expected fun callee type");
+    err_codef(f->p, "sircc.call.fun.callee_type_bad", "sircc: expected fun callee type");
     return NULL;
   }
   LLVMTypeRef callee_fty = lower_type(f->p, f->ctx, callee_ty->sig);
@@ -103,12 +103,12 @@ static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueR
 static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMValueRef* user_argv, size_t user_argc, LLVMTypeRef want_ret) {
   NodeRec* callee_n = get_node(f->p, callee_id);
   if (!callee_n || callee_n->type_ref == 0) {
-    errf(f->p, "sircc: expected closure callee with type_ref");
+    err_codef(f->p, "sircc.call.closure.callee_missing_type_ref", "sircc: expected closure callee with type_ref");
     return NULL;
   }
   TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
   if (!callee_ty || callee_ty->kind != TYPE_CLOSURE) {
-    errf(f->p, "sircc: expected closure callee type");
+    err_codef(f->p, "sircc.call.closure.callee_type_bad", "sircc: expected closure callee type");
     return NULL;
   }
 
@@ -195,7 +195,12 @@ static bool eval_branch_operand(FunctionCtx* f, JsonValue* br, LLVMTypeRef want_
     LLVMValueRef v = lower_expr(f, vid);
     if (!v) return false;
     if (want_ty && LLVMTypeOf(v) != want_ty) {
-      errf(f->p, "sircc: branch value type mismatch");
+      char* w = LLVMPrintTypeToString(want_ty);
+      char* g = LLVMPrintTypeToString(LLVMTypeOf(v));
+      err_codef(f->p, "sircc.sem.branch.val.type_mismatch", "sircc: branch value type mismatch (want=%s, got=%s)",
+                w ? w : "(null)", g ? g : "(null)");
+      if (w) LLVMDisposeMessage(w);
+      if (g) LLVMDisposeMessage(g);
       return false;
     }
     *out = v;
@@ -1216,39 +1221,40 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
 
   if (strcmp(n->tag, "call.fun") == 0) {
     if (!n->fields) {
-      errf(f->p, "sircc: call.fun node %lld missing fields", (long long)node_id);
+      err_codef(f->p, "sircc.call.fun.missing_fields", "sircc: call.fun node %lld missing fields", (long long)node_id);
       goto done;
     }
 
     JsonValue* args = json_obj_get(n->fields, "args");
     if (!args || args->type != JSON_ARRAY || args->v.arr.len < 1) {
-      errf(f->p, "sircc: call.fun node %lld requires args:[callee, ...]", (long long)node_id);
+      err_codef(f->p, "sircc.call.fun.args_bad", "sircc: call.fun node %lld requires args:[callee, ...]", (long long)node_id);
       goto done;
     }
 
     int64_t callee_id = 0;
     if (!parse_node_ref_id(f->p, args->v.arr.items[0], &callee_id)) {
-      errf(f->p, "sircc: call.fun node %lld args[0] must be callee fun ref", (long long)node_id);
+      err_codef(f->p, "sircc.call.fun.callee_ref_bad",
+                "sircc: call.fun node %lld args[0] must be callee fun ref", (long long)node_id);
       goto done;
     }
     NodeRec* callee_n = get_node(f->p, callee_id);
     if (!callee_n || callee_n->type_ref == 0) {
-      errf(f->p, "sircc: call.fun node %lld callee must have a fun type_ref", (long long)node_id);
+      err_codef(f->p, "sircc.call.fun.callee_missing_type_ref",
+                "sircc: call.fun node %lld callee must have a fun type_ref", (long long)node_id);
       goto done;
     }
     TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
     if (!callee_ty || callee_ty->kind != TYPE_FUN || callee_ty->sig == 0) {
-      errf(f->p, "sircc: call.fun node %lld callee must be a fun type", (long long)node_id);
+      err_codef(f->p, "sircc.call.fun.callee_type_bad",
+                "sircc: call.fun node %lld callee must be a fun type", (long long)node_id);
       goto done;
     }
     LLVMTypeRef callee_fty = lower_type(f->p, f->ctx, callee_ty->sig);
     if (!callee_fty || LLVMGetTypeKind(callee_fty) != LLVMFunctionTypeKind) {
-      errf(f->p, "sircc: call.fun node %lld callee fun.sig must reference a fn type", (long long)node_id);
+      err_codef(f->p, "sircc.call.fun.sig_bad",
+                "sircc: call.fun node %lld callee fun.sig must reference a fn type", (long long)node_id);
       goto done;
     }
-
-    LLVMValueRef callee = lower_expr(f, callee_id);
-    if (!callee) goto done;
 
     size_t argc = args->v.arr.len - 1;
     LLVMValueRef* argv = NULL;
@@ -1258,7 +1264,8 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       for (size_t i = 0; i < argc; i++) {
         int64_t aid = 0;
         if (!parse_node_ref_id(f->p, args->v.arr.items[i + 1], &aid)) {
-          errf(f->p, "sircc: call.fun node %lld arg[%zu] must be node ref", (long long)node_id, i);
+          err_codef(f->p, "sircc.call.fun.arg_ref_bad",
+                    "sircc: call.fun node %lld arg[%zu] must be node ref", (long long)node_id, i);
           free(argv);
           goto done;
         }
@@ -1270,173 +1277,95 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       }
     }
 
-    unsigned param_count = LLVMCountParamTypes(callee_fty);
-    bool is_varargs = LLVMIsFunctionVarArg(callee_fty) != 0;
-    if (!is_varargs && (unsigned)argc != param_count) {
-      errf(f->p, "sircc: call.fun node %lld arg count mismatch (got %zu, want %u)", (long long)node_id, argc, param_count);
-      free(argv);
-      goto done;
-    }
-    if ((unsigned)argc < param_count) {
-      errf(f->p, "sircc: call.fun node %lld missing required args (got %zu, want >= %u)", (long long)node_id, argc, param_count);
-      free(argv);
-      goto done;
-    }
-
-    if (param_count) {
-      LLVMTypeRef* params = (LLVMTypeRef*)malloc(param_count * sizeof(LLVMTypeRef));
-      if (!params) {
+    LLVMTypeRef want = NULL;
+    if (n->type_ref) {
+      want = lower_type(f->p, f->ctx, n->type_ref);
+      if (!want) {
         free(argv);
         goto done;
       }
-      LLVMGetParamTypes(callee_fty, params);
-      for (unsigned i = 0; i < param_count; i++) {
-        LLVMTypeRef want = params[i];
-        LLVMTypeRef got = LLVMTypeOf(argv[i]);
-        if (want == got) continue;
-        if (LLVMGetTypeKind(want) == LLVMPointerTypeKind && LLVMGetTypeKind(got) == LLVMPointerTypeKind) {
-          argv[i] = LLVMBuildBitCast(f->builder, argv[i], want, "arg.cast");
-          continue;
-        }
-        free(params);
-        errf(f->p, "sircc: call.fun node %lld arg[%u] type mismatch", (long long)node_id, i);
-        free(argv);
-        goto done;
-      }
-      free(params);
     }
-
-    out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
+    out = call_fun_value(f, callee_id, argv, argc, want);
     free(argv);
-
-    if (out && n->type_ref) {
-      LLVMTypeRef want = lower_type(f->p, f->ctx, n->type_ref);
-      if (want && want != LLVMTypeOf(out)) {
-        errf(f->p, "sircc: call.fun node %lld return type does not match type_ref", (long long)node_id);
-        out = NULL;
-        goto done;
-      }
-    }
-
     goto done;
   }
 
   if (strcmp(n->tag, "call.closure") == 0) {
     if (!n->fields) {
-      errf(f->p, "sircc: call.closure node %lld missing fields", (long long)node_id);
+      err_codef(f->p, "sircc.call.closure.missing_fields", "sircc: call.closure node %lld missing fields", (long long)node_id);
       goto done;
     }
 
     JsonValue* args = json_obj_get(n->fields, "args");
     if (!args || args->type != JSON_ARRAY || args->v.arr.len < 1) {
-      errf(f->p, "sircc: call.closure node %lld requires args:[callee, ...]", (long long)node_id);
+      err_codef(f->p, "sircc.call.closure.args_bad", "sircc: call.closure node %lld requires args:[callee, ...]", (long long)node_id);
       goto done;
     }
 
     int64_t callee_id = 0;
     if (!parse_node_ref_id(f->p, args->v.arr.items[0], &callee_id)) {
-      errf(f->p, "sircc: call.closure node %lld args[0] must be callee closure ref", (long long)node_id);
+      err_codef(f->p, "sircc.call.closure.callee_ref_bad",
+                "sircc: call.closure node %lld args[0] must be callee closure ref", (long long)node_id);
       goto done;
     }
     NodeRec* callee_n = get_node(f->p, callee_id);
     if (!callee_n || callee_n->type_ref == 0) {
-      errf(f->p, "sircc: call.closure node %lld callee must have a closure type_ref", (long long)node_id);
+      err_codef(f->p, "sircc.call.closure.callee_missing_type_ref",
+                "sircc: call.closure node %lld callee must have a closure type_ref", (long long)node_id);
       goto done;
     }
     TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
     if (!callee_ty || callee_ty->kind != TYPE_CLOSURE) {
-      errf(f->p, "sircc: call.closure node %lld callee must be a closure type", (long long)node_id);
+      err_codef(f->p, "sircc.call.closure.callee_type_bad",
+                "sircc: call.closure node %lld callee must be a closure type", (long long)node_id);
       goto done;
     }
-
-    LLVMValueRef callee = lower_expr(f, callee_id);
-    if (!callee) goto done;
-    LLVMValueRef code = LLVMBuildExtractValue(f->builder, callee, 0, "clo.code");
-    LLVMValueRef env = LLVMBuildExtractValue(f->builder, callee, 1, "clo.env");
-    if (!code || !env) goto done;
 
     LLVMTypeRef code_sig = build_closure_code_sig(f, callee_ty);
     if (!code_sig || LLVMGetTypeKind(code_sig) != LLVMFunctionTypeKind) {
-      errf(f->p, "sircc: call.closure node %lld could not derive closure code signature", (long long)node_id);
+      err_codef(f->p, "sircc.call.closure.sig_bad",
+                "sircc: call.closure node %lld could not derive closure code signature", (long long)node_id);
       goto done;
     }
 
-    size_t user_argc = args->v.arr.len - 1;
-    size_t argc = user_argc + 1; // include env
+    size_t argc = args->v.arr.len - 1;
     LLVMValueRef* argv = NULL;
     if (argc) {
       argv = (LLVMValueRef*)malloc(argc * sizeof(LLVMValueRef));
       if (!argv) goto done;
-      argv[0] = env;
-      for (size_t i = 0; i < user_argc; i++) {
+      for (size_t i = 0; i < argc; i++) {
         int64_t aid = 0;
         if (!parse_node_ref_id(f->p, args->v.arr.items[i + 1], &aid)) {
-          errf(f->p, "sircc: call.closure node %lld arg[%zu] must be node ref", (long long)node_id, i);
+          err_codef(f->p, "sircc.call.closure.arg_ref_bad",
+                    "sircc: call.closure node %lld arg[%zu] must be node ref", (long long)node_id, i);
           free(argv);
           goto done;
         }
-        argv[i + 1] = lower_expr(f, aid);
-        if (!argv[i + 1]) {
+        argv[i] = lower_expr(f, aid);
+        if (!argv[i]) {
           free(argv);
           goto done;
         }
       }
     }
 
-    unsigned param_count = LLVMCountParamTypes(code_sig);
-    bool is_varargs = LLVMIsFunctionVarArg(code_sig) != 0;
-    if (!is_varargs && (unsigned)argc != param_count) {
-      errf(f->p, "sircc: call.closure node %lld arg count mismatch (got %zu, want %u)", (long long)node_id, argc, param_count);
-      free(argv);
-      goto done;
-    }
-    if ((unsigned)argc < param_count) {
-      errf(f->p, "sircc: call.closure node %lld missing required args (got %zu, want >= %u)", (long long)node_id, argc, param_count);
-      free(argv);
-      goto done;
-    }
-
-    if (param_count) {
-      LLVMTypeRef* params = (LLVMTypeRef*)malloc(param_count * sizeof(LLVMTypeRef));
-      if (!params) {
+    LLVMTypeRef want = NULL;
+    if (n->type_ref) {
+      want = lower_type(f->p, f->ctx, n->type_ref);
+      if (!want) {
         free(argv);
         goto done;
       }
-      LLVMGetParamTypes(code_sig, params);
-      for (unsigned i = 0; i < param_count; i++) {
-        LLVMTypeRef want = params[i];
-        LLVMTypeRef got = LLVMTypeOf(argv[i]);
-        if (want == got) continue;
-        if (LLVMGetTypeKind(want) == LLVMPointerTypeKind && LLVMGetTypeKind(got) == LLVMPointerTypeKind) {
-          argv[i] = LLVMBuildBitCast(f->builder, argv[i], want, "arg.cast");
-          continue;
-        }
-        free(params);
-        errf(f->p, "sircc: call.closure node %lld arg[%u] type mismatch", (long long)node_id, i);
-        free(argv);
-        goto done;
-      }
-      free(params);
     }
 
-    out = LLVMBuildCall2(f->builder, code_sig, code, argv, (unsigned)argc, "call");
+    out = call_closure_value(f, callee_id, argv, argc, want);
     free(argv);
-
-    if (out && n->type_ref) {
-      LLVMTypeRef want = lower_type(f->p, f->ctx, n->type_ref);
-      if (want && want != LLVMTypeOf(out)) {
-        errf(f->p, "sircc: call.closure node %lld return type does not match type_ref", (long long)node_id);
-        out = NULL;
-        goto done;
-      }
-    }
-
     goto done;
   }
 
   if (strcmp(n->tag, "sem.if") == 0) {
     if (!n->fields) {
-      errf(f->p, "sircc: sem.if node %lld missing fields", (long long)node_id);
+      err_codef(f->p, "sircc.sem.if.missing_fields", "sircc: sem.if node %lld missing fields", (long long)node_id);
       goto done;
     }
     LLVMTypeRef want = NULL;
@@ -1446,18 +1375,19 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     }
     JsonValue* args = json_obj_get(n->fields, "args");
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 3) {
-      errf(f->p, "sircc: sem.if node %lld requires args:[cond, thenBranch, elseBranch]", (long long)node_id);
+      err_codef(f->p, "sircc.sem.if.args_bad",
+                "sircc: sem.if node %lld requires args:[cond, thenBranch, elseBranch]", (long long)node_id);
       goto done;
     }
     int64_t cond_id = 0;
     if (!parse_node_ref_id(f->p, args->v.arr.items[0], &cond_id)) {
-      errf(f->p, "sircc: sem.if node %lld cond must be node ref", (long long)node_id);
+      err_codef(f->p, "sircc.sem.if.cond_ref_bad", "sircc: sem.if node %lld cond must be node ref", (long long)node_id);
       goto done;
     }
     LLVMValueRef cond = lower_expr(f, cond_id);
     if (!cond) goto done;
     if (LLVMGetTypeKind(LLVMTypeOf(cond)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(cond)) != 1) {
-      errf(f->p, "sircc: sem.if node %lld cond must be bool", (long long)node_id);
+      err_codef(f->p, "sircc.sem.if.cond_type_bad", "sircc: sem.if node %lld cond must be bool", (long long)node_id);
       goto done;
     }
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(f->builder))) goto done;
@@ -1490,23 +1420,23 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
 
   if (strcmp(n->tag, "sem.and_sc") == 0 || strcmp(n->tag, "sem.or_sc") == 0) {
     if (!n->fields) {
-      errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.sem.sc.missing_fields", "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
       goto done;
     }
     JsonValue* args = json_obj_get(n->fields, "args");
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
-      errf(f->p, "sircc: %s node %lld requires args:[lhs, rhsBranch]", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.sem.sc.args_bad", "sircc: %s node %lld requires args:[lhs, rhsBranch]", n->tag, (long long)node_id);
       goto done;
     }
     int64_t lhs_id = 0;
     if (!parse_node_ref_id(f->p, args->v.arr.items[0], &lhs_id)) {
-      errf(f->p, "sircc: %s lhs must be node ref", n->tag);
+      err_codef(f->p, "sircc.sem.sc.lhs_ref_bad", "sircc: %s lhs must be node ref", n->tag);
       goto done;
     }
     LLVMValueRef lhs = lower_expr(f, lhs_id);
     if (!lhs) goto done;
     if (LLVMGetTypeKind(LLVMTypeOf(lhs)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(lhs)) != 1) {
-      errf(f->p, "sircc: %s lhs must be bool", n->tag);
+      err_codef(f->p, "sircc.sem.sc.lhs_type_bad", "sircc: %s lhs must be bool", n->tag);
       goto done;
     }
     LLVMTypeRef bty = LLVMInt1TypeInContext(f->ctx);
@@ -1561,7 +1491,8 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
 
   if (strcmp(n->tag, "sem.match_sum") == 0) {
     if (!n->fields) {
-      errf(f->p, "sircc: sem.match_sum node %lld missing fields", (long long)node_id);
+      err_codef(f->p, "sircc.sem.match_sum.missing_fields",
+                "sircc: sem.match_sum node %lld missing fields", (long long)node_id);
       goto done;
     }
     LLVMTypeRef want = NULL;
@@ -1571,22 +1502,24 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     }
     int64_t sum_ty_id = 0;
     if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "sum"), &sum_ty_id)) {
-      errf(f->p, "sircc: sem.match_sum node %lld missing fields.sum (sum type)", (long long)node_id);
+      err_codef(f->p, "sircc.sem.match_sum.sum_missing",
+                "sircc: sem.match_sum node %lld missing fields.sum (sum type)", (long long)node_id);
       goto done;
     }
     TypeRec* sty = get_type(f->p, sum_ty_id);
     if (!sty || sty->kind != TYPE_SUM) {
-      errf(f->p, "sircc: sem.match_sum fields.sum must reference a sum type");
+      err_codef(f->p, "sircc.sem.match_sum.sum_bad", "sircc: sem.match_sum fields.sum must reference a sum type");
       goto done;
     }
     JsonValue* args = json_obj_get(n->fields, "args");
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
-      errf(f->p, "sircc: sem.match_sum node %lld requires args:[scrut]", (long long)node_id);
+      err_codef(f->p, "sircc.sem.match_sum.args_bad",
+                "sircc: sem.match_sum node %lld requires args:[scrut]", (long long)node_id);
       goto done;
     }
     int64_t scrut_id = 0;
     if (!parse_node_ref_id(f->p, args->v.arr.items[0], &scrut_id)) {
-      errf(f->p, "sircc: sem.match_sum scrut must be node ref");
+      err_codef(f->p, "sircc.sem.match_sum.scrut_ref_bad", "sircc: sem.match_sum scrut must be node ref");
       goto done;
     }
     LLVMValueRef scrut = lower_expr(f, scrut_id);
@@ -1596,7 +1529,8 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     JsonValue* cases = json_obj_get(n->fields, "cases");
     JsonValue* def = json_obj_get(n->fields, "default");
     if (!cases || cases->type != JSON_ARRAY || !def || def->type != JSON_OBJECT) {
-      errf(f->p, "sircc: sem.match_sum node %lld requires fields.cases array and fields.default branch", (long long)node_id);
+      err_codef(f->p, "sircc.sem.match_sum.cases_bad",
+                "sircc: sem.match_sum node %lld requires fields.cases array and fields.default branch", (long long)node_id);
       goto done;
     }
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(f->builder))) goto done;
@@ -1616,7 +1550,7 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
     for (size_t i = 0; i < cases->v.arr.len; i++) {
       JsonValue* co = cases->v.arr.items[i];
       if (!co || co->type != JSON_OBJECT) {
-        errf(f->p, "sircc: sem.match_sum cases[%zu] must be object", i);
+        err_codef(f->p, "sircc.sem.match_sum.case_obj_bad", "sircc: sem.match_sum cases[%zu] must be object", i);
         goto done;
       }
       int64_t variant = -1;
@@ -1639,7 +1573,8 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       JsonValue* co = cases->v.arr.items[i];
       JsonValue* body = json_obj_get(co, "body");
       if (!body || body->type != JSON_OBJECT) {
-        errf(f->p, "sircc: sem.match_sum cases[%zu] missing body branch", i);
+        err_codef(f->p, "sircc.sem.match_sum.case_body_missing",
+                  "sircc: sem.match_sum cases[%zu] missing body branch", i);
         goto done;
       }
       LLVMPositionBuilderAtEnd(f->builder, case_bbs[i]);
@@ -1673,7 +1608,8 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
           }
           int64_t pay_ty_id = sty->variants[(size_t)variant].ty;
           if (pay_ty_id == 0) {
-            errf(f->p, "sircc: sem.match_sum case %lld body expects payload but variant is nullary", (long long)variant);
+            err_codef(f->p, "sircc.sem.match_sum.case_payload_unexpected",
+                      "sircc: sem.match_sum case %lld body expects payload but variant is nullary", (long long)variant);
             goto done;
           }
           // Validate the thunk parameter type matches the payload type.
