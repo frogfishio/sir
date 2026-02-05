@@ -52,6 +52,7 @@ typedef struct SirccOptions {
   bool verbose;
   bool strip;
   bool require_pinned_triple;
+  bool require_target_contract;
   SirccDiagnosticsFormat diagnostics;
   SirccColorMode color;
   int diag_context; // number of surrounding JSONL lines to print on error (also embedded in JSON diagnostics)

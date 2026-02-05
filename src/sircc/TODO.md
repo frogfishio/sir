@@ -52,12 +52,15 @@ These are the next “semantic widening” items to unlock real-language lowerin
   - [x] Parse `type.kind:"struct"` with `fields[]` and lower it to LLVM struct types
   - [x] Implement size/align with padding rules (baseline, non-packed)
   - [x] Use target ABI alignments (derived from target triple) for `ptr.sizeof/alignof/offset` and struct layout (no ambient host defaults)
-  - [ ] Add fully explicit layout contract (ptrBits/endian/*Align/structAlign) as a producer requirement for reproducible streams across LLVM versions
+  - [x] Add fully explicit layout contract (ptrBits/endian/*Align/structAlign) as a producer requirement for reproducible streams across LLVM versions (`--require-target-contract`, enabled by `--deterministic`)
 
-- [ ] **Structured constants / aggregates (agg:v1)**
-  - [ ] Define/implement structured constants for arrays/structs (zero/array/repeat/struct) so globals/initializers can be deterministic and large payloads aren’t duplicated
-  - [ ] Add `global`-like data declarations (or equivalent `sym`/node model) + `ptr.sym` support for data symbols (not just functions)
+- [x] **Structured constants / aggregates (agg:v1)** (LLVM)
+  - [x] Define/implement structured constants for arrays/structs (zero/array/repeat/struct) so globals/initializers can be deterministic and large payloads aren’t duplicated (node form: `const.zero/array/repeat/struct`)
+  - [x] Add `global`-like data declarations (or equivalent `sym`/node model) + `ptr.sym` support for data symbols (not just functions)
     - [x] `sym(kind=var|const)` can define LLVM globals (scalar initializer subset) and `ptr.sym` resolves them
+    - [x] `sym.value` may reference const nodes for initializers (array/repeat examples)
+    - [x] Runnable examples: `global_i32_ptrsym`, `global_array_const`, `global_array_repeat`
+  - [ ] ZASM parity: globals + const payload emission (defer until the zasm data model is decided)
 
 - [ ] **Higher-order callables**
   - [ ] `fun:v1`: `type.kind:"fun"`, `fun.sym`, `fun.cmp.*`, `call.fun`

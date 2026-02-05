@@ -32,13 +32,57 @@ int sircc_compile(const SirccOptions* opt) {
   ok = validate_program(&p);
   if (!ok) goto done;
 
+  const char* use_triple = opt->target_triple ? opt->target_triple : p.target_triple;
+  if (opt->require_pinned_triple && !use_triple) {
+    errf(&p, "sircc: missing pinned target triple (set meta.ext.target.triple or pass --target-triple)");
+    ok = false;
+    goto done;
+  }
+
+  if (opt->require_target_contract) {
+    const char* missing[32];
+    size_t missing_len = 0;
+
+    if (!p.target_ptrbits_override) missing[missing_len++] = "meta.ext.target.ptrBits";
+    if (!p.target_endian_override) missing[missing_len++] = "meta.ext.target.endian";
+    if (!p.target_structalign_override) missing[missing_len++] = "meta.ext.target.structAlign";
+
+    if (!p.target_intalign_override) {
+      missing[missing_len++] = "meta.ext.target.intAlign.{i8,i16,i32,i64,ptr}";
+    } else {
+      if (!p.align_i8) missing[missing_len++] = "meta.ext.target.intAlign.i8";
+      if (!p.align_i16) missing[missing_len++] = "meta.ext.target.intAlign.i16";
+      if (!p.align_i32) missing[missing_len++] = "meta.ext.target.intAlign.i32";
+      if (!p.align_i64) missing[missing_len++] = "meta.ext.target.intAlign.i64";
+      if (!p.align_ptr) missing[missing_len++] = "meta.ext.target.intAlign.ptr";
+    }
+
+    if (!p.target_floatalign_override) {
+      missing[missing_len++] = "meta.ext.target.floatAlign.{f32,f64}";
+    } else {
+      if (!p.align_f32) missing[missing_len++] = "meta.ext.target.floatAlign.f32";
+      if (!p.align_f64) missing[missing_len++] = "meta.ext.target.floatAlign.f64";
+    }
+
+    if (missing_len) {
+      char buf[1024];
+      size_t off = 0;
+      off += (size_t)snprintf(buf + off, sizeof(buf) - off, "sircc: missing explicit target contract fields:");
+      for (size_t i = 0; i < missing_len && off + 4 < sizeof(buf); i++) {
+        off += (size_t)snprintf(buf + off, sizeof(buf) - off, "%s%s", (i == 0) ? " " : ", ", missing[i]);
+      }
+      err_codef(&p, "sircc.target.contract.missing", "%s", buf);
+      ok = false;
+      goto done;
+    }
+  }
+
   if (opt->verify_only) {
     ok = true;
     goto done;
   }
 
   if (opt->emit == SIRCC_EMIT_ZASM_IR) {
-    const char* use_triple = opt->target_triple ? opt->target_triple : p.target_triple;
     if (!use_triple) {
       owned_triple = LLVMGetDefaultTargetTriple();
       use_triple = owned_triple;
@@ -73,16 +117,9 @@ int sircc_compile(const SirccOptions* opt) {
   p.cur_loc.line = 0;
   p.cur_loc.col = 0;
 
-  const char* use_triple = opt->target_triple ? opt->target_triple : p.target_triple;
   if (!use_triple) {
     owned_triple = LLVMGetDefaultTargetTriple();
     use_triple = owned_triple;
-  }
-
-  if (opt->require_pinned_triple && !opt->target_triple && !p.target_triple) {
-    errf(&p, "sircc: missing pinned target triple (set meta.ext.target.triple or pass --target-triple)");
-    ok = false;
-    goto done;
   }
 
   LLVMContextRef ctx = LLVMContextCreate();

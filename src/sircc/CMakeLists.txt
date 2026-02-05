@@ -189,6 +189,15 @@ add_test(
 )
 
 add_test(
+  NAME sircc_require_target_contract_missing
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--require-target-contract\\;--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/add.sir.jsonl
+    "-DEXPECT=missing explicit target contract fields"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_verify_mem_stack
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/mem_stack.sir.jsonl
 )
@@ -220,6 +229,26 @@ add_test(
     -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/global_i32_ptrsym.sir.jsonl
     -DEXE=${CMAKE_CURRENT_BINARY_DIR}/global_i32_ptrsym.exe
     -DEXPECT=12
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_global_array_const
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/global_array_const.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/global_array_const.exe
+    -DEXPECT=10
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_global_array_repeat
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/global_array_repeat.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/global_array_repeat.exe
+    -DEXPECT=28
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
 )
 

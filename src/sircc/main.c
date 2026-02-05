@@ -27,6 +27,7 @@ static void usage(FILE* out) {
           "  sircc [--diagnostics text|json] [--color auto|always|never] [--diag-context N] [--verbose] [--strip]\n"
           "  sircc --deterministic ...\n"
           "  sircc --require-pinned-triple ...\n"
+          "  sircc --require-target-contract ...\n"
           "  sircc --version\n");
 }
 
@@ -62,6 +63,7 @@ int main(int argc, char** argv) {
       .verbose = false,
       .strip = false,
       .require_pinned_triple = false,
+      .require_target_contract = false,
       .diagnostics = SIRCC_DIAG_TEXT,
       .color = SIRCC_COLOR_AUTO,
       .diag_context = 0,
@@ -212,9 +214,15 @@ int main(int argc, char** argv) {
       opt.require_pinned_triple = true;
       continue;
     }
+    if (strcmp(a, "--require-target-contract") == 0) {
+      opt.require_target_contract = true;
+      continue;
+    }
     if (strcmp(a, "--deterministic") == 0) {
       // Best-effort reproducibility: require explicit target triple (meta.ext.target.triple or --target-triple).
       opt.require_pinned_triple = true;
+      // Stronger reproducibility: require explicit ABI contract fields (ptrBits/endian/*Align/structAlign).
+      opt.require_target_contract = true;
       continue;
     }
     if (strcmp(a, "--diagnostics") == 0) {
