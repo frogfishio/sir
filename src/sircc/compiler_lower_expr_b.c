@@ -11,6 +11,36 @@
 #include <string.h>
 #include <llvm-c/Core.h>
 
+static bool llvm_fn_type_eq(LLVMTypeRef a, LLVMTypeRef b) {
+  if (!a || !b) return false;
+  if (LLVMGetTypeKind(a) != LLVMFunctionTypeKind || LLVMGetTypeKind(b) != LLVMFunctionTypeKind) return false;
+  if (LLVMIsFunctionVarArg(a) != LLVMIsFunctionVarArg(b)) return false;
+  if (LLVMGetReturnType(a) != LLVMGetReturnType(b)) return false;
+  unsigned ac = LLVMCountParamTypes(a);
+  unsigned bc = LLVMCountParamTypes(b);
+  if (ac != bc) return false;
+  if (ac == 0) return true;
+  LLVMTypeRef* ap = (LLVMTypeRef*)malloc(ac * sizeof(LLVMTypeRef));
+  LLVMTypeRef* bp = (LLVMTypeRef*)malloc(bc * sizeof(LLVMTypeRef));
+  if (!ap || !bp) {
+    free(ap);
+    free(bp);
+    return false;
+  }
+  LLVMGetParamTypes(a, ap);
+  LLVMGetParamTypes(b, bp);
+  bool ok = true;
+  for (unsigned i = 0; i < ac; i++) {
+    if (ap[i] != bp[i]) {
+      ok = false;
+      break;
+    }
+  }
+  free(ap);
+  free(bp);
+  return ok;
+}
+
 static bool is_opaque_callable_type(SirProgram* p, int64_t type_ref) {
   if (!p || type_ref == 0) return false;
   TypeRec* t = get_type(p, type_ref);
@@ -816,9 +846,57 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         goto done;
       }
 
+      // Validate code/env types against closure type.
+      NodeRec* code_n = get_node(f->p, code_id);
+      if (!code_n || code_n->type_ref == 0) {
+        err_codef(f->p, "sircc.closure.make.code.missing_type", "sircc: closure.make code must have a fun type_ref");
+        goto done;
+      }
+      TypeRec* code_ty = get_type(f->p, code_n->type_ref);
+      if (!code_ty || code_ty->kind != TYPE_FUN || code_ty->sig == 0) {
+        err_codef(f->p, "sircc.closure.make.code.not_fun", "sircc: closure.make code must be a fun value");
+        goto done;
+      }
+      LLVMTypeRef have_code_sig = lower_type(f->p, f->ctx, code_ty->sig);
+      if (!have_code_sig || LLVMGetTypeKind(have_code_sig) != LLVMFunctionTypeKind) goto done;
+
+      // Derive codeSig = (env, callSig.params...) -> callSig.ret
+      TypeRec* cs = get_type(f->p, cty->call_sig);
+      if (!cs || cs->kind != TYPE_FN) {
+        err_codef(f->p, "sircc.closure.make.callSig.bad", "sircc: closure.make closure.callSig must reference fn type");
+        goto done;
+      }
+      LLVMTypeRef env_ty = lower_type(f->p, f->ctx, cty->env_ty);
+      LLVMTypeRef ret_ty = lower_type(f->p, f->ctx, cs->ret);
+      if (!env_ty || !ret_ty) goto done;
+      size_t nparams = cs->param_len + 1;
+      if (nparams > UINT_MAX) goto done;
+      LLVMTypeRef* params = (LLVMTypeRef*)malloc(nparams * sizeof(LLVMTypeRef));
+      if (!params) goto done;
+      params[0] = env_ty;
+      bool ok = true;
+      for (size_t i = 0; i < cs->param_len; i++) {
+        params[i + 1] = lower_type(f->p, f->ctx, cs->params[i]);
+        if (!params[i + 1]) {
+          ok = false;
+          break;
+        }
+      }
+      LLVMTypeRef want_code_sig = NULL;
+      if (ok) want_code_sig = LLVMFunctionType(ret_ty, params, (unsigned)nparams, cs->varargs ? 1 : 0);
+      free(params);
+      if (!want_code_sig || !llvm_fn_type_eq(have_code_sig, want_code_sig)) {
+        err_codef(f->p, "sircc.closure.make.code.sig_mismatch", "sircc: closure.make code signature does not match derived codeSig");
+        goto done;
+      }
+
       LLVMValueRef code = lower_expr(f, code_id);
       LLVMValueRef env = lower_expr(f, env_id);
       if (!code || !env) goto done;
+      if (env_ty && LLVMTypeOf(env) != env_ty) {
+        err_codef(f->p, "sircc.closure.make.env.type_mismatch", "sircc: closure.make env type does not match closure env type");
+        goto done;
+      }
 
       LLVMTypeRef clo_ty = lower_type(f->p, f->ctx, n->type_ref);
       if (!clo_ty || LLVMGetTypeKind(clo_ty) != LLVMStructTypeKind) {
@@ -860,6 +938,11 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       }
       LLVMValueRef env = lower_expr(f, env_id);
       if (!env) goto done;
+      LLVMTypeRef want_env_ty = lower_type(f->p, f->ctx, cty->env_ty);
+      if (want_env_ty && LLVMTypeOf(env) != want_env_ty) {
+        err_codef(f->p, "sircc.closure.sym.env.type_mismatch", "sircc: closure.sym env type does not match closure env type");
+        goto done;
+      }
 
       TypeRec* cs = get_type(f->p, cty->call_sig);
       if (!cs || cs->kind != TYPE_FN) {

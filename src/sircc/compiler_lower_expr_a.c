@@ -164,7 +164,10 @@ static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMVa
 static bool eval_branch_operand(FunctionCtx* f, JsonValue* br, LLVMTypeRef want_ty, LLVMValueRef* out) {
   if (!f || !br || br->type != JSON_OBJECT || !out) return false;
   const char* kind = json_get_string(json_obj_get(br, "kind"));
-  if (!kind) return false;
+  if (!kind) {
+    err_codef(f->p, "sircc.sem.branch.kind.missing", "sircc: sem branch operand missing kind");
+    return false;
+  }
 
   if (strcmp(kind, "val") == 0) {
     int64_t vid = 0;
@@ -191,8 +194,15 @@ static bool eval_branch_operand(FunctionCtx* f, JsonValue* br, LLVMTypeRef want_
     if (t->kind == TYPE_FUN) {
       TypeRec* sig = get_type(f->p, t->sig);
       if (!sig || sig->kind != TYPE_FN || sig->param_len != 0) {
-        errf(f->p, "sircc: thunk fun must have () -> T signature");
+        err_codef(f->p, "sircc.sem.thunk.arity.bad", "sircc: thunk fun must have () -> T signature");
         return false;
+      }
+      if (want_ty) {
+        LLVMTypeRef have_ret = lower_type(f->p, f->ctx, sig->ret);
+        if (have_ret && have_ret != want_ty) {
+          err_codef(f->p, "sircc.sem.thunk.ret.bad", "sircc: thunk fun return type mismatch");
+          return false;
+        }
       }
       LLVMValueRef v = call_fun_value(f, fid, NULL, 0, want_ty);
       if (!v) return false;
@@ -202,18 +212,26 @@ static bool eval_branch_operand(FunctionCtx* f, JsonValue* br, LLVMTypeRef want_
     if (t->kind == TYPE_CLOSURE) {
       TypeRec* sig = get_type(f->p, t->call_sig);
       if (!sig || sig->kind != TYPE_FN || sig->param_len != 0) {
-        errf(f->p, "sircc: thunk closure must have () -> T signature");
+        err_codef(f->p, "sircc.sem.thunk.arity.bad", "sircc: thunk closure must have () -> T signature");
         return false;
+      }
+      if (want_ty) {
+        LLVMTypeRef have_ret = lower_type(f->p, f->ctx, sig->ret);
+        if (have_ret && have_ret != want_ty) {
+          err_codef(f->p, "sircc.sem.thunk.ret.bad", "sircc: thunk closure return type mismatch");
+          return false;
+        }
       }
       LLVMValueRef v = call_closure_value(f, fid, NULL, 0, want_ty);
       if (!v) return false;
       *out = v;
       return true;
     }
-    errf(f->p, "sircc: thunk must be fun or closure");
+    err_codef(f->p, "sircc.sem.thunk.kind.bad", "sircc: thunk must be fun or closure");
     return false;
   }
 
+  err_codef(f->p, "sircc.sem.branch.kind.bad", "sircc: sem branch operand kind must be 'val' or 'thunk'");
   return false;
 }
 
@@ -1637,6 +1655,22 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
           if (pay_ty_id == 0) {
             errf(f->p, "sircc: sem.match_sum case %lld body expects payload but variant is nullary", (long long)variant);
             goto done;
+          }
+          // Validate the thunk parameter type matches the payload type.
+          if (t->kind == TYPE_FUN) {
+            TypeRec* sig = get_type(f->p, t->sig);
+            if (!sig || sig->kind != TYPE_FN || sig->param_len != 1 || sig->params[0] != pay_ty_id) {
+              err_codef(f->p, "sircc.sem.match_sum.thunk.param.bad",
+                        "sircc: sem.match_sum case %lld thunk parameter type must match payload type", (long long)variant);
+              goto done;
+            }
+          } else if (t->kind == TYPE_CLOSURE) {
+            TypeRec* sig = get_type(f->p, t->call_sig);
+            if (!sig || sig->kind != TYPE_FN || sig->param_len != 1 || sig->params[0] != pay_ty_id) {
+              err_codef(f->p, "sircc.sem.match_sum.thunk.param.bad",
+                        "sircc: sem.match_sum case %lld thunk parameter type must match payload type", (long long)variant);
+              goto done;
+            }
           }
           LLVMValueRef payload = sum_payload_load(f, sty, sum_ty_id, scrut, pay_ty_id);
           if (!payload) goto done;

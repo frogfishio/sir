@@ -211,6 +211,33 @@ add_test(
 )
 
 add_test(
+  NAME sircc_diag_bad_closure_make_code_sig_mismatch
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/bad_closure_make_code_sig_mismatch.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_closure_make_code_sig_mismatch.ll\\;--emit-llvm
+    "-DEXPECT=closure.make code signature does not match"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_sem_if_branch_kind
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/bad_sem_if_branch_kind.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_sem_if_branch_kind.ll\\;--emit-llvm
+    "-DEXPECT=kind must be 'val' or 'thunk'"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_sem_match_sum_thunk_param_ty
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/bad_sem_match_sum_thunk_param_ty.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_sem_match_sum_thunk_param_ty.ll\\;--emit-llvm
+    "-DEXPECT=thunk parameter type must match payload type"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_cinterop_export_add2
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
