@@ -22,4 +22,13 @@
 - `--clang <path>` chooses the linker driver (default: `clang`).
 - `--target-triple <triple>` overrides the target triple for object emission.
 
+## `meta.ext` (sircc-defined conventions)
+
+These are conventional keys used by `sircc` under the `k:"meta"` record’s `ext` object.
+
+- `meta.ext.target.triple` (string): default target triple (overridden by `--target-triple`).
+- `meta.ext.target.cpu` (string, optional): LLVM CPU string (defaults to `"generic"`).
+- `meta.ext.target.features` (string, optional): LLVM target feature string (defaults to empty).
+- `meta.ext.features` (array of strings): feature gates (e.g. `fun:v1`, `closure:v1`, `adt:v1`, `sem:v1`, `agg:v1`).
+
 Note: this example’s `main` takes two `i32` arguments because we don’t yet model argv lowering; you can still inspect IR with `--emit-llvm`.

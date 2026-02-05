@@ -56,12 +56,12 @@ bool emit_trap_if_misaligned(FunctionCtx* f, LLVMValueRef ptr, unsigned align) {
   if (!f || !ptr) return false;
   if (align <= 1) return true;
   if ((align & (align - 1u)) != 0u) {
-    errf(f->p, "sircc: align must be a power of two (got %u)", align);
+    err_codef(f->p, "sircc.align.not_pow2", "sircc: align must be a power of two (got %u)", align);
     return false;
   }
 
   if (LLVMGetTypeKind(LLVMTypeOf(ptr)) != LLVMPointerTypeKind) {
-    errf(f->p, "sircc: internal: alignment check requires ptr");
+    err_codef(f->p, "sircc.internal.align.ptr_required", "sircc: internal: alignment check requires ptr");
     return false;
   }
 

@@ -56,8 +56,10 @@ bool init_target_for_module(SirProgram* p, LLVMModuleRef mod, const char* triple
     return false;
   }
 
+  const char* cpu = (p && p->target_cpu && *p->target_cpu) ? p->target_cpu : "generic";
+  const char* features = (p && p->target_features && *p->target_features) ? p->target_features : "";
   LLVMTargetMachineRef tm =
-      LLVMCreateTargetMachine(target, triple, "generic", "", LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
+      LLVMCreateTargetMachine(target, triple, cpu, features, LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
   if (!tm) {
     err_codef(p, "sircc.llvm.target_machine.create_failed", "sircc: failed to create target machine");
     return false;
@@ -160,8 +162,10 @@ bool init_target_info(SirProgram* p, const char* triple) {
     return false;
   }
 
+  const char* cpu = (p && p->target_cpu && *p->target_cpu) ? p->target_cpu : "generic";
+  const char* features = (p && p->target_features && *p->target_features) ? p->target_features : "";
   LLVMTargetMachineRef tm =
-      LLVMCreateTargetMachine(target, triple, "generic", "", LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
+      LLVMCreateTargetMachine(target, triple, cpu, features, LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
   if (!tm) {
     err_codef(p, "sircc.llvm.target_machine.create_failed", "sircc: failed to create target machine");
     return false;
@@ -262,9 +266,10 @@ bool emit_module_obj(SirProgram* p, LLVMModuleRef mod, const char* triple, const
     return false;
   }
 
+  const char* cpu = (p && p->target_cpu && *p->target_cpu) ? p->target_cpu : "generic";
+  const char* features = (p && p->target_features && *p->target_features) ? p->target_features : "";
   LLVMTargetMachineRef tm =
-      LLVMCreateTargetMachine(target, use_triple, "generic", "", LLVMCodeGenLevelDefault, LLVMRelocDefault,
-                              LLVMCodeModelDefault);
+      LLVMCreateTargetMachine(target, use_triple, cpu, features, LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
   if (!tm) {
     err_codef(p, "sircc.llvm.target_machine.create_failed", "sircc: failed to create target machine");
     if (!triple) LLVMDisposeMessage((char*)use_triple);

@@ -34,7 +34,8 @@ int sircc_compile(const SirccOptions* opt) {
 
   const char* use_triple = opt->target_triple ? opt->target_triple : p.target_triple;
   if (opt->require_pinned_triple && !use_triple) {
-    errf(&p, "sircc: missing pinned target triple (set meta.ext.target.triple or pass --target-triple)");
+    err_codef(&p, "sircc.target.triple.missing",
+              "sircc: missing pinned target triple (set meta.ext.target.triple or pass --target-triple)");
     ok = false;
     goto done;
   }
@@ -96,7 +97,7 @@ int sircc_compile(const SirccOptions* opt) {
     if (opt->zasm_map_path && *opt->zasm_map_path) {
       map_out = fopen(opt->zasm_map_path, "wb");
       if (!map_out) {
-        errf(&p, "sircc: failed to open zasm map output: %s", strerror(errno));
+        err_codef(&p, "sircc.io.open_failed", "sircc: failed to open zasm map output: %s", strerror(errno));
         ok = false;
         goto done;
       }
@@ -141,7 +142,7 @@ int sircc_compile(const SirccOptions* opt) {
 
   char* verr = NULL;
   if (LLVMVerifyModule(mod, LLVMReturnStatusAction, &verr) != 0) {
-    errf(&p, "sircc: LLVM verification failed: %s", verr ? verr : "(unknown)");
+    err_codef(&p, "sircc.llvm.verify_failed", "sircc: LLVM verification failed: %s", verr ? verr : "(unknown)");
     LLVMDisposeMessage(verr);
     LLVMDisposeModule(mod);
     LLVMContextDispose(ctx);
@@ -166,7 +167,7 @@ int sircc_compile(const SirccOptions* opt) {
   char tmp_obj[4096];
   if (!make_tmp_obj(tmp_obj, sizeof(tmp_obj))) {
     bump_exit_code(&p, SIRCC_EXIT_INTERNAL);
-    errf(&p, "sircc: failed to create temporary object path");
+    err_codef(&p, "sircc.tmp_obj.create_failed", "sircc: failed to create temporary object path");
     LLVMDisposeModule(mod);
     LLVMContextDispose(ctx);
     ok = false;

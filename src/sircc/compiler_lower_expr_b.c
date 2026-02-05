@@ -309,29 +309,30 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "sizeof") == 0 || strcmp(op, "alignof") == 0 || strcmp(op, "offset") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.node.fields.missing", "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
         goto done;
       }
       int64_t ty_id = 0;
       if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &ty_id)) {
-        errf(f->p, "sircc: %s node %lld missing fields.ty (type ref)", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.ptr.offset.ty.missing", "sircc: %s node %lld missing fields.ty (type ref)", n->tag, (long long)node_id);
         goto done;
       }
       int64_t size = 0;
       int64_t align = 0;
       if (!type_size_align(f->p, ty_id, &size, &align)) {
-        errf(f->p, "sircc: %s node %lld has invalid/unsized type %lld", n->tag, (long long)node_id, (long long)ty_id);
+        err_codef(f->p, "sircc.ptr.offset.ty.bad", "sircc: %s node %lld has invalid/unsized type %lld", n->tag, (long long)node_id,
+                  (long long)ty_id);
         goto done;
       }
 
       if (!args || args->type != JSON_ARRAY) {
-        errf(f->p, "sircc: %s node %lld missing args array", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.missing", "sircc: %s node %lld missing args array", n->tag, (long long)node_id);
         goto done;
       }
 
       if (strcmp(op, "sizeof") == 0) {
         if (args->v.arr.len != 0) {
-          errf(f->p, "sircc: %s node %lld requires args:[]", n->tag, (long long)node_id);
+          err_codef(f->p, "sircc.args.bad", "sircc: %s node %lld requires args:[]", n->tag, (long long)node_id);
           goto done;
         }
         out = LLVMConstInt(LLVMInt64TypeInContext(f->ctx), (unsigned long long)size, 0);
@@ -340,7 +341,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       if (strcmp(op, "alignof") == 0) {
         if (args->v.arr.len != 0) {
-          errf(f->p, "sircc: %s node %lld requires args:[]", n->tag, (long long)node_id);
+          err_codef(f->p, "sircc.args.bad", "sircc: %s node %lld requires args:[]", n->tag, (long long)node_id);
           goto done;
         }
         out = LLVMConstInt(LLVMInt32TypeInContext(f->ctx), (unsigned long long)align, 0);
@@ -349,23 +350,23 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       if (strcmp(op, "offset") == 0) {
         if (args->v.arr.len != 2) {
-          errf(f->p, "sircc: %s node %lld requires args:[base,index]", n->tag, (long long)node_id);
+          err_codef(f->p, "sircc.args.bad", "sircc: %s node %lld requires args:[base,index]", n->tag, (long long)node_id);
           goto done;
         }
         int64_t base_id = 0, idx_id = 0;
         if (!parse_node_ref_id(f->p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &idx_id)) {
-          errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+          err_codef(f->p, "sircc.args.ref_bad", "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
           goto done;
         }
         LLVMValueRef base = lower_expr(f, base_id);
         LLVMValueRef idx = lower_expr(f, idx_id);
         if (!base || !idx) goto done;
         if (LLVMGetTypeKind(LLVMTypeOf(base)) != LLVMPointerTypeKind) {
-          errf(f->p, "sircc: %s requires ptr base", n->tag);
+          err_codef(f->p, "sircc.operand.type_bad", "sircc: %s requires ptr base", n->tag);
           goto done;
         }
         if (LLVMGetTypeKind(LLVMTypeOf(idx)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(idx)) != 64) {
-          errf(f->p, "sircc: %s requires i64 index", n->tag);
+          err_codef(f->p, "sircc.operand.type_bad", "sircc: %s requires i64 index", n->tag);
           goto done;
         }
 
@@ -382,18 +383,18 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     }
 
     if (!args || args->type != JSON_ARRAY) {
-      errf(f->p, "sircc: %s node %lld missing args array", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.args.missing", "sircc: %s node %lld missing args array", n->tag, (long long)node_id);
       goto done;
     }
 
     if (strcmp(op, "cmp.eq") == 0 || strcmp(op, "cmp.ne") == 0) {
       if (args->v.arr.len != 2) {
-        errf(f->p, "sircc: %s node %lld requires 2 args", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s node %lld requires 2 args", n->tag, (long long)node_id);
         goto done;
       }
       int64_t a_id = 0, b_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
-        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.ref_bad", "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
       if (!reject_opaque_callable_operand(f, a_id, n->tag) || !reject_opaque_callable_operand(f, b_id, n->tag)) goto done;
@@ -413,12 +414,12 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "add") == 0 || strcmp(op, "sub") == 0) {
       if (args->v.arr.len != 2) {
-        errf(f->p, "sircc: %s node %lld requires 2 args", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s node %lld requires 2 args", n->tag, (long long)node_id);
         goto done;
       }
       int64_t p_id = 0, off_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &p_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &off_id)) {
-        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.ref_bad", "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
       if (!reject_opaque_callable_operand(f, p_id, n->tag)) goto done;
@@ -427,11 +428,11 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (!pval || !oval) goto done;
       LLVMTypeRef pty = LLVMTypeOf(pval);
       if (LLVMGetTypeKind(pty) != LLVMPointerTypeKind) {
-        errf(f->p, "sircc: %s requires pointer lhs", n->tag);
+        err_codef(f->p, "sircc.operand.type_bad", "sircc: %s requires pointer lhs", n->tag);
         goto done;
       }
       if (LLVMGetTypeKind(LLVMTypeOf(oval)) != LLVMIntegerTypeKind) {
-        errf(f->p, "sircc: %s requires integer byte offset rhs", n->tag);
+        err_codef(f->p, "sircc.operand.type_bad", "sircc: %s requires integer byte offset rhs", n->tag);
         goto done;
       }
       LLVMTypeRef i8p = LLVMPointerType(LLVMInt8TypeInContext(f->ctx), 0);
@@ -452,12 +453,12 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "to_i64") == 0 || strcmp(op, "from_i64") == 0) {
       if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
-        errf(f->p, "sircc: %s node %lld requires args:[x]", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.bad", "sircc: %s node %lld requires args:[x]", n->tag, (long long)node_id);
         goto done;
       }
       int64_t x_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &x_id)) {
-        errf(f->p, "sircc: %s node %lld arg must be node ref", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.ref_bad", "sircc: %s node %lld arg must be node ref", n->tag, (long long)node_id);
         goto done;
       }
       if (strcmp(op, "to_i64") == 0) {
@@ -473,7 +474,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       if (strcmp(op, "to_i64") == 0) {
         if (LLVMGetTypeKind(LLVMTypeOf(x)) != LLVMPointerTypeKind) {
-          errf(f->p, "sircc: ptr.to_i64 requires ptr operand");
+          err_codef(f->p, "sircc.ptr.to_i64.operand.type_bad", "sircc: ptr.to_i64 requires ptr operand");
           goto done;
         }
         LLVMValueRef bits = LLVMBuildPtrToInt(f->builder, x, ip, "ptr.bits");
@@ -482,7 +483,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       }
 
       if (LLVMGetTypeKind(LLVMTypeOf(x)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(x)) != 64) {
-        errf(f->p, "sircc: ptr.from_i64 requires i64 operand");
+        err_codef(f->p, "sircc.ptr.from_i64.operand.type_bad", "sircc: ptr.from_i64 requires i64 operand");
         goto done;
       }
       LLVMValueRef bits = LLVMBuildTruncOrBitCast(f->builder, x, ip, "i64.ptrbits");
@@ -493,25 +494,26 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
   if (strcmp(n->tag, "alloca") == 0) {
     if (!n->fields) {
-      errf(f->p, "sircc: alloca node %lld missing fields", (long long)node_id);
+      err_codef(f->p, "sircc.alloca.fields.missing", "sircc: alloca node %lld missing fields", (long long)node_id);
       goto done;
     }
     int64_t ty_id = 0;
     if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &ty_id)) {
-      errf(f->p, "sircc: alloca node %lld missing fields.ty (type ref)", (long long)node_id);
+      err_codef(f->p, "sircc.alloca.ty.missing", "sircc: alloca node %lld missing fields.ty (type ref)", (long long)node_id);
       goto done;
     }
 
     int64_t el_size = 0;
     int64_t el_align = 0;
     if (!type_size_align(f->p, ty_id, &el_size, &el_align)) {
-      errf(f->p, "sircc: alloca node %lld has invalid/unsized element type %lld", (long long)node_id, (long long)ty_id);
+      err_codef(f->p, "sircc.alloca.ty.bad", "sircc: alloca node %lld has invalid/unsized element type %lld", (long long)node_id,
+                (long long)ty_id);
       goto done;
     }
 
     LLVMTypeRef el = lower_type(f->p, f->ctx, ty_id);
     if (!el) {
-      errf(f->p, "sircc: alloca node %lld has invalid element type %lld", (long long)node_id, (long long)ty_id);
+      err_codef(f->p, "sircc.alloca.ty.bad", "sircc: alloca node %lld has invalid element type %lld", (long long)node_id, (long long)ty_id);
       goto done;
     }
 
@@ -526,7 +528,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (av) {
         align_present = true;
         if (!json_get_i64(av, &align_i64)) {
-          errf(f->p, "sircc: alloca node %lld flags.align must be an integer", (long long)node_id);
+          err_codef(f->p, "sircc.alloca.align.not_int", "sircc: alloca node %lld flags.align must be an integer", (long long)node_id);
           goto done;
         }
       }
@@ -539,7 +541,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     if (alignv) {
       align_present = true;
       if (!json_get_i64(alignv, &align_i64)) {
-        errf(f->p, "sircc: alloca node %lld align must be an integer", (long long)node_id);
+        err_codef(f->p, "sircc.alloca.align.not_int", "sircc: alloca node %lld align must be an integer", (long long)node_id);
         goto done;
       }
     }
@@ -553,20 +555,20 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       int64_t c = 0;
       if (json_get_i64(countv, &c)) {
         if (c < 0) {
-          errf(f->p, "sircc: alloca node %lld count must be >= 0", (long long)node_id);
+          err_codef(f->p, "sircc.alloca.count.range", "sircc: alloca node %lld count must be >= 0", (long long)node_id);
           goto done;
         }
         count_val = LLVMConstInt(i64, (unsigned long long)c, 0);
       } else {
         int64_t cid = 0;
         if (!parse_node_ref_id(f->p, countv, &cid)) {
-          errf(f->p, "sircc: alloca node %lld count must be i64 or node ref", (long long)node_id);
+          err_codef(f->p, "sircc.alloca.count.bad", "sircc: alloca node %lld count must be i64 or node ref", (long long)node_id);
           goto done;
         }
         count_val = lower_expr(f, cid);
         if (!count_val) goto done;
         if (LLVMGetTypeKind(LLVMTypeOf(count_val)) != LLVMIntegerTypeKind) {
-          errf(f->p, "sircc: alloca node %lld count ref must be integer", (long long)node_id);
+          err_codef(f->p, "sircc.alloca.count.ref_type_bad", "sircc: alloca node %lld count ref must be integer", (long long)node_id);
           goto done;
         }
         if (LLVMGetIntTypeWidth(LLVMTypeOf(count_val)) != 64) {
@@ -591,7 +593,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     unsigned align = 0;
     if (align_present) {
       if (align_i64 <= 0 || align_i64 > (int64_t)UINT_MAX) {
-        errf(f->p, "sircc: alloca node %lld align must be > 0", (long long)node_id);
+        err_codef(f->p, "sircc.alloca.align.range", "sircc: alloca node %lld align must be > 0", (long long)node_id);
         goto done;
       }
       align = (unsigned)align_i64;
@@ -626,7 +628,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       el = lower_type_prim(f->ctx, tname);
     }
     if (!el) {
-      errf(f->p, "sircc: unsupported alloca type '%s'", tname);
+      err_codef(f->p, "sircc.alloca.type_unsupported", "sircc: unsupported alloca type '%s'", tname);
       goto done;
     }
     out = LLVMBuildAlloca(f->builder, el, "alloca");
@@ -636,20 +638,20 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
   if (strncmp(n->tag, "load.", 5) == 0) {
     const char* tname = n->tag + 5;
     if (!n->fields) {
-      errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.load.fields.missing", "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
       goto done;
     }
     JsonValue* addr = json_obj_get(n->fields, "addr");
     int64_t aid = 0;
     if (!parse_node_ref_id(f->p, addr, &aid)) {
-      errf(f->p, "sircc: %s node %lld missing fields.addr ref", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.load.addr.ref_bad", "sircc: %s node %lld missing fields.addr ref", n->tag, (long long)node_id);
       goto done;
     }
     LLVMValueRef pval = lower_expr(f, aid);
     if (!pval) goto done;
     LLVMTypeRef pty = LLVMTypeOf(pval);
     if (LLVMGetTypeKind(pty) != LLVMPointerTypeKind) {
-      errf(f->p, "sircc: %s requires pointer addr", n->tag);
+      err_codef(f->p, "sircc.load.addr.type_bad", "sircc: %s requires pointer addr", n->tag);
       goto done;
     }
     LLVMTypeRef el = NULL;
@@ -659,7 +661,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       el = lower_type_prim(f->ctx, tname);
     }
     if (!el) {
-      errf(f->p, "sircc: unsupported load type '%s'", tname);
+      err_codef(f->p, "sircc.load.type_unsupported", "sircc: unsupported load type '%s'", tname);
       goto done;
     }
     LLVMTypeRef want_ptr = LLVMPointerType(el, 0);
@@ -671,17 +673,17 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     if (alignv) {
       int64_t a = 0;
       if (!json_get_i64(alignv, &a)) {
-        errf(f->p, "sircc: %s node %lld align must be an integer", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.load.align.not_int", "sircc: %s node %lld align must be an integer", n->tag, (long long)node_id);
         goto done;
       }
       if (a <= 0 || a > (int64_t)UINT_MAX) {
-        errf(f->p, "sircc: %s node %lld align must be > 0", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.load.align.range", "sircc: %s node %lld align must be > 0", n->tag, (long long)node_id);
         goto done;
       }
       align = (unsigned)a;
     }
     if ((align & (align - 1u)) != 0u) {
-      errf(f->p, "sircc: %s node %lld align must be a power of two", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.load.align.not_pow2", "sircc: %s node %lld align must be a power of two", n->tag, (long long)node_id);
       goto done;
     }
     if (!emit_trap_if_misaligned(f, pval, align)) goto done;
@@ -701,7 +703,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     JsonValue* args = n->fields ? json_obj_get(n->fields, "args") : NULL;
     if (!args || args->type != JSON_ARRAY) {
-      errf(f->p, "sircc: %s node %lld missing args array", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.args.missing", "sircc: %s node %lld missing args array", n->tag, (long long)node_id);
       goto done;
     }
 
@@ -711,7 +713,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     if (args->v.arr.len == 1) {
       int64_t a_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id)) {
-        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.ref_bad", "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
       a = lower_expr(f, a_id);
@@ -719,14 +721,14 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     } else if (args->v.arr.len == 2) {
       int64_t a_id = 0, b_id = 0;
       if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
-        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        err_codef(f->p, "sircc.args.ref_bad", "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
       a = lower_expr(f, a_id);
       b = lower_expr(f, b_id);
       if (!a || !b) goto done;
     } else {
-      errf(f->p, "sircc: %s node %lld args must have arity 1 or 2", n->tag, (long long)node_id);
+      err_codef(f->p, "sircc.args.arity_bad", "sircc: %s node %lld args must have arity 1 or 2", n->tag, (long long)node_id);
       goto done;
     }
 
@@ -734,17 +736,17 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     // before enforcing float operand types.
     if (strncmp(op, "from_i", 6) == 0) {
       if (!a || b) {
-        errf(f->p, "sircc: %s requires args:[x]", n->tag);
+        err_codef(f->p, "sircc.args.bad", "sircc: %s requires args:[x]", n->tag);
         goto done;
       }
       int srcw = 0;
       char su = 0;
       if (sscanf(op, "from_i%d.%c", &srcw, &su) != 2 || (srcw != 32 && srcw != 64) || (su != 's' && su != 'u')) {
-        errf(f->p, "sircc: unsupported int->float conversion '%s' in %s", op, n->tag);
+        err_codef(f->p, "sircc.conv.int_to_float.unsupported", "sircc: unsupported int->float conversion '%s' in %s", op, n->tag);
         goto done;
       }
       if (LLVMGetTypeKind(LLVMTypeOf(a)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(a)) != (unsigned)srcw) {
-        errf(f->p, "sircc: %s requires i%d operand", n->tag, srcw);
+        err_codef(f->p, "sircc.operand.type_bad", "sircc: %s requires i%d operand", n->tag, srcw);
         goto done;
       }
       LLVMTypeRef fty = (width == 32) ? LLVMFloatTypeInContext(f->ctx) : LLVMDoubleTypeInContext(f->ctx);
@@ -754,17 +756,17 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     LLVMTypeRef fty = LLVMTypeOf(a);
     if (width == 32 && LLVMGetTypeKind(fty) != LLVMFloatTypeKind) {
-      errf(f->p, "sircc: %s expects f32 operands", n->tag);
+      err_codef(f->p, "sircc.operand.type_bad", "sircc: %s expects f32 operands", n->tag);
       goto done;
     }
     if (width == 64 && LLVMGetTypeKind(fty) != LLVMDoubleTypeKind) {
-      errf(f->p, "sircc: %s expects f64 operands", n->tag);
+      err_codef(f->p, "sircc.operand.type_bad", "sircc: %s expects f64 operands", n->tag);
       goto done;
     }
 
     if (strcmp(op, "add") == 0) {
       if (!b) {
-        errf(f->p, "sircc: %s requires 2 args", n->tag);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s requires 2 args", n->tag);
         goto done;
       }
       out = canonicalize_float(f, LLVMBuildFAdd(f->builder, a, b, "fadd"));
@@ -772,7 +774,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     }
     if (strcmp(op, "sub") == 0) {
       if (!b) {
-        errf(f->p, "sircc: %s requires 2 args", n->tag);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s requires 2 args", n->tag);
         goto done;
       }
       out = canonicalize_float(f, LLVMBuildFSub(f->builder, a, b, "fsub"));
@@ -780,7 +782,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     }
     if (strcmp(op, "mul") == 0) {
       if (!b) {
-        errf(f->p, "sircc: %s requires 2 args", n->tag);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s requires 2 args", n->tag);
         goto done;
       }
       out = canonicalize_float(f, LLVMBuildFMul(f->builder, a, b, "fmul"));
@@ -788,7 +790,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     }
     if (strcmp(op, "div") == 0) {
       if (!b) {
-        errf(f->p, "sircc: %s requires 2 args", n->tag);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s requires 2 args", n->tag);
         goto done;
       }
       out = canonicalize_float(f, LLVMBuildFDiv(f->builder, a, b, "fdiv"));
@@ -819,7 +821,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "min") == 0 || strcmp(op, "max") == 0) {
       if (!b) {
-        errf(f->p, "sircc: %s requires 2 args", n->tag);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s requires 2 args", n->tag);
         goto done;
       }
       LLVMValueRef isnan_a = LLVMBuildFCmp(f->builder, LLVMRealUNO, a, a, "isnan.a");
@@ -836,7 +838,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strncmp(op, "cmp.", 4) == 0) {
       if (!b) {
-        errf(f->p, "sircc: %s requires 2 args", n->tag);
+        err_codef(f->p, "sircc.args.arity_bad", "sircc: %s requires 2 args", n->tag);
         goto done;
       }
       const char* cc = op + 4;
@@ -854,7 +856,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       else if (strcmp(cc, "ugt") == 0) pred = LLVMRealUGT;
       else if (strcmp(cc, "uge") == 0) pred = LLVMRealUGE;
       else {
-        errf(f->p, "sircc: unsupported float compare '%s' in %s", cc, n->tag);
+        err_codef(f->p, "sircc.cmp.float.cc.bad", "sircc: unsupported float compare '%s' in %s", cc, n->tag);
         goto done;
       }
       out = LLVMBuildFCmp(f->builder, pred, a, b, "fcmp");
@@ -1477,7 +1479,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         if (elems->v.arr.len) {
           elts = (LLVMValueRef*)malloc(elems->v.arr.len * sizeof(LLVMValueRef));
           if (!elts) {
-            errf(f->p, "sircc: out of memory");
+            bump_exit_code(f->p, SIRCC_EXIT_INTERNAL);
+            err_codef(f->p, "sircc.oom", "sircc: out of memory");
             goto done;
           }
         }
@@ -1547,7 +1550,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (nrep) {
         elts = (LLVMValueRef*)malloc(nrep * sizeof(LLVMValueRef));
         if (!elts) {
-          errf(f->p, "sircc: out of memory");
+          bump_exit_code(f->p, SIRCC_EXIT_INTERNAL);
+          err_codef(f->p, "sircc.oom", "sircc: out of memory");
           goto done;
         }
         for (unsigned i = 0; i < nrep; i++) elts[i] = ev;
@@ -1581,7 +1585,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (nfields) {
         elts = (LLVMValueRef*)malloc(nfields * sizeof(LLVMValueRef));
         if (!elts) {
-          errf(f->p, "sircc: out of memory");
+          bump_exit_code(f->p, SIRCC_EXIT_INTERNAL);
+          err_codef(f->p, "sircc.oom", "sircc: out of memory");
           goto done;
         }
         for (size_t i = 0; i < nfields; i++) {

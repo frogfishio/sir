@@ -148,6 +148,11 @@ add_test(
 )
 
 add_test(
+  NAME sircc_verify_forward_refs
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/forward_refs.sir.jsonl
+)
+
+add_test(
   NAME sircc_diag_bad_fun_missing_feature
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>

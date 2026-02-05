@@ -128,6 +128,8 @@ typedef struct SirProgram {
 
   const char* unit_name;
   const char* target_triple;
+  const char* target_cpu;
+  const char* target_features;
   unsigned ptr_bytes;
   unsigned ptr_bits;
   bool target_big_endian;

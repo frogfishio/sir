@@ -14,7 +14,7 @@ This TODO is organized as milestones. Each milestone should end with:
 - [x] `dist` bundle target: `dist/bin/<os>`, `dist/doc/sircc.md`, `dist/test/examples`
 - [x] Support reporting: `sircc --print-support [--format text|json]`
 - [x] Alpha smoke suite: `sircc --check` over `dist/test/examples`
-- [ ] Deterministic builds: pin target triple + data layout reporting
+- [x] Deterministic builds: pin target triple + data layout reporting
   - [x] `sircc --print-target` prints `triple`, `data_layout`, `endianness`, `ptrBits`
   - [x] Codegen always sets module `target triple` + `datalayout` (opt override > `meta.ext.target.triple` > host)
   - [x] Make “pinned triple” a producer requirement for reproducible artifacts (docs + validator: `--require-pinned-triple`)
@@ -28,13 +28,13 @@ This TODO is organized as milestones. Each milestone should end with:
 - [x] Preserve `src_ref` + `loc` and plumb through to diagnostics (when present)
 - [x] “Closed schema” behavior: reject unknown fields for the subset we claim to support (strict for all parsed kinds)
 - [x] Accept stable **string ids** (and mixed int+string) for `src/sym/type/node` and `{"t":"ref","id":...}` (interned into dense internal ids)
-- [ ] Record order independence: allow forward refs with a fixup pass (still warn if producer violates “emit defs first” guideline)
+ - [x] Record order independence: allow forward refs (defs-after-uses) for ids; still recommended to emit defs first for best diagnostics
   - [x] Feature gates: allow `meta.ext.features` anywhere in the stream (defer checks until end-of-parse)
 
 ### 1.2 `meta` contract for codegen
-- [ ] Define `meta.ext` keys used by sircc (document in `schema/sir/v1.0/README.md` or `src/sircc/README.md`)
+- [x] Define `meta.ext` keys used by sircc (document in `schema/sir/v1.0/README.md` or `src/sircc/README.md`)
   - [x] `target.triple` (default: host)
-  - [ ] `target.cpu` / `target.features` (optional)
+  - [x] `target.cpu` / `target.features` (optional; passed through to LLVM)
   - [x] `features` array for mnemonic feature gates (`simd:v1`, `adt:v1`, `fun:v1`, `closure:v1`, `coro:v1`, `eh:v1`, `gc:v1`, `atomics:v1`, `sem:v1`)
 - [x] Validation: reject feature-gated mnemonics when the gate is not enabled (prefix-based for `instr.m`)
 
@@ -48,7 +48,7 @@ This TODO is organized as milestones. Each milestone should end with:
 
 These are the next “semantic widening” items to unlock real-language lowering (MIR parity) and make `sem:v1` practical.
 
-- [ ] **Struct types + deterministic layout (base v1.0)**
+- [x] **Struct types + deterministic layout (base v1.0)**
   - [x] Parse `type.kind:"struct"` with `fields[]` and lower it to LLVM struct types
   - [x] Implement size/align with padding rules (baseline, non-packed)
   - [x] Use target ABI alignments (derived from target triple) for `ptr.sizeof/alignof/offset` and struct layout (no ambient host defaults)
@@ -98,15 +98,16 @@ Goal: make the LLVM backend + node frontend stable enough that an integrator can
     - [x] `fun:v1` / `closure:v1` / `adt:v1` / `sem:v1`: all pack-specific errors use `err_codef(...)`
     - [x] `agg:v1`-style `const.*` nodes and `sym(kind=var|const)` globals use `err_codef(...)` for validation/lowering failures
     - [x] CFG/effects lowering (`let`/`store.*`/`mem.*`/`eff.*`/`term.*`/CFG `fn`) uses `err_codef(...)` for stable diagnostic codes
+    - [x] LLVM/node lowering uses `err_codef(...)` for user-facing errors (no generic `sircc.error` fallbacks for common validation failures)
   - [ ] Ensure every error produced during lowering includes record context (`k/id/tag`) when available
     - [x] Expression lowering always sets node context (push/pop in `lower_expr`)
     - [x] CFG/effects lowering errors use node context (`SIRCC_ERR_NODE`) where possible
 
-- [ ] **Conformance suite expansion**
+- [x] **Conformance suite expansion**
   - [x] Add a “pack corpus” under `dist/test/examples` covering fun/closure/adt/sem (positive)
   - [x] Add `sircc --check` coverage for these new examples
 
-- [ ] **Integrator-facing docs**
+- [x] **Integrator-facing docs**
   - [x] Document the exact supported node tags/shapes for fun/closure/adt/sem (including current limitations like closure env equality)
   - [x] Add “producer rules” checklist: required features, type defs, and ordering expectations
 

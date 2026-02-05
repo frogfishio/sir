@@ -60,6 +60,9 @@ Notes:
 - `--emit-obj` writes an object file (`.o`)
 - `--emit-zasm` writes a `zasm-v1.1` JSONL stream (zir) (`.jsonl`)
 - if `meta.ext.target.triple` is present, it is used unless `--target-triple` overrides it
+- `meta.ext.target.cpu` and `meta.ext.target.features` (optional) are passed through to LLVM target machine creation
+  - `cpu` defaults to `"generic"`
+  - `features` defaults to empty string (LLVM-style feature string, e.g. `"+neon,-crc"`; target-dependent)
 - `--strip` runs `strip` on the output executable (useful for smaller distribution artifacts)
 - `--require-pinned-triple` fails if neither `--target-triple` nor `meta.ext.target.triple` is provided
 - `--diagnostics json` emits errors as `diag` JSONL records (useful for tooling)

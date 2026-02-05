@@ -331,6 +331,12 @@ static bool parse_meta_record(SirProgram* p, const SirccOptions* opt, JsonValue*
       const char* triple = json_get_string(json_obj_get(target, "triple"));
       if (triple && !(opt && opt->target_triple)) p->target_triple = triple;
 
+      // Optional LLVM codegen tuning knobs (passed through to LLVM target machine creation).
+      const char* cpu = json_get_string(json_obj_get(target, "cpu"));
+      if (cpu && *cpu) p->target_cpu = cpu;
+      const char* features = json_get_string(json_obj_get(target, "features"));
+      if (features && *features) p->target_features = features;
+
       // Optional explicit target contract overrides (used for determinism / cross-target verification).
       // If provided, these must match the LLVM ABI for the chosen triple (when compiling).
       JsonValue* ptrBitsV = json_obj_get(target, "ptrBits");
