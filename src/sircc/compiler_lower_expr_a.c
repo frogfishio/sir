@@ -308,15 +308,23 @@ static LLVMValueRef sum_payload_load(FunctionCtx* f, TypeRec* sty, int64_t sum_t
 LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
   NodeRec* n = get_node(f->p, node_id);
   if (!n) {
-    errf(f->p, "sircc: unknown node id %lld", (long long)node_id);
+    err_codef(f->p, "sircc.node.unknown", "sircc: unknown node id %lld", (long long)node_id);
     return NULL;
   }
+  SirDiagSaved saved = sir_diag_push_node(f->p, n);
   if ((strcmp(n->tag, "param") == 0 || strcmp(n->tag, "bparam") == 0) && n->llvm_value) {
-    return n->llvm_value;
+    LLVMValueRef out = n->llvm_value;
+    sir_diag_pop(f->p, saved);
+    return out;
   }
-  if (n->llvm_value) return n->llvm_value;
+  if (n->llvm_value) {
+    LLVMValueRef out = n->llvm_value;
+    sir_diag_pop(f->p, saved);
+    return out;
+  }
   if (n->resolving) {
-    errf(f->p, "sircc: cyclic node reference at %lld", (long long)node_id);
+    err_codef(f->p, "sircc.node.cycle", "sircc: cyclic node reference at %lld", (long long)node_id);
+    sir_diag_pop(f->p, saved);
     return NULL;
   }
   n->resolving = true;
@@ -1676,5 +1684,6 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
 done:
   n->llvm_value = out;
   n->resolving = false;
+  sir_diag_pop(f->p, saved);
   return out;
 }

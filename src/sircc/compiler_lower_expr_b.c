@@ -209,7 +209,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         }
       }
       if (!name) {
-        errf(f->p, "sircc: ptr.sym node %lld requires fields.name or args:[name]", (long long)node_id);
+        err_codef(f->p, "sircc.ptr.sym.name.missing",
+                  "sircc: ptr.sym node %lld requires fields.name or args:[name]", (long long)node_id);
         goto done;
       }
       LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
@@ -223,16 +224,17 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (!g) {
         SymRec* s = find_sym_by_name(f->p, name);
         if (!s || !s->kind || (strcmp(s->kind, "var") != 0 && strcmp(s->kind, "const") != 0)) {
-          errf(f->p, "sircc: ptr.sym references unknown function or global '%s'", name);
+          err_codef(f->p, "sircc.ptr.sym.unknown", "sircc: ptr.sym references unknown function or global '%s'", name);
           goto done;
         }
         if (s->type_ref == 0) {
-          errf(f->p, "sircc: sym '%s' missing type_ref for global definition", name);
+          err_codef(f->p, "sircc.sym.global.missing_type_ref", "sircc: sym '%s' missing type_ref for global definition", name);
           goto done;
         }
         LLVMTypeRef gty = lower_type(f->p, f->ctx, s->type_ref);
         if (!gty) {
-          errf(f->p, "sircc: sym '%s' has invalid type_ref %lld", name, (long long)s->type_ref);
+          err_codef(f->p, "sircc.sym.global.type_ref.bad", "sircc: sym '%s' has invalid type_ref %lld", name,
+                    (long long)s->type_ref);
           goto done;
         }
         g = LLVMAddGlobal(f->mod, gty, name);
@@ -242,7 +244,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         else if (linkage && strcmp(linkage, "public") == 0) LLVMSetLinkage(g, LLVMExternalLinkage);
         else if (linkage && strcmp(linkage, "extern") == 0) LLVMSetLinkage(g, LLVMExternalLinkage);
         else if (linkage && *linkage) {
-          errf(f->p, "sircc: sym '%s' has unsupported linkage '%s' (use local/public/extern)", name, linkage);
+          err_codef(f->p, "sircc.sym.global.linkage.bad",
+                    "sircc: sym '%s' has unsupported linkage '%s' (use local/public/extern)", name, linkage);
           goto done;
         }
 
@@ -271,24 +274,26 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
             } else if (vt && strcmp(vt, "ref") == 0) {
               int64_t cid = 0;
               if (!parse_node_ref_id(f->p, s->value, &cid)) {
-                errf(f->p, "sircc: sym '%s' has invalid initializer ref", name);
+                err_codef(f->p, "sircc.sym.global.init.ref.bad", "sircc: sym '%s' has invalid initializer ref", name);
                 goto done;
               }
               NodeRec* cn = get_node(f->p, cid);
               if (!cn || !cn->tag || strncmp(cn->tag, "const.", 6) != 0) {
-                errf(f->p, "sircc: sym '%s' initializer must be a const.* node", name);
+                err_codef(f->p, "sircc.sym.global.init.kind.bad", "sircc: sym '%s' initializer must be a const.* node", name);
                 goto done;
               }
               LLVMValueRef cv = lower_expr(f, cid);
               if (!cv) goto done;
               if (!LLVMIsConstant(cv) || LLVMTypeOf(cv) != gty) {
-                errf(f->p, "sircc: sym '%s' initializer type mismatch or not constant", name);
+                err_codef(f->p, "sircc.sym.global.init.type.bad",
+                          "sircc: sym '%s' initializer type mismatch or not constant", name);
                 goto done;
               }
               init = cv;
             }
             if (!init) {
-              errf(f->p, "sircc: sym '%s' has unsupported global initializer value", name);
+              err_codef(f->p, "sircc.sym.global.init.unsupported",
+                        "sircc: sym '%s' has unsupported global initializer value", name);
               goto done;
             }
           } else {
@@ -1422,12 +1427,13 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     // Structured constants (agg:v1-ish, sircc-defined node encoding).
     if (strcmp(tyname, "zero") == 0) {
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: const.zero node %lld missing type_ref", (long long)node_id);
+        err_codef(f->p, "sircc.const.zero.missing_type_ref", "sircc: const.zero node %lld missing type_ref", (long long)node_id);
         goto done;
       }
       LLVMTypeRef ty = lower_type(f->p, f->ctx, n->type_ref);
       if (!ty) {
-        errf(f->p, "sircc: const.zero node %lld has invalid type_ref %lld", (long long)node_id, (long long)n->type_ref);
+        err_codef(f->p, "sircc.const.zero.type_ref.bad",
+                  "sircc: const.zero node %lld has invalid type_ref %lld", (long long)node_id, (long long)n->type_ref);
         goto done;
       }
       out = LLVMConstNull(ty);
@@ -1436,30 +1442,35 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(tyname, "array") == 0 || strcmp(tyname, "repeat") == 0) {
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: const.%s node %lld missing type_ref", tyname, (long long)node_id);
+        err_codef(f->p, "sircc.const.array.missing_type_ref",
+                  "sircc: const.%s node %lld missing type_ref", tyname, (long long)node_id);
         goto done;
       }
       TypeRec* tr = get_type(f->p, n->type_ref);
       if (!tr || tr->kind != TYPE_ARRAY) {
-        errf(f->p, "sircc: const.%s node %lld type_ref must be an array type", tyname, (long long)node_id);
+        err_codef(f->p, "sircc.const.array.type_ref.bad",
+                  "sircc: const.%s node %lld type_ref must be an array type", tyname, (long long)node_id);
         goto done;
       }
       LLVMTypeRef aty = lower_type(f->p, f->ctx, n->type_ref);
       LLVMTypeRef elty = lower_type(f->p, f->ctx, tr->of);
       if (!aty || !elty) {
-        errf(f->p, "sircc: const.%s node %lld has invalid array element type", tyname, (long long)node_id);
+        err_codef(f->p, "sircc.const.array.elem.bad",
+                  "sircc: const.%s node %lld has invalid array element type", tyname, (long long)node_id);
         goto done;
       }
 
       if (strcmp(tyname, "array") == 0) {
         JsonValue* elems = json_obj_get(n->fields, "elems");
         if (!elems || elems->type != JSON_ARRAY) {
-          errf(f->p, "sircc: const.array node %lld requires fields.elems array", (long long)node_id);
+          err_codef(f->p, "sircc.const.array.elems.missing",
+                    "sircc: const.array node %lld requires fields.elems array", (long long)node_id);
           goto done;
         }
         if ((int64_t)elems->v.arr.len != tr->len) {
-          errf(f->p, "sircc: const.array node %lld element count mismatch: have %zu, want %lld", (long long)node_id, elems->v.arr.len,
-               (long long)tr->len);
+          err_codef(f->p, "sircc.const.array.elems.len.mismatch",
+                    "sircc: const.array node %lld element count mismatch: have %zu, want %lld", (long long)node_id,
+                    elems->v.arr.len, (long long)tr->len);
           goto done;
         }
         LLVMValueRef* elts = NULL;
@@ -1473,7 +1484,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         for (size_t i = 0; i < elems->v.arr.len; i++) {
           int64_t cid = 0;
           if (!parse_node_ref_id(f->p, elems->v.arr.items[i], &cid)) {
-            errf(f->p, "sircc: const.array node %lld elems[%zu] must be node refs", (long long)node_id, i);
+            err_codef(f->p, "sircc.const.array.elem.ref.bad",
+                      "sircc: const.array node %lld elems[%zu] must be node refs", (long long)node_id, i);
             free(elts);
             goto done;
           }
@@ -1483,12 +1495,14 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
             goto done;
           }
           if (!LLVMIsConstant(cv)) {
-            errf(f->p, "sircc: const.array node %lld elems[%zu] is not a constant", (long long)node_id, i);
+            err_codef(f->p, "sircc.const.array.elem.not_const",
+                      "sircc: const.array node %lld elems[%zu] is not a constant", (long long)node_id, i);
             free(elts);
             goto done;
           }
           if (LLVMTypeOf(cv) != elty) {
-            errf(f->p, "sircc: const.array node %lld elems[%zu] type mismatch", (long long)node_id, i);
+            err_codef(f->p, "sircc.const.array.elem.type.bad",
+                      "sircc: const.array node %lld elems[%zu] type mismatch", (long long)node_id, i);
             free(elts);
             goto done;
           }
@@ -1504,24 +1518,28 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       int64_t count = 0;
       if (!must_i64(f->p, countv, &count, "const.repeat.count")) goto done;
       if (count != tr->len) {
-        errf(f->p, "sircc: const.repeat node %lld count mismatch: have %lld, want %lld", (long long)node_id, (long long)count,
-             (long long)tr->len);
+        err_codef(f->p, "sircc.const.repeat.count.mismatch",
+                  "sircc: const.repeat node %lld count mismatch: have %lld, want %lld", (long long)node_id, (long long)count,
+                  (long long)tr->len);
         goto done;
       }
       JsonValue* elemv = json_obj_get(n->fields, "elem");
       int64_t eid = 0;
       if (!parse_node_ref_id(f->p, elemv, &eid)) {
-        errf(f->p, "sircc: const.repeat node %lld requires fields.elem node ref", (long long)node_id);
+        err_codef(f->p, "sircc.const.repeat.elem.ref.bad",
+                  "sircc: const.repeat node %lld requires fields.elem node ref", (long long)node_id);
         goto done;
       }
       LLVMValueRef ev = lower_expr(f, eid);
       if (!ev) goto done;
       if (!LLVMIsConstant(ev) || LLVMTypeOf(ev) != elty) {
-        errf(f->p, "sircc: const.repeat node %lld elem must be a constant of element type", (long long)node_id);
+        err_codef(f->p, "sircc.const.repeat.elem.bad",
+                  "sircc: const.repeat node %lld elem must be a constant of element type", (long long)node_id);
         goto done;
       }
       if (tr->len < 0 || tr->len > (int64_t)UINT_MAX) {
-        errf(f->p, "sircc: const.repeat node %lld invalid array length", (long long)node_id);
+        err_codef(f->p, "sircc.const.repeat.len.bad",
+                  "sircc: const.repeat node %lld invalid array length", (long long)node_id);
         goto done;
       }
       unsigned nrep = (unsigned)tr->len;
@@ -1541,17 +1559,20 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(tyname, "struct") == 0) {
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: const.struct node %lld missing type_ref", (long long)node_id);
+        err_codef(f->p, "sircc.const.struct.missing_type_ref",
+                  "sircc: const.struct node %lld missing type_ref", (long long)node_id);
         goto done;
       }
       TypeRec* tr = get_type(f->p, n->type_ref);
       if (!tr || tr->kind != TYPE_STRUCT) {
-        errf(f->p, "sircc: const.struct node %lld type_ref must be a struct type", (long long)node_id);
+        err_codef(f->p, "sircc.const.struct.type_ref.bad",
+                  "sircc: const.struct node %lld type_ref must be a struct type", (long long)node_id);
         goto done;
       }
       LLVMTypeRef sty = lower_type(f->p, f->ctx, n->type_ref);
       if (!sty) {
-        errf(f->p, "sircc: const.struct node %lld has invalid type_ref %lld", (long long)node_id, (long long)n->type_ref);
+        err_codef(f->p, "sircc.const.struct.type_ref.bad",
+                  "sircc: const.struct node %lld has invalid type_ref %lld", (long long)node_id, (long long)n->type_ref);
         goto done;
       }
 
@@ -1566,7 +1587,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         for (size_t i = 0; i < nfields; i++) {
           LLVMTypeRef fty = lower_type(f->p, f->ctx, tr->fields[i].type_ref);
           if (!fty) {
-            errf(f->p, "sircc: const.struct node %lld has invalid field type", (long long)node_id);
+            err_codef(f->p, "sircc.const.struct.field.type.bad",
+                      "sircc: const.struct node %lld has invalid field type", (long long)node_id);
             free(elts);
             goto done;
           }
@@ -1576,7 +1598,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
       JsonValue* fields = json_obj_get(n->fields, "fields");
       if (!fields || fields->type != JSON_ARRAY) {
-        errf(f->p, "sircc: const.struct node %lld requires fields.fields array", (long long)node_id);
+        err_codef(f->p, "sircc.const.struct.fields.bad",
+                  "sircc: const.struct node %lld requires fields.fields array", (long long)node_id);
         free(elts);
         goto done;
       }
@@ -1585,7 +1608,8 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       for (size_t j = 0; j < fields->v.arr.len; j++) {
         JsonValue* fo = fields->v.arr.items[j];
         if (!fo || fo->type != JSON_OBJECT) {
-          errf(f->p, "sircc: const.struct node %lld fields[%zu] must be an object", (long long)node_id, j);
+          err_codef(f->p, "sircc.const.struct.fields.item.bad",
+                    "sircc: const.struct node %lld fields[%zu] must be an object", (long long)node_id, j);
           free(elts);
           goto done;
         }
@@ -1595,19 +1619,22 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
           goto done;
         }
         if (i < 0 || (size_t)i >= nfields) {
-          errf(f->p, "sircc: const.struct node %lld field index %lld out of range", (long long)node_id, (long long)i);
+          err_codef(f->p, "sircc.const.struct.field.index.bad",
+                    "sircc: const.struct node %lld field index %lld out of range", (long long)node_id, (long long)i);
           free(elts);
           goto done;
         }
         if (i <= last_i) {
-          errf(f->p, "sircc: const.struct node %lld fields must be strictly increasing by i", (long long)node_id);
+          err_codef(f->p, "sircc.const.struct.field.order.bad",
+                    "sircc: const.struct node %lld fields must be strictly increasing by i", (long long)node_id);
           free(elts);
           goto done;
         }
         last_i = i;
         int64_t vid = 0;
         if (!parse_node_ref_id(f->p, json_obj_get(fo, "v"), &vid)) {
-          errf(f->p, "sircc: const.struct node %lld fields[%zu].v must be a node ref", (long long)node_id, j);
+          err_codef(f->p, "sircc.const.struct.field.value.ref.bad",
+                    "sircc: const.struct node %lld fields[%zu].v must be a node ref", (long long)node_id, j);
           free(elts);
           goto done;
         }
@@ -1617,13 +1644,15 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
           goto done;
         }
         if (!LLVMIsConstant(cv)) {
-          errf(f->p, "sircc: const.struct node %lld fields[%zu] value is not a constant", (long long)node_id, j);
+          err_codef(f->p, "sircc.const.struct.field.value.not_const",
+                    "sircc: const.struct node %lld fields[%zu] value is not a constant", (long long)node_id, j);
           free(elts);
           goto done;
         }
         LLVMTypeRef fty = lower_type(f->p, f->ctx, tr->fields[(size_t)i].type_ref);
         if (!fty || LLVMTypeOf(cv) != fty) {
-          errf(f->p, "sircc: const.struct node %lld fields[%zu] type mismatch", (long long)node_id, j);
+          err_codef(f->p, "sircc.const.struct.field.value.type.bad",
+                    "sircc: const.struct node %lld fields[%zu] type mismatch", (long long)node_id, j);
           free(elts);
           goto done;
         }
@@ -1637,7 +1666,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     LLVMTypeRef ty = lower_type_prim(f->ctx, tyname);
     if (!ty) {
-      errf(f->p, "sircc: unsupported const type '%s'", tyname);
+      err_codef(f->p, "sircc.const.type.unsupported", "sircc: unsupported const type '%s'", tyname);
       goto done;
     }
     if (LLVMGetTypeKind(ty) == LLVMIntegerTypeKind) {
@@ -1650,13 +1679,13 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       // Prefer exact bit-pattern constants: fields.bits = "0x..." (hex).
       const char* bits = json_get_string(json_obj_get(n->fields, "bits"));
       if (!bits || strncmp(bits, "0x", 2) != 0) {
-        errf(f->p, "sircc: const.%s requires fields.bits hex string (0x...)", tyname);
+        err_codef(f->p, "sircc.const.float.bits.bad", "sircc: const.%s requires fields.bits hex string (0x...)", tyname);
         goto done;
       }
       char* end = NULL;
       unsigned long long raw = strtoull(bits + 2, &end, 16);
       if (!end || *end != 0) {
-        errf(f->p, "sircc: const.%s invalid bits '%s'", tyname, bits);
+        err_codef(f->p, "sircc.const.float.bits.bad", "sircc: const.%s invalid bits '%s'", tyname, bits);
         goto done;
       }
       if (LLVMGetTypeKind(ty) == LLVMFloatTypeKind) {

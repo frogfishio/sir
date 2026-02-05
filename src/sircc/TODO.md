@@ -96,7 +96,9 @@ Goal: make the LLVM backend + node frontend stable enough that an integrator can
 - [ ] **Diagnostics hardening**
   - [ ] Replace remaining `errf(...)` in new packs with `err_codef(...)` (stable codes)
     - [x] `fun:v1` / `closure:v1` / `adt:v1` / `sem:v1`: all pack-specific errors use `err_codef(...)`
+    - [x] `agg:v1`-style `const.*` nodes and `sym(kind=var|const)` globals use `err_codef(...)` for validation/lowering failures
   - [ ] Ensure every error produced during lowering includes record context (`k/id/tag`) when available
+    - [x] Expression lowering always sets node context (push/pop in `lower_expr`)
 
 - [ ] **Conformance suite expansion**
   - [x] Add a “pack corpus” under `dist/test/examples` covering fun/closure/adt/sem (positive)
