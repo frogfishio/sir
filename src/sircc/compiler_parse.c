@@ -587,7 +587,7 @@ static bool parse_dir_record(SirProgram* p, JsonValue* obj) {
 
 static bool parse_type_record(SirProgram* p, JsonValue* obj) {
   static const char* const keys[] = {"ir",   "k",      "id",     "kind",   "name",   "prim",  "of",      "len",
-                                     "params", "ret",    "varargs", "fields", "variants", "attrs", "src_ref", "loc"};
+                                     "params", "ret",    "varargs", "fields", "variants", "sig", "callSig", "env", "attrs", "src_ref", "loc"};
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "type record")) return false;
 
   int64_t id = 0;
@@ -613,6 +613,11 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
   tr->varargs = false;
   tr->fields = NULL;
   tr->field_len = 0;
+  tr->sig = 0;
+  tr->call_sig = 0;
+  tr->env_ty = 0;
+  tr->variants = NULL;
+  tr->variant_len = 0;
 
   if (strcmp(kind, "prim") == 0) {
     tr->kind = TYPE_PRIM;
@@ -674,6 +679,44 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
       int64_t fty = 0;
       if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(fo, "type_ref"), &fty, "type.fields[i].type_ref")) return false;
       tr->fields[i] = (TypeFieldRec){.name = fname, .type_ref = fty};
+    }
+  } else if (strcmp(kind, "fun") == 0) {
+    tr->kind = TYPE_FUN;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "sig"), &tr->sig, "type.sig")) return false;
+  } else if (strcmp(kind, "closure") == 0) {
+    tr->kind = TYPE_CLOSURE;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "callSig"), &tr->call_sig, "type.callSig")) return false;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "env"), &tr->env_ty, "type.env")) return false;
+  } else if (strcmp(kind, "sum") == 0) {
+    tr->kind = TYPE_SUM;
+    JsonValue* vars = json_obj_get(obj, "variants");
+    if (!vars || vars->type != JSON_ARRAY) {
+      err_codef(p, "sircc.type.sum.variants.not_array", "sircc: expected array for type.variants");
+      return false;
+    }
+    tr->variant_len = vars->v.arr.len;
+    if (tr->variant_len) {
+      tr->variants = (TypeVariantRec*)arena_alloc(&p->arena, tr->variant_len * sizeof(TypeVariantRec));
+      if (!tr->variants) return false;
+      memset(tr->variants, 0, tr->variant_len * sizeof(TypeVariantRec));
+    }
+    for (size_t i = 0; i < tr->variant_len; i++) {
+      JsonValue* vo = vars->v.arr.items[i];
+      if (!vo || vo->type != JSON_OBJECT) {
+        err_codef(p, "sircc.type.sum.variant.bad", "sircc: type.variants[%zu] must be an object", i);
+        return false;
+      }
+      const char* vname = json_get_string(json_obj_get(vo, "name"));
+      if (vname && *vname && !is_ident(vname)) {
+        err_codef(p, "sircc.schema.ident.bad", "sircc: type.variants[%zu].name must be an Ident", i);
+        return false;
+      }
+      int64_t vty = 0;
+      JsonValue* tyv = json_obj_get(vo, "ty");
+      if (tyv) {
+        if (!sir_intern_id(p, SIR_ID_TYPE, tyv, &vty, "type.variants[i].ty")) return false;
+      }
+      tr->variants[i] = (TypeVariantRec){.name = vname, .ty = vty};
     }
   } else {
     err_codef(p, "sircc.type.kind.unsupported", "sircc: unsupported type kind '%s' (v1 subset)", kind);

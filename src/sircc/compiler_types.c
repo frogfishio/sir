@@ -133,6 +133,82 @@ bool type_size_align_rec(SirProgram* p, int64_t type_id, unsigned char* visiting
       align = max_align;
       break;
     }
+    case TYPE_FUN:
+      size = (int64_t)(p->ptr_bytes ? p->ptr_bytes : (unsigned)sizeof(void*));
+      if (p->align_ptr) align = (int64_t)p->align_ptr;
+      else align = (int64_t)(p->ptr_bytes ? p->ptr_bytes : (unsigned)sizeof(void*));
+      break;
+    case TYPE_CLOSURE: {
+      // Represent closures as a by-value aggregate: { code_ptr, env }.
+      int64_t off = 0;
+      int64_t max_align = 1;
+
+      int64_t code_sz = (int64_t)(p->ptr_bytes ? p->ptr_bytes : (unsigned)sizeof(void*));
+      int64_t code_al = p->align_ptr ? (int64_t)p->align_ptr : code_sz;
+      if (code_al <= 0) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      if (code_al > max_align) max_align = code_al;
+      int64_t rem0 = off % code_al;
+      if (rem0) off += (code_al - rem0);
+      off += code_sz;
+
+      int64_t env_sz = 0;
+      int64_t env_al = 0;
+      if (!type_size_align_rec(p, tr->env_ty, visiting, &env_sz, &env_al)) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      if (env_al <= 0) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      if (env_al > max_align) max_align = env_al;
+      int64_t rem1 = off % env_al;
+      if (rem1) off += (env_al - rem1);
+      if (env_sz != 0 && off > INT64_MAX - env_sz) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      off += env_sz;
+
+      int64_t rem = off % max_align;
+      if (rem) off += (max_align - rem);
+      size = off;
+      align = max_align;
+      break;
+    }
+    case TYPE_SUM: {
+      // Layout contract (normative): { tag:i32, payload:bytes }, with payload at the lowest offset >=4
+      // satisfying max payload alignment. Type alignment is max(4, max_payload_align). Padding/unused bytes are zero.
+      int64_t payload_size = 0;
+      int64_t payload_align = 1;
+      for (size_t i = 0; i < tr->variant_len; i++) {
+        int64_t vty = tr->variants[i].ty;
+        if (vty == 0) continue;
+        int64_t vsz = 0;
+        int64_t val = 0;
+        if (!type_size_align_rec(p, vty, visiting, &vsz, &val)) {
+          if (visiting) visiting[type_id] = 0;
+          return false;
+        }
+        if (vsz > payload_size) payload_size = vsz;
+        if (val > payload_align) payload_align = val;
+      }
+      if (payload_align < 1) payload_align = 1;
+      int64_t align_sum = payload_align;
+      if (align_sum < 4) align_sum = 4;
+      int64_t payload_off = 4;
+      int64_t rem = payload_off % payload_align;
+      if (rem) payload_off += (payload_align - rem);
+      int64_t total = payload_off + payload_size;
+      int64_t rem2 = total % align_sum;
+      if (rem2) total += (align_sum - rem2);
+      size = total;
+      align = align_sum;
+      break;
+    }
     case TYPE_FN:
     case TYPE_INVALID:
     default:
@@ -237,6 +313,88 @@ LLVMTypeRef lower_type(SirProgram* p, LLVMContextRef ctx, int64_t id) {
         out = LLVMFunctionType(ret, params, (unsigned)tr->param_len, tr->varargs ? 1 : 0);
       }
       free(params);
+      break;
+    }
+    case TYPE_FUN: {
+      LLVMTypeRef sig = lower_type(p, ctx, tr->sig);
+      if (sig && LLVMGetTypeKind(sig) == LLVMFunctionTypeKind) {
+        out = LLVMPointerType(sig, 0);
+      }
+      break;
+    }
+    case TYPE_CLOSURE: {
+      TypeRec* cs = get_type(p, tr->call_sig);
+      if (!cs || cs->kind != TYPE_FN) break;
+      LLVMTypeRef env = lower_type(p, ctx, tr->env_ty);
+      if (!env) break;
+      LLVMTypeRef ret = lower_type(p, ctx, cs->ret);
+      if (!ret) break;
+
+      size_t nparams = cs->param_len + 1;
+      if (nparams > UINT_MAX) break;
+      LLVMTypeRef* params = (LLVMTypeRef*)malloc(nparams * sizeof(LLVMTypeRef));
+      if (!params) break;
+      params[0] = env;
+      bool ok = true;
+      for (size_t i = 0; i < cs->param_len; i++) {
+        params[i + 1] = lower_type(p, ctx, cs->params[i]);
+        if (!params[i + 1]) {
+          ok = false;
+          break;
+        }
+      }
+      LLVMTypeRef code_sig = NULL;
+      if (ok) {
+        code_sig = LLVMFunctionType(ret, params, (unsigned)nparams, cs->varargs ? 1 : 0);
+      }
+      free(params);
+      if (!code_sig) break;
+
+      LLVMTypeRef code_ptr = LLVMPointerType(code_sig, 0);
+      LLVMTypeRef elts[2] = {code_ptr, env};
+
+      if (tr->name && *tr->name) {
+        LLVMTypeRef st = LLVMStructCreateNamed(ctx, tr->name);
+        LLVMStructSetBody(st, elts, 2, 0);
+        out = st;
+      } else {
+        out = LLVMStructTypeInContext(ctx, elts, 2, 0);
+      }
+      break;
+    }
+    case TYPE_SUM: {
+      // Use an explicit padding field so the payload start offset is deterministic.
+      int64_t payload_size = 0;
+      int64_t payload_align = 1;
+      for (size_t i = 0; i < tr->variant_len; i++) {
+        int64_t vty = tr->variants[i].ty;
+        if (vty == 0) continue;
+        int64_t vsz = 0;
+        int64_t val = 0;
+        if (type_size_align(p, vty, &vsz, &val)) {
+          if (vsz > payload_size) payload_size = vsz;
+          if (val > payload_align) payload_align = val;
+        }
+      }
+      if (payload_align < 1) payload_align = 1;
+      int64_t payload_off = 4;
+      int64_t rem = payload_off % payload_align;
+      if (rem) payload_off += (payload_align - rem);
+      int64_t pad = payload_off - 4;
+      if (pad < 0) pad = 0;
+
+      LLVMTypeRef i32 = LLVMInt32TypeInContext(ctx);
+      LLVMTypeRef i8 = LLVMInt8TypeInContext(ctx);
+      LLVMTypeRef pad_ty = LLVMArrayType(i8, (unsigned)pad);
+      LLVMTypeRef payload_ty = LLVMArrayType(i8, (unsigned)(payload_size < 0 ? 0 : payload_size));
+
+      LLVMTypeRef elts[3];
+      unsigned n = 0;
+      elts[n++] = i32;
+      if (pad > 0) elts[n++] = pad_ty;
+      elts[n++] = payload_ty;
+
+      out = LLVMStructTypeInContext(ctx, elts, n, 0);
       break;
     }
     case TYPE_STRUCT: {

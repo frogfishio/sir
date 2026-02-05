@@ -1,0 +1,6 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sircc-example","unit":"bad_adt_missing_feature"}
+
+{"ir":"sir-v1.0","k":"type","id":1,"kind":"prim","prim":"i32"}
+{"ir":"sir-v1.0","k":"type","id":2,"kind":"sum","variants":[{"name":"None"},{"name":"Some","ty":1}]}
+
+{"ir":"sir-v1.0","k":"node","id":10,"tag":"adt.tag","type_ref":1,"fields":{"args":[{"t":"ref","id":11}]}}

@@ -148,6 +148,42 @@ add_test(
 )
 
 add_test(
+  NAME sircc_diag_bad_fun_missing_feature
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_fun_missing_feature.sir.jsonl
+    "-DEXPECT=requires feature fun:v1"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_closure_missing_feature
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_closure_missing_feature.sir.jsonl
+    "-DEXPECT=requires feature closure:v1"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_adt_missing_feature
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_adt_missing_feature.sir.jsonl
+    "-DEXPECT=requires feature adt:v1"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_sem_missing_feature
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_sem_missing_feature.sir.jsonl
+    "-DEXPECT=requires feature sem:v1"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_cinterop_export_add2
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -228,6 +264,56 @@ add_test(
     -DSIRCC=$<TARGET_FILE:sircc>
     -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/global_i32_ptrsym.sir.jsonl
     -DEXE=${CMAKE_CURRENT_BINARY_DIR}/global_i32_ptrsym.exe
+    -DEXPECT=12
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_fun_sym_call
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/fun_sym_call.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/fun_sym_call.exe
+    -DEXPECT=7
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_closure_make_call
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/closure_make_call.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/closure_make_call.exe
+    -DEXPECT=12
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_adt_make_get
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/adt_make_get.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/adt_make_get.exe
+    -DEXPECT=12
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_sem_if_thunk_trap_not_taken
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_thunk_trap_not_taken.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/sem_if_thunk_trap_not_taken.exe
+    -DEXPECT=7
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_sem_match_sum_option_i32
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_match_sum_option_i32.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/sem_match_sum_option_i32.exe
     -DEXPECT=12
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
 )

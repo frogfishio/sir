@@ -1,0 +1,7 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sircc-example","unit":"bad_fun_missing_feature"}
+
+{"ir":"sir-v1.0","k":"type","id":1,"kind":"prim","prim":"i32"}
+{"ir":"sir-v1.0","k":"type","id":2,"kind":"fn","params":[1,1],"ret":1}
+{"ir":"sir-v1.0","k":"type","id":3,"kind":"fun","sig":2}
+
+{"ir":"sir-v1.0","k":"node","id":10,"tag":"fun.sym","type_ref":3,"fields":{"name":"sir_add2"}}

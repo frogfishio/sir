@@ -11,6 +11,257 @@
 #include <stdlib.h>
 #include <string.h>
 
+static LLVMTypeRef build_closure_code_sig(FunctionCtx* f, TypeRec* cty) {
+  if (!f || !cty || cty->kind != TYPE_CLOSURE) return NULL;
+  TypeRec* cs = get_type(f->p, cty->call_sig);
+  if (!cs || cs->kind != TYPE_FN) return NULL;
+  LLVMTypeRef env = lower_type(f->p, f->ctx, cty->env_ty);
+  LLVMTypeRef ret = lower_type(f->p, f->ctx, cs->ret);
+  if (!env || !ret) return NULL;
+  size_t nparams = cs->param_len + 1;
+  if (nparams > UINT_MAX) return NULL;
+  LLVMTypeRef* params = (LLVMTypeRef*)malloc(nparams * sizeof(LLVMTypeRef));
+  if (!params) return NULL;
+  params[0] = env;
+  bool ok = true;
+  for (size_t i = 0; i < cs->param_len; i++) {
+    params[i + 1] = lower_type(f->p, f->ctx, cs->params[i]);
+    if (!params[i + 1]) {
+      ok = false;
+      break;
+    }
+  }
+  LLVMTypeRef out = NULL;
+  if (ok) out = LLVMFunctionType(ret, params, (unsigned)nparams, cs->varargs ? 1 : 0);
+  free(params);
+  return out;
+}
+
+static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueRef* argv, size_t argc, LLVMTypeRef want_ret) {
+  NodeRec* callee_n = get_node(f->p, callee_id);
+  if (!callee_n || callee_n->type_ref == 0) {
+    errf(f->p, "sircc: expected fun callee with type_ref");
+    return NULL;
+  }
+  TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
+  if (!callee_ty || callee_ty->kind != TYPE_FUN || callee_ty->sig == 0) {
+    errf(f->p, "sircc: expected fun callee type");
+    return NULL;
+  }
+  LLVMTypeRef callee_fty = lower_type(f->p, f->ctx, callee_ty->sig);
+  if (!callee_fty || LLVMGetTypeKind(callee_fty) != LLVMFunctionTypeKind) return NULL;
+  LLVMValueRef callee = lower_expr(f, callee_id);
+  if (!callee) return NULL;
+
+  unsigned param_count = LLVMCountParamTypes(callee_fty);
+  bool is_varargs = LLVMIsFunctionVarArg(callee_fty) != 0;
+  if (!is_varargs && (unsigned)argc != param_count) {
+    errf(f->p, "sircc: fun call arg count mismatch (got %zu, want %u)", argc, param_count);
+    return NULL;
+  }
+  if ((unsigned)argc < param_count) {
+    errf(f->p, "sircc: fun call missing required args (got %zu, want >= %u)", argc, param_count);
+    return NULL;
+  }
+  if (param_count) {
+    LLVMTypeRef* params = (LLVMTypeRef*)malloc(param_count * sizeof(LLVMTypeRef));
+    if (!params) return NULL;
+    LLVMGetParamTypes(callee_fty, params);
+    for (unsigned i = 0; i < param_count; i++) {
+      LLVMTypeRef want = params[i];
+      LLVMTypeRef got = LLVMTypeOf(argv[i]);
+      if (want == got) continue;
+      if (LLVMGetTypeKind(want) == LLVMPointerTypeKind && LLVMGetTypeKind(got) == LLVMPointerTypeKind) {
+        argv[i] = LLVMBuildBitCast(f->builder, argv[i], want, "arg.cast");
+        continue;
+      }
+      free(params);
+      errf(f->p, "sircc: fun call arg[%u] type mismatch", i);
+      return NULL;
+    }
+    free(params);
+  }
+
+  LLVMValueRef out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
+  if (out && want_ret && LLVMTypeOf(out) != want_ret) {
+    errf(f->p, "sircc: fun call return type mismatch");
+    return NULL;
+  }
+  return out;
+}
+
+static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMValueRef* user_argv, size_t user_argc, LLVMTypeRef want_ret) {
+  NodeRec* callee_n = get_node(f->p, callee_id);
+  if (!callee_n || callee_n->type_ref == 0) {
+    errf(f->p, "sircc: expected closure callee with type_ref");
+    return NULL;
+  }
+  TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
+  if (!callee_ty || callee_ty->kind != TYPE_CLOSURE) {
+    errf(f->p, "sircc: expected closure callee type");
+    return NULL;
+  }
+
+  LLVMValueRef callee = lower_expr(f, callee_id);
+  if (!callee) return NULL;
+  LLVMValueRef code = LLVMBuildExtractValue(f->builder, callee, 0, "clo.code");
+  LLVMValueRef env = LLVMBuildExtractValue(f->builder, callee, 1, "clo.env");
+  if (!code || !env) return NULL;
+
+  LLVMTypeRef code_sig = build_closure_code_sig(f, callee_ty);
+  if (!code_sig || LLVMGetTypeKind(code_sig) != LLVMFunctionTypeKind) return NULL;
+
+  size_t argc = user_argc + 1;
+  LLVMValueRef* argv = (LLVMValueRef*)malloc(argc * sizeof(LLVMValueRef));
+  if (!argv) return NULL;
+  argv[0] = env;
+  for (size_t i = 0; i < user_argc; i++) argv[i + 1] = user_argv[i];
+
+  unsigned param_count = LLVMCountParamTypes(code_sig);
+  bool is_varargs = LLVMIsFunctionVarArg(code_sig) != 0;
+  if (!is_varargs && (unsigned)argc != param_count) {
+    free(argv);
+    errf(f->p, "sircc: closure call arg count mismatch (got %zu, want %u)", argc, param_count);
+    return NULL;
+  }
+  if ((unsigned)argc < param_count) {
+    free(argv);
+    errf(f->p, "sircc: closure call missing required args (got %zu, want >= %u)", argc, param_count);
+    return NULL;
+  }
+  if (param_count) {
+    LLVMTypeRef* params = (LLVMTypeRef*)malloc(param_count * sizeof(LLVMTypeRef));
+    if (!params) {
+      free(argv);
+      return NULL;
+    }
+    LLVMGetParamTypes(code_sig, params);
+    for (unsigned i = 0; i < param_count; i++) {
+      LLVMTypeRef want = params[i];
+      LLVMTypeRef got = LLVMTypeOf(argv[i]);
+      if (want == got) continue;
+      if (LLVMGetTypeKind(want) == LLVMPointerTypeKind && LLVMGetTypeKind(got) == LLVMPointerTypeKind) {
+        argv[i] = LLVMBuildBitCast(f->builder, argv[i], want, "arg.cast");
+        continue;
+      }
+      free(params);
+      free(argv);
+      errf(f->p, "sircc: closure call arg[%u] type mismatch", i);
+      return NULL;
+    }
+    free(params);
+  }
+
+  LLVMValueRef out = LLVMBuildCall2(f->builder, code_sig, code, argv, (unsigned)argc, "call");
+  free(argv);
+  if (out && want_ret && LLVMTypeOf(out) != want_ret) {
+    errf(f->p, "sircc: closure call return type mismatch");
+    return NULL;
+  }
+  return out;
+}
+
+static bool eval_branch_operand(FunctionCtx* f, JsonValue* br, LLVMTypeRef want_ty, LLVMValueRef* out) {
+  if (!f || !br || br->type != JSON_OBJECT || !out) return false;
+  const char* kind = json_get_string(json_obj_get(br, "kind"));
+  if (!kind) return false;
+
+  if (strcmp(kind, "val") == 0) {
+    int64_t vid = 0;
+    if (!parse_node_ref_id(f->p, json_obj_get(br, "v"), &vid)) return false;
+    LLVMValueRef v = lower_expr(f, vid);
+    if (!v) return false;
+    if (want_ty && LLVMTypeOf(v) != want_ty) {
+      errf(f->p, "sircc: branch value type mismatch");
+      return false;
+    }
+    *out = v;
+    return true;
+  }
+
+  if (strcmp(kind, "thunk") == 0) {
+    int64_t fid = 0;
+    if (!parse_node_ref_id(f->p, json_obj_get(br, "f"), &fid)) return false;
+    NodeRec* fn = get_node(f->p, fid);
+    if (!fn || fn->type_ref == 0) return false;
+    TypeRec* t = get_type(f->p, fn->type_ref);
+    if (!t) return false;
+
+    // Only 0-arg thunks here.
+    if (t->kind == TYPE_FUN) {
+      TypeRec* sig = get_type(f->p, t->sig);
+      if (!sig || sig->kind != TYPE_FN || sig->param_len != 0) {
+        errf(f->p, "sircc: thunk fun must have () -> T signature");
+        return false;
+      }
+      LLVMValueRef v = call_fun_value(f, fid, NULL, 0, want_ty);
+      if (!v) return false;
+      *out = v;
+      return true;
+    }
+    if (t->kind == TYPE_CLOSURE) {
+      TypeRec* sig = get_type(f->p, t->call_sig);
+      if (!sig || sig->kind != TYPE_FN || sig->param_len != 0) {
+        errf(f->p, "sircc: thunk closure must have () -> T signature");
+        return false;
+      }
+      LLVMValueRef v = call_closure_value(f, fid, NULL, 0, want_ty);
+      if (!v) return false;
+      *out = v;
+      return true;
+    }
+    errf(f->p, "sircc: thunk must be fun or closure");
+    return false;
+  }
+
+  return false;
+}
+
+static LLVMValueRef sum_payload_load(FunctionCtx* f, TypeRec* sty, int64_t sum_ty_id, LLVMValueRef scrut, int64_t payload_ty_id) {
+  if (!f || !sty || sty->kind != TYPE_SUM) return NULL;
+  if (!scrut) return NULL;
+
+  LLVMTypeRef sum_llvm = lower_type(f->p, f->ctx, sum_ty_id);
+  if (!sum_llvm) return NULL;
+
+  int64_t sum_sz = 0, sum_al = 0;
+  if (!type_size_align(f->p, sum_ty_id, &sum_sz, &sum_al)) return NULL;
+
+  LLVMValueRef slot = LLVMBuildAlloca(f->builder, sum_llvm, "sum.tmp");
+  if (sum_al > 0 && sum_al <= 4096) LLVMSetAlignment(slot, (unsigned)sum_al);
+  LLVMBuildStore(f->builder, scrut, slot);
+
+  // Compute payload field index based on alignment.
+  int64_t payload_size = 0;
+  int64_t payload_align = 1;
+  for (size_t i = 0; i < sty->variant_len; i++) {
+    int64_t vty = sty->variants[i].ty;
+    if (vty == 0) continue;
+    int64_t vsz = 0;
+    int64_t val = 0;
+    if (type_size_align(f->p, vty, &vsz, &val)) {
+      if (vsz > payload_size) payload_size = vsz;
+      if (val > payload_align) payload_align = val;
+    }
+  }
+  if (payload_align < 1) payload_align = 1;
+  int64_t payload_off = 4;
+  int64_t rem = payload_off % payload_align;
+  if (rem) payload_off += (payload_align - rem);
+  unsigned payload_field = (payload_off > 4) ? 2u : 1u;
+
+  LLVMValueRef payp = LLVMBuildStructGEP2(f->builder, sum_llvm, slot, payload_field, "payloadp");
+  LLVMTypeRef pay_ty = lower_type(f->p, f->ctx, payload_ty_id);
+  if (!pay_ty) return NULL;
+  LLVMValueRef castp = LLVMBuildBitCast(f->builder, payp, LLVMPointerType(pay_ty, 0), "pay.castp");
+  LLVMValueRef ld = LLVMBuildLoad2(f->builder, pay_ty, castp, "payload");
+  int64_t psz = 0, pal = 0;
+  if (type_size_align(f->p, payload_ty_id, &psz, &pal) && pal > 0 && pal <= 4096) {
+    LLVMSetAlignment(ld, (unsigned)pal);
+  }
+  return ld;
+}
+
 LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
   NodeRec* n = get_node(f->p, node_id);
   if (!n) {
@@ -913,6 +1164,508 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       }
     }
 
+    goto done;
+  }
+
+  if (strcmp(n->tag, "call.fun") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: call.fun node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+
+    JsonValue* args = json_obj_get(n->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len < 1) {
+      errf(f->p, "sircc: call.fun node %lld requires args:[callee, ...]", (long long)node_id);
+      goto done;
+    }
+
+    int64_t callee_id = 0;
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &callee_id)) {
+      errf(f->p, "sircc: call.fun node %lld args[0] must be callee fun ref", (long long)node_id);
+      goto done;
+    }
+    NodeRec* callee_n = get_node(f->p, callee_id);
+    if (!callee_n || callee_n->type_ref == 0) {
+      errf(f->p, "sircc: call.fun node %lld callee must have a fun type_ref", (long long)node_id);
+      goto done;
+    }
+    TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
+    if (!callee_ty || callee_ty->kind != TYPE_FUN || callee_ty->sig == 0) {
+      errf(f->p, "sircc: call.fun node %lld callee must be a fun type", (long long)node_id);
+      goto done;
+    }
+    LLVMTypeRef callee_fty = lower_type(f->p, f->ctx, callee_ty->sig);
+    if (!callee_fty || LLVMGetTypeKind(callee_fty) != LLVMFunctionTypeKind) {
+      errf(f->p, "sircc: call.fun node %lld callee fun.sig must reference a fn type", (long long)node_id);
+      goto done;
+    }
+
+    LLVMValueRef callee = lower_expr(f, callee_id);
+    if (!callee) goto done;
+
+    size_t argc = args->v.arr.len - 1;
+    LLVMValueRef* argv = NULL;
+    if (argc) {
+      argv = (LLVMValueRef*)malloc(argc * sizeof(LLVMValueRef));
+      if (!argv) goto done;
+      for (size_t i = 0; i < argc; i++) {
+        int64_t aid = 0;
+        if (!parse_node_ref_id(f->p, args->v.arr.items[i + 1], &aid)) {
+          errf(f->p, "sircc: call.fun node %lld arg[%zu] must be node ref", (long long)node_id, i);
+          free(argv);
+          goto done;
+        }
+        argv[i] = lower_expr(f, aid);
+        if (!argv[i]) {
+          free(argv);
+          goto done;
+        }
+      }
+    }
+
+    unsigned param_count = LLVMCountParamTypes(callee_fty);
+    bool is_varargs = LLVMIsFunctionVarArg(callee_fty) != 0;
+    if (!is_varargs && (unsigned)argc != param_count) {
+      errf(f->p, "sircc: call.fun node %lld arg count mismatch (got %zu, want %u)", (long long)node_id, argc, param_count);
+      free(argv);
+      goto done;
+    }
+    if ((unsigned)argc < param_count) {
+      errf(f->p, "sircc: call.fun node %lld missing required args (got %zu, want >= %u)", (long long)node_id, argc, param_count);
+      free(argv);
+      goto done;
+    }
+
+    if (param_count) {
+      LLVMTypeRef* params = (LLVMTypeRef*)malloc(param_count * sizeof(LLVMTypeRef));
+      if (!params) {
+        free(argv);
+        goto done;
+      }
+      LLVMGetParamTypes(callee_fty, params);
+      for (unsigned i = 0; i < param_count; i++) {
+        LLVMTypeRef want = params[i];
+        LLVMTypeRef got = LLVMTypeOf(argv[i]);
+        if (want == got) continue;
+        if (LLVMGetTypeKind(want) == LLVMPointerTypeKind && LLVMGetTypeKind(got) == LLVMPointerTypeKind) {
+          argv[i] = LLVMBuildBitCast(f->builder, argv[i], want, "arg.cast");
+          continue;
+        }
+        free(params);
+        errf(f->p, "sircc: call.fun node %lld arg[%u] type mismatch", (long long)node_id, i);
+        free(argv);
+        goto done;
+      }
+      free(params);
+    }
+
+    out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
+    free(argv);
+
+    if (out && n->type_ref) {
+      LLVMTypeRef want = lower_type(f->p, f->ctx, n->type_ref);
+      if (want && want != LLVMTypeOf(out)) {
+        errf(f->p, "sircc: call.fun node %lld return type does not match type_ref", (long long)node_id);
+        out = NULL;
+        goto done;
+      }
+    }
+
+    goto done;
+  }
+
+  if (strcmp(n->tag, "call.closure") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: call.closure node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+
+    JsonValue* args = json_obj_get(n->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len < 1) {
+      errf(f->p, "sircc: call.closure node %lld requires args:[callee, ...]", (long long)node_id);
+      goto done;
+    }
+
+    int64_t callee_id = 0;
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &callee_id)) {
+      errf(f->p, "sircc: call.closure node %lld args[0] must be callee closure ref", (long long)node_id);
+      goto done;
+    }
+    NodeRec* callee_n = get_node(f->p, callee_id);
+    if (!callee_n || callee_n->type_ref == 0) {
+      errf(f->p, "sircc: call.closure node %lld callee must have a closure type_ref", (long long)node_id);
+      goto done;
+    }
+    TypeRec* callee_ty = get_type(f->p, callee_n->type_ref);
+    if (!callee_ty || callee_ty->kind != TYPE_CLOSURE) {
+      errf(f->p, "sircc: call.closure node %lld callee must be a closure type", (long long)node_id);
+      goto done;
+    }
+
+    LLVMValueRef callee = lower_expr(f, callee_id);
+    if (!callee) goto done;
+    LLVMValueRef code = LLVMBuildExtractValue(f->builder, callee, 0, "clo.code");
+    LLVMValueRef env = LLVMBuildExtractValue(f->builder, callee, 1, "clo.env");
+    if (!code || !env) goto done;
+
+    LLVMTypeRef code_sig = build_closure_code_sig(f, callee_ty);
+    if (!code_sig || LLVMGetTypeKind(code_sig) != LLVMFunctionTypeKind) {
+      errf(f->p, "sircc: call.closure node %lld could not derive closure code signature", (long long)node_id);
+      goto done;
+    }
+
+    size_t user_argc = args->v.arr.len - 1;
+    size_t argc = user_argc + 1; // include env
+    LLVMValueRef* argv = NULL;
+    if (argc) {
+      argv = (LLVMValueRef*)malloc(argc * sizeof(LLVMValueRef));
+      if (!argv) goto done;
+      argv[0] = env;
+      for (size_t i = 0; i < user_argc; i++) {
+        int64_t aid = 0;
+        if (!parse_node_ref_id(f->p, args->v.arr.items[i + 1], &aid)) {
+          errf(f->p, "sircc: call.closure node %lld arg[%zu] must be node ref", (long long)node_id, i);
+          free(argv);
+          goto done;
+        }
+        argv[i + 1] = lower_expr(f, aid);
+        if (!argv[i + 1]) {
+          free(argv);
+          goto done;
+        }
+      }
+    }
+
+    unsigned param_count = LLVMCountParamTypes(code_sig);
+    bool is_varargs = LLVMIsFunctionVarArg(code_sig) != 0;
+    if (!is_varargs && (unsigned)argc != param_count) {
+      errf(f->p, "sircc: call.closure node %lld arg count mismatch (got %zu, want %u)", (long long)node_id, argc, param_count);
+      free(argv);
+      goto done;
+    }
+    if ((unsigned)argc < param_count) {
+      errf(f->p, "sircc: call.closure node %lld missing required args (got %zu, want >= %u)", (long long)node_id, argc, param_count);
+      free(argv);
+      goto done;
+    }
+
+    if (param_count) {
+      LLVMTypeRef* params = (LLVMTypeRef*)malloc(param_count * sizeof(LLVMTypeRef));
+      if (!params) {
+        free(argv);
+        goto done;
+      }
+      LLVMGetParamTypes(code_sig, params);
+      for (unsigned i = 0; i < param_count; i++) {
+        LLVMTypeRef want = params[i];
+        LLVMTypeRef got = LLVMTypeOf(argv[i]);
+        if (want == got) continue;
+        if (LLVMGetTypeKind(want) == LLVMPointerTypeKind && LLVMGetTypeKind(got) == LLVMPointerTypeKind) {
+          argv[i] = LLVMBuildBitCast(f->builder, argv[i], want, "arg.cast");
+          continue;
+        }
+        free(params);
+        errf(f->p, "sircc: call.closure node %lld arg[%u] type mismatch", (long long)node_id, i);
+        free(argv);
+        goto done;
+      }
+      free(params);
+    }
+
+    out = LLVMBuildCall2(f->builder, code_sig, code, argv, (unsigned)argc, "call");
+    free(argv);
+
+    if (out && n->type_ref) {
+      LLVMTypeRef want = lower_type(f->p, f->ctx, n->type_ref);
+      if (want && want != LLVMTypeOf(out)) {
+        errf(f->p, "sircc: call.closure node %lld return type does not match type_ref", (long long)node_id);
+        out = NULL;
+        goto done;
+      }
+    }
+
+    goto done;
+  }
+
+  if (strcmp(n->tag, "sem.if") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: sem.if node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+    LLVMTypeRef want = NULL;
+    if (n->type_ref) {
+      want = lower_type(f->p, f->ctx, n->type_ref);
+      if (!want) goto done;
+    }
+    JsonValue* args = json_obj_get(n->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 3) {
+      errf(f->p, "sircc: sem.if node %lld requires args:[cond, thenBranch, elseBranch]", (long long)node_id);
+      goto done;
+    }
+    int64_t cond_id = 0;
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &cond_id)) {
+      errf(f->p, "sircc: sem.if node %lld cond must be node ref", (long long)node_id);
+      goto done;
+    }
+    LLVMValueRef cond = lower_expr(f, cond_id);
+    if (!cond) goto done;
+    if (LLVMGetTypeKind(LLVMTypeOf(cond)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(cond)) != 1) {
+      errf(f->p, "sircc: sem.if node %lld cond must be bool", (long long)node_id);
+      goto done;
+    }
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(f->builder))) goto done;
+
+    LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.then");
+    LLVMBasicBlockRef else_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.else");
+    LLVMBasicBlockRef join_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.join");
+    LLVMBuildCondBr(f->builder, cond, then_bb, else_bb);
+
+    LLVMPositionBuilderAtEnd(f->builder, then_bb);
+    LLVMValueRef v_then = NULL;
+    if (!eval_branch_operand(f, args->v.arr.items[1], want, &v_then) || !v_then) goto done;
+    LLVMBuildBr(f->builder, join_bb);
+    LLVMBasicBlockRef then_end = LLVMGetInsertBlock(f->builder);
+
+    LLVMPositionBuilderAtEnd(f->builder, else_bb);
+    LLVMValueRef v_else = NULL;
+    if (!eval_branch_operand(f, args->v.arr.items[2], want, &v_else) || !v_else) goto done;
+    LLVMBuildBr(f->builder, join_bb);
+    LLVMBasicBlockRef else_end = LLVMGetInsertBlock(f->builder);
+
+    LLVMPositionBuilderAtEnd(f->builder, join_bb);
+    LLVMTypeRef phi_ty = want ? want : LLVMTypeOf(v_then);
+    LLVMValueRef phi = LLVMBuildPhi(f->builder, phi_ty, "sem.if");
+    LLVMAddIncoming(phi, &v_then, &then_end, 1);
+    LLVMAddIncoming(phi, &v_else, &else_end, 1);
+    out = phi;
+    goto done;
+  }
+
+  if (strcmp(n->tag, "sem.and_sc") == 0 || strcmp(n->tag, "sem.or_sc") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+      goto done;
+    }
+    JsonValue* args = json_obj_get(n->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
+      errf(f->p, "sircc: %s node %lld requires args:[lhs, rhsBranch]", n->tag, (long long)node_id);
+      goto done;
+    }
+    int64_t lhs_id = 0;
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &lhs_id)) {
+      errf(f->p, "sircc: %s lhs must be node ref", n->tag);
+      goto done;
+    }
+    LLVMValueRef lhs = lower_expr(f, lhs_id);
+    if (!lhs) goto done;
+    if (LLVMGetTypeKind(LLVMTypeOf(lhs)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(lhs)) != 1) {
+      errf(f->p, "sircc: %s lhs must be bool", n->tag);
+      goto done;
+    }
+    LLVMTypeRef bty = LLVMInt1TypeInContext(f->ctx);
+    LLVMValueRef v_then = NULL;
+    LLVMValueRef v_else = NULL;
+
+    // Rewrite to sem.if in-place:
+    // and_sc: cond=lhs, then=rhsBranch, else=false
+    // or_sc:  cond=lhs, then=true, else=rhsBranch
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(f->builder))) goto done;
+    LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.then");
+    LLVMBasicBlockRef else_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.else");
+    LLVMBasicBlockRef join_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.join");
+    LLVMBuildCondBr(f->builder, lhs, then_bb, else_bb);
+
+    if (strcmp(n->tag, "sem.and_sc") == 0) {
+      LLVMPositionBuilderAtEnd(f->builder, then_bb);
+      if (!eval_branch_operand(f, args->v.arr.items[1], bty, &v_then) || !v_then) goto done;
+      LLVMBuildBr(f->builder, join_bb);
+      LLVMBasicBlockRef then_end = LLVMGetInsertBlock(f->builder);
+
+      LLVMPositionBuilderAtEnd(f->builder, else_bb);
+      v_else = LLVMConstInt(bty, 0, 0);
+      LLVMBuildBr(f->builder, join_bb);
+      LLVMBasicBlockRef else_end = LLVMGetInsertBlock(f->builder);
+
+      LLVMPositionBuilderAtEnd(f->builder, join_bb);
+      LLVMValueRef phi = LLVMBuildPhi(f->builder, bty, "sem.and");
+      LLVMAddIncoming(phi, &v_then, &then_end, 1);
+      LLVMAddIncoming(phi, &v_else, &else_end, 1);
+      out = phi;
+      goto done;
+    } else {
+      LLVMPositionBuilderAtEnd(f->builder, then_bb);
+      v_then = LLVMConstInt(bty, 1, 0);
+      LLVMBuildBr(f->builder, join_bb);
+      LLVMBasicBlockRef then_end = LLVMGetInsertBlock(f->builder);
+
+      LLVMPositionBuilderAtEnd(f->builder, else_bb);
+      if (!eval_branch_operand(f, args->v.arr.items[1], bty, &v_else) || !v_else) goto done;
+      LLVMBuildBr(f->builder, join_bb);
+      LLVMBasicBlockRef else_end = LLVMGetInsertBlock(f->builder);
+
+      LLVMPositionBuilderAtEnd(f->builder, join_bb);
+      LLVMValueRef phi = LLVMBuildPhi(f->builder, bty, "sem.or");
+      LLVMAddIncoming(phi, &v_then, &then_end, 1);
+      LLVMAddIncoming(phi, &v_else, &else_end, 1);
+      out = phi;
+      goto done;
+    }
+  }
+
+  if (strcmp(n->tag, "sem.match_sum") == 0) {
+    if (!n->fields) {
+      errf(f->p, "sircc: sem.match_sum node %lld missing fields", (long long)node_id);
+      goto done;
+    }
+    LLVMTypeRef want = NULL;
+    if (n->type_ref) {
+      want = lower_type(f->p, f->ctx, n->type_ref);
+      if (!want) goto done;
+    }
+    int64_t sum_ty_id = 0;
+    if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "sum"), &sum_ty_id)) {
+      errf(f->p, "sircc: sem.match_sum node %lld missing fields.sum (sum type)", (long long)node_id);
+      goto done;
+    }
+    TypeRec* sty = get_type(f->p, sum_ty_id);
+    if (!sty || sty->kind != TYPE_SUM) {
+      errf(f->p, "sircc: sem.match_sum fields.sum must reference a sum type");
+      goto done;
+    }
+    JsonValue* args = json_obj_get(n->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+      errf(f->p, "sircc: sem.match_sum node %lld requires args:[scrut]", (long long)node_id);
+      goto done;
+    }
+    int64_t scrut_id = 0;
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &scrut_id)) {
+      errf(f->p, "sircc: sem.match_sum scrut must be node ref");
+      goto done;
+    }
+    LLVMValueRef scrut = lower_expr(f, scrut_id);
+    if (!scrut) goto done;
+    LLVMValueRef tag = LLVMBuildExtractValue(f->builder, scrut, 0, "tag");
+
+    JsonValue* cases = json_obj_get(n->fields, "cases");
+    JsonValue* def = json_obj_get(n->fields, "default");
+    if (!cases || cases->type != JSON_ARRAY || !def || def->type != JSON_OBJECT) {
+      errf(f->p, "sircc: sem.match_sum node %lld requires fields.cases array and fields.default branch", (long long)node_id);
+      goto done;
+    }
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(f->builder))) goto done;
+
+    LLVMBasicBlockRef join_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.join");
+    LLVMBasicBlockRef def_bb = LLVMAppendBasicBlockInContext(f->ctx, f->fn, "sem.default");
+    LLVMValueRef sw = LLVMBuildSwitch(f->builder, tag, def_bb, (unsigned)cases->v.arr.len);
+
+    // Create case blocks first for stable ordering.
+    LLVMBasicBlockRef* case_bbs = NULL;
+    int64_t* case_variants = NULL;
+    if (cases->v.arr.len) {
+      case_bbs = (LLVMBasicBlockRef*)calloc(cases->v.arr.len, sizeof(LLVMBasicBlockRef));
+      case_variants = (int64_t*)calloc(cases->v.arr.len, sizeof(int64_t));
+      if (!case_bbs || !case_variants) goto done;
+    }
+    for (size_t i = 0; i < cases->v.arr.len; i++) {
+      JsonValue* co = cases->v.arr.items[i];
+      if (!co || co->type != JSON_OBJECT) {
+        errf(f->p, "sircc: sem.match_sum cases[%zu] must be object", i);
+        goto done;
+      }
+      int64_t variant = -1;
+      if (!must_i64(f->p, json_obj_get(co, "variant"), &variant, "sem.match_sum.cases.variant")) goto done;
+      case_variants[i] = variant;
+      char namebuf[32];
+      snprintf(namebuf, sizeof(namebuf), "sem.case.%lld", (long long)variant);
+      case_bbs[i] = LLVMAppendBasicBlockInContext(f->ctx, f->fn, namebuf);
+      LLVMValueRef lit = LLVMConstInt(LLVMInt32TypeInContext(f->ctx), (unsigned long long)variant, 0);
+      LLVMAddCase(sw, lit, case_bbs[i]);
+    }
+
+    // Evaluate cases.
+    LLVMValueRef* phi_vals = (LLVMValueRef*)calloc((cases->v.arr.len + 1), sizeof(LLVMValueRef));
+    LLVMBasicBlockRef* phi_bbs = (LLVMBasicBlockRef*)calloc((cases->v.arr.len + 1), sizeof(LLVMBasicBlockRef));
+    if (!phi_vals || !phi_bbs) goto done;
+    size_t incoming = 0;
+
+    for (size_t i = 0; i < cases->v.arr.len; i++) {
+      JsonValue* co = cases->v.arr.items[i];
+      JsonValue* body = json_obj_get(co, "body");
+      if (!body || body->type != JSON_OBJECT) {
+        errf(f->p, "sircc: sem.match_sum cases[%zu] missing body branch", i);
+        goto done;
+      }
+      LLVMPositionBuilderAtEnd(f->builder, case_bbs[i]);
+
+      // If body is thunk with 1-arg callable, pass payload.
+      const char* kind = json_get_string(json_obj_get(body, "kind"));
+      LLVMValueRef v = NULL;
+      if (kind && strcmp(kind, "thunk") == 0) {
+        int64_t fid = 0;
+        if (!parse_node_ref_id(f->p, json_obj_get(body, "f"), &fid)) goto done;
+        NodeRec* fn = get_node(f->p, fid);
+        if (!fn || fn->type_ref == 0) goto done;
+        TypeRec* t = get_type(f->p, fn->type_ref);
+        if (!t) goto done;
+        size_t arity = 0;
+        if (t->kind == TYPE_FUN) {
+          TypeRec* sig = get_type(f->p, t->sig);
+          if (!sig || sig->kind != TYPE_FN) goto done;
+          arity = sig->param_len;
+        } else if (t->kind == TYPE_CLOSURE) {
+          TypeRec* sig = get_type(f->p, t->call_sig);
+          if (!sig || sig->kind != TYPE_FN) goto done;
+          arity = sig->param_len;
+        }
+        if (arity == 1) {
+          int64_t variant = case_variants[i];
+          if (variant < 0 || (size_t)variant >= sty->variant_len) {
+            LLVMValueRef bad = LLVMConstInt(LLVMInt1TypeInContext(f->ctx), 1, 0);
+            if (!emit_trap_if(f, bad)) goto done;
+            variant = 0;
+          }
+          int64_t pay_ty_id = sty->variants[(size_t)variant].ty;
+          if (pay_ty_id == 0) {
+            errf(f->p, "sircc: sem.match_sum case %lld body expects payload but variant is nullary", (long long)variant);
+            goto done;
+          }
+          LLVMValueRef payload = sum_payload_load(f, sty, sum_ty_id, scrut, pay_ty_id);
+          if (!payload) goto done;
+          LLVMValueRef argv1[1] = {payload};
+          if (t->kind == TYPE_FUN) v = call_fun_value(f, fid, argv1, 1, want);
+          else v = call_closure_value(f, fid, argv1, 1, want);
+        } else {
+          if (!eval_branch_operand(f, body, want, &v)) goto done;
+        }
+      } else {
+        if (!eval_branch_operand(f, body, want, &v)) goto done;
+      }
+
+      if (!v) goto done;
+      LLVMBuildBr(f->builder, join_bb);
+      phi_vals[incoming] = v;
+      phi_bbs[incoming] = LLVMGetInsertBlock(f->builder);
+      incoming++;
+    }
+
+    // Default.
+    LLVMPositionBuilderAtEnd(f->builder, def_bb);
+    LLVMValueRef vdef = NULL;
+    if (!eval_branch_operand(f, def, want, &vdef) || !vdef) goto done;
+    LLVMBuildBr(f->builder, join_bb);
+    phi_vals[incoming] = vdef;
+    phi_bbs[incoming] = LLVMGetInsertBlock(f->builder);
+    incoming++;
+
+    LLVMPositionBuilderAtEnd(f->builder, join_bb);
+    LLVMTypeRef phi_ty = want ? want : LLVMTypeOf(phi_vals[0]);
+    LLVMValueRef phi = LLVMBuildPhi(f->builder, phi_ty, "sem.match");
+    LLVMAddIncoming(phi, phi_vals, phi_bbs, (unsigned)incoming);
+    out = phi;
+    free(case_bbs);
+    free(case_variants);
+    free(phi_vals);
+    free(phi_bbs);
     goto done;
   }
 

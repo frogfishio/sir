@@ -16,6 +16,93 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
   if (!f || !n || !outp) return false;
   LLVMValueRef out = NULL;
 
+  if (strncmp(n->tag, "fun.", 4) == 0) {
+    const char* op = n->tag + 4;
+
+    if (strcmp(op, "sym") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: fun.sym node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      if (n->type_ref == 0) {
+        errf(f->p, "sircc: fun.sym node %lld missing type_ref (fun type)", (long long)node_id);
+        goto done;
+      }
+      TypeRec* fty = get_type(f->p, n->type_ref);
+      if (!fty || fty->kind != TYPE_FUN || fty->sig == 0) {
+        errf(f->p, "sircc: fun.sym node %lld type_ref must be a fun type", (long long)node_id);
+        goto done;
+      }
+      LLVMTypeRef sig = lower_type(f->p, f->ctx, fty->sig);
+      if (!sig || LLVMGetTypeKind(sig) != LLVMFunctionTypeKind) {
+        errf(f->p, "sircc: fun.sym node %lld fun.sig must reference a fn type", (long long)node_id);
+        goto done;
+      }
+
+      const char* name = json_get_string(json_obj_get(n->fields, "name"));
+      if (!name || !is_ident(name)) {
+        errf(f->p, "sircc: fun.sym node %lld requires fields.name Ident", (long long)node_id);
+        goto done;
+      }
+
+      LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
+      if (!fn) {
+        fn = LLVMAddFunction(f->mod, name, sig);
+        LLVMSetLinkage(fn, LLVMExternalLinkage);
+      } else {
+        LLVMTypeRef have = LLVMGlobalGetValueType(fn);
+        if (have != sig) {
+          errf(f->p, "sircc: fun.sym '%s' type mismatch vs existing declaration/definition", name);
+          goto done;
+        }
+      }
+
+      LLVMTypeRef want_ty = lower_type(f->p, f->ctx, n->type_ref);
+      if (want_ty && LLVMTypeOf(fn) != want_ty) {
+        if (LLVMGetTypeKind(want_ty) == LLVMPointerTypeKind) {
+          out = LLVMBuildBitCast(f->builder, fn, want_ty, "fun.sym.cast");
+          goto done;
+        }
+        errf(f->p, "sircc: fun.sym '%s' has unexpected LLVM type", name);
+        goto done;
+      }
+
+      out = fn;
+      goto done;
+    }
+
+    if (strcmp(op, "cmp.eq") == 0 || strcmp(op, "cmp.ne") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        goto done;
+      }
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
+        errf(f->p, "sircc: %s node %lld requires fields.args:[a,b]", n->tag, (long long)node_id);
+        goto done;
+      }
+      int64_t a_id = 0, b_id = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
+        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef a = lower_expr(f, a_id);
+      LLVMValueRef b = lower_expr(f, b_id);
+      if (!a || !b) goto done;
+      if (LLVMTypeOf(a) != LLVMTypeOf(b)) {
+        errf(f->p, "sircc: %s node %lld requires both operands to have same fun type", n->tag, (long long)node_id);
+        goto done;
+      }
+      if (LLVMGetTypeKind(LLVMTypeOf(a)) != LLVMPointerTypeKind) {
+        errf(f->p, "sircc: %s node %lld operands must be function values", n->tag, (long long)node_id);
+        goto done;
+      }
+      LLVMIntPredicate pred = (strcmp(op, "cmp.eq") == 0) ? LLVMIntEQ : LLVMIntNE;
+      out = LLVMBuildICmp(f->builder, pred, a, b, "fun.cmp");
+      goto done;
+    }
+  }
+
   if (strncmp(n->tag, "ptr.", 4) == 0) {
     const char* op = n->tag + 4;
     JsonValue* args = n->fields ? json_obj_get(n->fields, "args") : NULL;
@@ -675,6 +762,489 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       goto done;
     }
 
+  }
+
+  if (strncmp(n->tag, "closure.", 8) == 0) {
+    const char* op = n->tag + 8;
+
+    if (strcmp(op, "make") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: closure.make node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      if (n->type_ref == 0) {
+        errf(f->p, "sircc: closure.make node %lld missing type_ref (closure type)", (long long)node_id);
+        goto done;
+      }
+      TypeRec* cty = get_type(f->p, n->type_ref);
+      if (!cty || cty->kind != TYPE_CLOSURE || cty->call_sig == 0 || cty->env_ty == 0) {
+        errf(f->p, "sircc: closure.make node %lld type_ref must be a closure type", (long long)node_id);
+        goto done;
+      }
+
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
+        errf(f->p, "sircc: closure.make node %lld requires fields.args:[code, env]", (long long)node_id);
+        goto done;
+      }
+      int64_t code_id = 0, env_id = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &code_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &env_id)) {
+        errf(f->p, "sircc: closure.make node %lld args must be node refs", (long long)node_id);
+        goto done;
+      }
+
+      LLVMValueRef code = lower_expr(f, code_id);
+      LLVMValueRef env = lower_expr(f, env_id);
+      if (!code || !env) goto done;
+
+      LLVMTypeRef clo_ty = lower_type(f->p, f->ctx, n->type_ref);
+      if (!clo_ty || LLVMGetTypeKind(clo_ty) != LLVMStructTypeKind) {
+        errf(f->p, "sircc: closure.make node %lld invalid closure type_ref", (long long)node_id);
+        goto done;
+      }
+
+      LLVMValueRef tmp = LLVMGetUndef(clo_ty);
+      tmp = LLVMBuildInsertValue(f->builder, tmp, code, 0, "clo.code");
+      tmp = LLVMBuildInsertValue(f->builder, tmp, env, 1, "clo.env");
+      out = tmp;
+      goto done;
+    }
+
+    if (strcmp(op, "sym") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: closure.sym node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      if (n->type_ref == 0) {
+        errf(f->p, "sircc: closure.sym node %lld missing type_ref (closure type)", (long long)node_id);
+        goto done;
+      }
+      TypeRec* cty = get_type(f->p, n->type_ref);
+      if (!cty || cty->kind != TYPE_CLOSURE || cty->call_sig == 0 || cty->env_ty == 0) {
+        errf(f->p, "sircc: closure.sym node %lld type_ref must be a closure type", (long long)node_id);
+        goto done;
+      }
+
+      const char* name = json_get_string(json_obj_get(n->fields, "name"));
+      if (!name || !is_ident(name)) {
+        errf(f->p, "sircc: closure.sym node %lld requires fields.name Ident", (long long)node_id);
+        goto done;
+      }
+      int64_t env_id = 0;
+      if (!parse_node_ref_id(f->p, json_obj_get(n->fields, "env"), &env_id)) {
+        errf(f->p, "sircc: closure.sym node %lld missing fields.env ref", (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef env = lower_expr(f, env_id);
+      if (!env) goto done;
+
+      TypeRec* cs = get_type(f->p, cty->call_sig);
+      if (!cs || cs->kind != TYPE_FN) {
+        errf(f->p, "sircc: closure.sym node %lld closure.callSig must reference fn type", (long long)node_id);
+        goto done;
+      }
+      LLVMTypeRef env_ty = lower_type(f->p, f->ctx, cty->env_ty);
+      LLVMTypeRef ret_ty = lower_type(f->p, f->ctx, cs->ret);
+      if (!env_ty || !ret_ty) goto done;
+      size_t nparams = cs->param_len + 1;
+      if (nparams > UINT_MAX) goto done;
+      LLVMTypeRef* params = (LLVMTypeRef*)malloc(nparams * sizeof(LLVMTypeRef));
+      if (!params) goto done;
+      params[0] = env_ty;
+      bool ok = true;
+      for (size_t i = 0; i < cs->param_len; i++) {
+        params[i + 1] = lower_type(f->p, f->ctx, cs->params[i]);
+        if (!params[i + 1]) {
+          ok = false;
+          break;
+        }
+      }
+      LLVMTypeRef code_sig = NULL;
+      if (ok) code_sig = LLVMFunctionType(ret_ty, params, (unsigned)nparams, cs->varargs ? 1 : 0);
+      free(params);
+      if (!code_sig) goto done;
+
+      LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
+      if (!fn) {
+        fn = LLVMAddFunction(f->mod, name, code_sig);
+        LLVMSetLinkage(fn, LLVMExternalLinkage);
+      } else {
+        LLVMTypeRef have = LLVMGlobalGetValueType(fn);
+        if (have != code_sig) {
+          errf(f->p, "sircc: closure.sym '%s' type mismatch vs existing declaration/definition", name);
+          goto done;
+        }
+      }
+
+      LLVMTypeRef clo_ty = lower_type(f->p, f->ctx, n->type_ref);
+      if (!clo_ty || LLVMGetTypeKind(clo_ty) != LLVMStructTypeKind) goto done;
+
+      LLVMValueRef tmp = LLVMGetUndef(clo_ty);
+      tmp = LLVMBuildInsertValue(f->builder, tmp, fn, 0, "clo.code");
+      tmp = LLVMBuildInsertValue(f->builder, tmp, env, 1, "clo.env");
+      out = tmp;
+      goto done;
+    }
+
+    if (strcmp(op, "code") == 0 || strcmp(op, "env") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        goto done;
+      }
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+        errf(f->p, "sircc: %s node %lld requires fields.args:[c]", n->tag, (long long)node_id);
+        goto done;
+      }
+      int64_t cid = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &cid)) {
+        errf(f->p, "sircc: %s node %lld arg must be node ref", n->tag, (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef c = lower_expr(f, cid);
+      if (!c) goto done;
+      unsigned idx = (strcmp(op, "code") == 0) ? 0u : 1u;
+      out = LLVMBuildExtractValue(f->builder, c, idx, idx == 0 ? "clo.code" : "clo.env");
+      goto done;
+    }
+
+    if (strcmp(op, "cmp.eq") == 0 || strcmp(op, "cmp.ne") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: %s node %lld missing fields", n->tag, (long long)node_id);
+        goto done;
+      }
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
+        errf(f->p, "sircc: %s node %lld requires fields.args:[a,b]", n->tag, (long long)node_id);
+        goto done;
+      }
+      int64_t a_id = 0, b_id = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
+        errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef a = lower_expr(f, a_id);
+      LLVMValueRef b = lower_expr(f, b_id);
+      if (!a || !b) goto done;
+
+      LLVMValueRef acode = LLVMBuildExtractValue(f->builder, a, 0, "acode");
+      LLVMValueRef bcode = LLVMBuildExtractValue(f->builder, b, 0, "bcode");
+      LLVMValueRef aenv = LLVMBuildExtractValue(f->builder, a, 1, "aenv");
+      LLVMValueRef benv = LLVMBuildExtractValue(f->builder, b, 1, "benv");
+      if (!acode || !bcode || !aenv || !benv) goto done;
+
+      LLVMValueRef code_eq = LLVMBuildICmp(f->builder, LLVMIntEQ, acode, bcode, "code.eq");
+
+      LLVMTypeRef env_ty = LLVMTypeOf(aenv);
+      LLVMValueRef env_eq = NULL;
+      LLVMTypeKind k = LLVMGetTypeKind(env_ty);
+      if (k == LLVMIntegerTypeKind || k == LLVMPointerTypeKind) {
+        env_eq = LLVMBuildICmp(f->builder, LLVMIntEQ, aenv, benv, "env.eq");
+      } else {
+        errf(f->p, "sircc: %s env equality unsupported for non-integer/non-pointer env type", n->tag);
+        goto done;
+      }
+
+      LLVMValueRef both = LLVMBuildAnd(f->builder, code_eq, env_eq, "clo.eq");
+      if (strcmp(op, "cmp.eq") == 0) out = both;
+      else out = LLVMBuildNot(f->builder, both, "clo.ne");
+      goto done;
+    }
+  }
+
+  if (strncmp(n->tag, "adt.", 4) == 0) {
+    const char* op = n->tag + 4;
+
+    // Helper: compute payload layout for a sum type (payload_size, payload_align, payload_off, payload_field_index).
+    int64_t payload_size = 0;
+    int64_t payload_align = 1;
+    int64_t payload_off = 4;
+    int payload_field = 1; // default: {tag,payload}
+
+    TypeRec* sum_ty = NULL;
+    if (strcmp(op, "make") == 0) {
+      if (n->type_ref == 0) {
+        errf(f->p, "sircc: adt.make node %lld missing type_ref (sum type)", (long long)node_id);
+        goto done;
+      }
+      sum_ty = get_type(f->p, n->type_ref);
+    } else if (strcmp(op, "get") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: adt.get node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      int64_t ty_id = 0;
+      if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &ty_id)) {
+        errf(f->p, "sircc: adt.get node %lld missing fields.ty (sum type)", (long long)node_id);
+        goto done;
+      }
+      sum_ty = get_type(f->p, ty_id);
+    } else {
+      // tag/is don't need explicit type_ref here; we derive from operand where required.
+    }
+
+    if (sum_ty && sum_ty->kind == TYPE_SUM) {
+      for (size_t i = 0; i < sum_ty->variant_len; i++) {
+        int64_t vty = sum_ty->variants[i].ty;
+        if (vty == 0) continue;
+        int64_t vsz = 0;
+        int64_t val = 0;
+        if (type_size_align(f->p, vty, &vsz, &val)) {
+          if (vsz > payload_size) payload_size = vsz;
+          if (val > payload_align) payload_align = val;
+        }
+      }
+      if (payload_align < 1) payload_align = 1;
+      int64_t rem = payload_off % payload_align;
+      if (rem) payload_off += (payload_align - rem);
+      if (payload_off > 4) payload_field = 2; // {tag,pad,payload}
+    }
+
+    if (strcmp(op, "tag") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: adt.tag node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+        errf(f->p, "sircc: adt.tag node %lld requires fields.args:[v]", (long long)node_id);
+        goto done;
+      }
+      int64_t vid = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &vid)) {
+        errf(f->p, "sircc: adt.tag node %lld arg must be node ref", (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef v = lower_expr(f, vid);
+      if (!v) goto done;
+      out = LLVMBuildExtractValue(f->builder, v, 0, "tag");
+      goto done;
+    }
+
+    if (strcmp(op, "is") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: adt.is node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+        errf(f->p, "sircc: adt.is node %lld requires fields.args:[v]", (long long)node_id);
+        goto done;
+      }
+      JsonValue* flags = json_obj_get(n->fields, "flags");
+      if (!flags || flags->type != JSON_OBJECT) {
+        errf(f->p, "sircc: adt.is node %lld missing fields.flags", (long long)node_id);
+        goto done;
+      }
+      int64_t variant = -1;
+      if (!must_i64(f->p, json_obj_get(flags, "variant"), &variant, "adt.is.flags.variant")) goto done;
+
+      int64_t vid = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &vid)) {
+        errf(f->p, "sircc: adt.is node %lld arg must be node ref", (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef v = lower_expr(f, vid);
+      if (!v) goto done;
+      LLVMValueRef tag = LLVMBuildExtractValue(f->builder, v, 0, "tag");
+
+      // Out of range => deterministic trap.
+      // Derive sum type from operand if possible; otherwise treat variant as unchecked.
+      NodeRec* vn = get_node(f->p, vid);
+      TypeRec* sty = (vn && vn->type_ref) ? get_type(f->p, vn->type_ref) : NULL;
+      if (sty && sty->kind == TYPE_SUM) {
+        LLVMValueRef bad = LLVMConstInt(LLVMInt1TypeInContext(f->ctx),
+                                       (variant < 0 || (size_t)variant >= sty->variant_len) ? 1 : 0, 0);
+        if (!emit_trap_if(f, bad)) goto done;
+      }
+
+      LLVMValueRef want = LLVMConstInt(LLVMInt32TypeInContext(f->ctx), (unsigned long long)variant, 0);
+      out = LLVMBuildICmp(f->builder, LLVMIntEQ, tag, want, "is");
+      goto done;
+    }
+
+    if (strcmp(op, "make") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: adt.make node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      if (n->type_ref == 0) {
+        errf(f->p, "sircc: adt.make node %lld missing type_ref (sum type)", (long long)node_id);
+        goto done;
+      }
+      TypeRec* sty = get_type(f->p, n->type_ref);
+      if (!sty || sty->kind != TYPE_SUM) {
+        errf(f->p, "sircc: adt.make node %lld type_ref must be a sum type", (long long)node_id);
+        goto done;
+      }
+      JsonValue* flags = json_obj_get(n->fields, "flags");
+      if (!flags || flags->type != JSON_OBJECT) {
+        errf(f->p, "sircc: adt.make node %lld missing fields.flags", (long long)node_id);
+        goto done;
+      }
+      int64_t variant = -1;
+      if (!must_i64(f->p, json_obj_get(flags, "variant"), &variant, "adt.make.flags.variant")) goto done;
+
+      LLVMValueRef bad = LLVMConstInt(LLVMInt1TypeInContext(f->ctx),
+                                      (variant < 0 || (size_t)variant >= sty->variant_len) ? 1 : 0, 0);
+      if (!emit_trap_if(f, bad)) goto done;
+      if (variant < 0 || (size_t)variant >= sty->variant_len) variant = 0;
+
+      int64_t pay_ty_id = sty->variants[(size_t)variant].ty;
+
+      JsonValue* args = json_obj_get(n->fields, "args");
+      size_t argc = 0;
+      if (args) {
+        if (args->type != JSON_ARRAY) {
+          errf(f->p, "sircc: adt.make node %lld fields.args must be array when present", (long long)node_id);
+          goto done;
+        }
+        argc = args->v.arr.len;
+      }
+      if (pay_ty_id == 0) {
+        if (argc != 0) {
+          errf(f->p, "sircc: adt.make node %lld variant %lld is nullary; args must be empty", (long long)node_id, (long long)variant);
+          goto done;
+        }
+      } else {
+        if (argc != 1) {
+          errf(f->p, "sircc: adt.make node %lld variant %lld requires one payload arg", (long long)node_id, (long long)variant);
+          goto done;
+        }
+      }
+
+      LLVMTypeRef sum_llvm = lower_type(f->p, f->ctx, n->type_ref);
+      if (!sum_llvm) goto done;
+
+      int64_t sum_sz = 0, sum_al = 0;
+      if (!type_size_align(f->p, n->type_ref, &sum_sz, &sum_al)) {
+        errf(f->p, "sircc: adt.make node %lld could not compute sum layout", (long long)node_id);
+        goto done;
+      }
+
+      LLVMValueRef slot = LLVMBuildAlloca(f->builder, sum_llvm, "sum.tmp");
+      if (sum_al > 0 && sum_al <= 4096) LLVMSetAlignment(slot, (unsigned)sum_al);
+
+      LLVMValueRef zero = LLVMConstNull(sum_llvm);
+      LLVMBuildStore(f->builder, zero, slot);
+
+      LLVMValueRef tagp = LLVMBuildStructGEP2(f->builder, sum_llvm, slot, 0, "tagp");
+      LLVMValueRef tagv = LLVMConstInt(LLVMInt32TypeInContext(f->ctx), (unsigned long long)variant, 0);
+      LLVMBuildStore(f->builder, tagv, tagp);
+
+      if (pay_ty_id != 0) {
+        int64_t pid = 0;
+        (void)parse_node_ref_id(f->p, args->v.arr.items[0], &pid);
+        LLVMValueRef payload = lower_expr(f, pid);
+        if (!payload) goto done;
+        LLVMValueRef payp = LLVMBuildStructGEP2(f->builder, sum_llvm, slot, (unsigned)payload_field, "payloadp");
+        LLVMTypeRef pay_ty = lower_type(f->p, f->ctx, pay_ty_id);
+        if (!pay_ty) goto done;
+        LLVMValueRef castp = LLVMBuildBitCast(f->builder, payp, LLVMPointerType(pay_ty, 0), "pay.castp");
+        LLVMValueRef st = LLVMBuildStore(f->builder, payload, castp);
+        int64_t psz = 0, pal = 0;
+        if (type_size_align(f->p, pay_ty_id, &psz, &pal) && pal > 0 && pal <= 4096) {
+          LLVMSetAlignment(st, (unsigned)pal);
+        }
+      }
+
+      out = LLVMBuildLoad2(f->builder, sum_llvm, slot, "sum");
+      goto done;
+    }
+
+    if (strcmp(op, "get") == 0) {
+      if (!n->fields) {
+        errf(f->p, "sircc: adt.get node %lld missing fields", (long long)node_id);
+        goto done;
+      }
+      int64_t sum_ty_id = 0;
+      if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &sum_ty_id)) {
+        errf(f->p, "sircc: adt.get node %lld missing fields.ty (sum type)", (long long)node_id);
+        goto done;
+      }
+      TypeRec* sty = get_type(f->p, sum_ty_id);
+      if (!sty || sty->kind != TYPE_SUM) {
+        errf(f->p, "sircc: adt.get node %lld fields.ty must reference a sum type", (long long)node_id);
+        goto done;
+      }
+      JsonValue* flags = json_obj_get(n->fields, "flags");
+      if (!flags || flags->type != JSON_OBJECT) {
+        errf(f->p, "sircc: adt.get node %lld missing fields.flags", (long long)node_id);
+        goto done;
+      }
+      int64_t variant = -1;
+      if (!must_i64(f->p, json_obj_get(flags, "variant"), &variant, "adt.get.flags.variant")) goto done;
+
+      LLVMValueRef bad = LLVMConstInt(LLVMInt1TypeInContext(f->ctx),
+                                      (variant < 0 || (size_t)variant >= sty->variant_len) ? 1 : 0, 0);
+      if (!emit_trap_if(f, bad)) goto done;
+      if (variant < 0 || (size_t)variant >= sty->variant_len) variant = 0;
+
+      int64_t pay_ty_id = sty->variants[(size_t)variant].ty;
+      if (pay_ty_id == 0) {
+        errf(f->p, "sircc: adt.get node %lld variant %lld is nullary (no payload)", (long long)node_id, (long long)variant);
+        goto done;
+      }
+
+      JsonValue* args = json_obj_get(n->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+        errf(f->p, "sircc: adt.get node %lld requires fields.args:[v]", (long long)node_id);
+        goto done;
+      }
+      int64_t vid = 0;
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &vid)) {
+        errf(f->p, "sircc: adt.get node %lld arg must be node ref", (long long)node_id);
+        goto done;
+      }
+      LLVMValueRef v = lower_expr(f, vid);
+      if (!v) goto done;
+      LLVMValueRef tag = LLVMBuildExtractValue(f->builder, v, 0, "tag");
+      LLVMValueRef want = LLVMConstInt(LLVMInt32TypeInContext(f->ctx), (unsigned long long)variant, 0);
+      LLVMValueRef neq = LLVMBuildICmp(f->builder, LLVMIntNE, tag, want, "tag.ne");
+      if (!emit_trap_if(f, neq)) goto done;
+
+      // Store to a temp to read payload bytes as the payload type.
+      LLVMTypeRef sum_llvm = lower_type(f->p, f->ctx, sum_ty_id);
+      if (!sum_llvm) goto done;
+      LLVMValueRef slot = LLVMBuildAlloca(f->builder, sum_llvm, "sum.tmp");
+      int64_t sum_sz = 0, sum_al = 0;
+      if (type_size_align(f->p, sum_ty_id, &sum_sz, &sum_al) && sum_al > 0 && sum_al <= 4096) {
+        LLVMSetAlignment(slot, (unsigned)sum_al);
+      }
+      LLVMBuildStore(f->builder, v, slot);
+
+      // Determine payload field index based on computed payload_off.
+      payload_size = 0;
+      payload_align = 1;
+      payload_off = 4;
+      payload_field = 1;
+      for (size_t i = 0; i < sty->variant_len; i++) {
+        int64_t vty = sty->variants[i].ty;
+        if (vty == 0) continue;
+        int64_t vsz = 0;
+        int64_t val = 0;
+        if (type_size_align(f->p, vty, &vsz, &val)) {
+          if (vsz > payload_size) payload_size = vsz;
+          if (val > payload_align) payload_align = val;
+        }
+      }
+      if (payload_align < 1) payload_align = 1;
+      int64_t rem = payload_off % payload_align;
+      if (rem) payload_off += (payload_align - rem);
+      if (payload_off > 4) payload_field = 2;
+
+      LLVMValueRef payp = LLVMBuildStructGEP2(f->builder, sum_llvm, slot, (unsigned)payload_field, "payloadp");
+      LLVMTypeRef pay_ty = lower_type(f->p, f->ctx, pay_ty_id);
+      if (!pay_ty) goto done;
+      LLVMValueRef castp = LLVMBuildBitCast(f->builder, payp, LLVMPointerType(pay_ty, 0), "pay.castp");
+      LLVMValueRef ld = LLVMBuildLoad2(f->builder, pay_ty, castp, "payload");
+      int64_t psz = 0, pal = 0;
+      if (type_size_align(f->p, pay_ty_id, &psz, &pal) && pal > 0 && pal <= 4096) {
+        LLVMSetAlignment(ld, (unsigned)pal);
+      }
+      out = ld;
+      goto done;
+    }
   }
 
   if (strncmp(n->tag, "const.", 6) == 0) {

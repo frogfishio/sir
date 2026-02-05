@@ -23,6 +23,71 @@ bool validate_program(SirProgram* p) {
       if (!validate_cfg_fn(p, n)) return false;
     }
   }
+
+  // Feature gates for node-based streams (meta.ext.features can appear anywhere, so do this post-parse).
+  if (p->feat_closure_v1 && !p->feat_fun_v1) {
+    err_codef(p, "sircc.feature.dep", "sircc: feature closure:v1 requires fun:v1");
+    return false;
+  }
+
+  for (size_t i = 0; i < p->types_cap; i++) {
+    TypeRec* t = p->types[i];
+    if (!t) continue;
+    if (t->kind == TYPE_FUN && !p->feat_fun_v1) {
+      SirDiagSaved saved = sir_diag_push(p, "type", t->id, "fun");
+      err_codef(p, "sircc.feature.gate", "sircc: type kind 'fun' requires feature fun:v1 (enable via meta.ext.features)");
+      sir_diag_pop(p, saved);
+      return false;
+    }
+    if (t->kind == TYPE_CLOSURE && !p->feat_closure_v1) {
+      SirDiagSaved saved = sir_diag_push(p, "type", t->id, "closure");
+      err_codef(p, "sircc.feature.gate", "sircc: type kind 'closure' requires feature closure:v1 (enable via meta.ext.features)");
+      sir_diag_pop(p, saved);
+      return false;
+    }
+    if (t->kind == TYPE_SUM && !p->feat_adt_v1) {
+      SirDiagSaved saved = sir_diag_push(p, "type", t->id, "sum");
+      err_codef(p, "sircc.feature.gate", "sircc: type kind 'sum' requires feature adt:v1 (enable via meta.ext.features)");
+      sir_diag_pop(p, saved);
+      return false;
+    }
+  }
+
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* n = p->nodes[i];
+    if (!n) continue;
+    if ((strcmp(n->tag, "call.fun") == 0 || strncmp(n->tag, "fun.", 4) == 0) && !p->feat_fun_v1) {
+      SirDiagSaved saved = sir_diag_push_node(p, n);
+      err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature fun:v1 (enable via meta.ext.features)", n->tag);
+      sir_diag_pop(p, saved);
+      return false;
+    }
+    if ((strcmp(n->tag, "call.closure") == 0 || strncmp(n->tag, "closure.", 8) == 0) && !p->feat_closure_v1) {
+      SirDiagSaved saved = sir_diag_push_node(p, n);
+      err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature closure:v1 (enable via meta.ext.features)", n->tag);
+      sir_diag_pop(p, saved);
+      return false;
+    }
+    if ((strncmp(n->tag, "adt.", 4) == 0) && !p->feat_adt_v1) {
+      SirDiagSaved saved = sir_diag_push_node(p, n);
+      err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature adt:v1 (enable via meta.ext.features)", n->tag);
+      sir_diag_pop(p, saved);
+      return false;
+    }
+    if ((strncmp(n->tag, "sem.", 4) == 0) && !p->feat_sem_v1) {
+      SirDiagSaved saved = sir_diag_push_node(p, n);
+      err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature sem:v1 (enable via meta.ext.features)", n->tag);
+      sir_diag_pop(p, saved);
+      return false;
+    }
+    if (strcmp(n->tag, "sem.match_sum") == 0 && p->feat_sem_v1 && !p->feat_adt_v1) {
+      SirDiagSaved saved = sir_diag_push_node(p, n);
+      err_codef(p, "sircc.feature.dep", "sircc: sem.match_sum requires adt:v1");
+      sir_diag_pop(p, saved);
+      return false;
+    }
+  }
+
   return true;
 }
 

@@ -1,0 +1,7 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sircc-example","unit":"bad_closure_missing_feature","ext":{"features":["fun:v1"]}}
+
+{"ir":"sir-v1.0","k":"type","id":1,"kind":"prim","prim":"i32"}
+{"ir":"sir-v1.0","k":"type","id":10,"kind":"fn","params":[1],"ret":1}
+{"ir":"sir-v1.0","k":"type","id":20,"kind":"closure","callSig":10,"env":1}
+
+{"ir":"sir-v1.0","k":"node","id":1,"tag":"closure.env","type_ref":1,"fields":{"args":[{"t":"ref","id":2}]}}

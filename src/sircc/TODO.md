@@ -62,15 +62,15 @@ These are the next “semantic widening” items to unlock real-language lowerin
     - [x] Runnable examples: `global_i32_ptrsym`, `global_array_const`, `global_array_repeat`
   - [ ] ZASM parity: globals + const payload emission (defer until the zasm data model is decided)
 
-- [ ] **Higher-order callables**
-  - [ ] `fun:v1`: `type.kind:"fun"`, `fun.sym`, `fun.cmp.*`, `call.fun`
-  - [ ] `closure:v1`: `type.kind:"closure"`, `closure.*`, `call.closure`
+- [x] **Higher-order callables**
+  - [x] `fun:v1`: `type.kind:"fun"`, `fun.sym`, `fun.cmp.*`, `call.fun` (node form + LLVM)
+  - [x] `closure:v1`: `type.kind:"closure"`, `closure.*`, `call.closure` (node form + LLVM)
 
-- [ ] **Sum types / ADTs (adt:v1)**
-  - [ ] `type.kind:"sum"` and ops: `adt.make/tag/is/get` with normative layout
+- [x] **Sum types / ADTs (adt:v1)**
+  - [x] `type.kind:"sum"` and ops: `adt.make/tag/is/get` with normative layout (node form + LLVM)
 
-- [ ] **Semantic algebra (sem:v1)**
-  - [ ] Implement deterministic desugaring for `sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.match_sum` into base records/nodes, then validate + lower the desugared form
+- [x] **Semantic algebra (sem:v1)**
+  - [x] Implement deterministic desugaring for `sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.match_sum` into base records/nodes, then validate + lower the desugared form (node-lowered to CFG + φ)
 
 ## Milestone 2 — Core backend architecture (so “all mnemonics” is tractable)
 

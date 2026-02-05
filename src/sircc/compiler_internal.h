@@ -22,6 +22,9 @@ typedef enum TypeKind {
   TYPE_ARRAY,
   TYPE_FN,
   TYPE_STRUCT,
+  TYPE_FUN,
+  TYPE_CLOSURE,
+  TYPE_SUM,
 } TypeKind;
 
 typedef struct SrcRec {
@@ -54,6 +57,11 @@ typedef struct TypeFieldRec {
   int64_t type_ref;
 } TypeFieldRec;
 
+typedef struct TypeVariantRec {
+  const char* name;  // optional
+  int64_t ty;        // 0 means nullary/no payload
+} TypeVariantRec;
+
 typedef struct TypeRec {
   int64_t id;
   TypeKind kind;
@@ -70,6 +78,17 @@ typedef struct TypeRec {
 
   TypeFieldRec* fields;
   size_t field_len;
+
+  // TYPE_FUN
+  int64_t sig; // references a TYPE_FN type id
+
+  // TYPE_CLOSURE
+  int64_t call_sig; // references a TYPE_FN type id (user-visible signature)
+  int64_t env_ty;   // environment type id
+
+  // TYPE_SUM
+  TypeVariantRec* variants;
+  size_t variant_len;
 
   LLVMTypeRef llvm;
   bool resolving;
