@@ -223,6 +223,8 @@ TypeRec* get_type(SirProgram* p, int64_t id);
 SymRec* get_sym(SirProgram* p, int64_t id);
 SymRec* find_sym_by_name(SirProgram* p, const char* name);
 NodeRec* get_node(SirProgram* p, int64_t id);
+NodeRec* find_fn_node_by_name(SirProgram* p, const char* name);
+NodeRec* find_decl_fn_node_by_name(SirProgram* p, const char* name);
 
 // Frontend
 bool parse_program(SirProgram* p, const SirccOptions* opt, const char* input_path);

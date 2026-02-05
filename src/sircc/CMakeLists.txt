@@ -202,6 +202,33 @@ add_test(
 )
 
 add_test(
+  NAME sircc_diag_bad_fun_sym_conflict_global
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/bad_fun_sym_conflict_global.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_fun_sym_conflict_global.ll\\;--emit-llvm
+    "-DEXPECT=fun.sym 'sir_add2' references a data symbol"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_fun_sym_sig_mismatch_vs_fn
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/bad_fun_sym_sig_mismatch_vs_fn.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_fun_sym_sig_mismatch_vs_fn.ll\\;--emit-llvm
+    "-DEXPECT=signature mismatch vs fn node type_ref"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_fun_sym_undefined
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/bad_fun_sym_undefined.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_fun_sym_undefined.ll\\;--emit-llvm
+    "-DEXPECT=requires a prior fn or decl.fn of matching signature"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_diag_bad_store_ptr_fun
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>

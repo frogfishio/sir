@@ -56,11 +56,11 @@ static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueR
   unsigned param_count = LLVMCountParamTypes(callee_fty);
   bool is_varargs = LLVMIsFunctionVarArg(callee_fty) != 0;
   if (!is_varargs && (unsigned)argc != param_count) {
-    errf(f->p, "sircc: fun call arg count mismatch (got %zu, want %u)", argc, param_count);
+    err_codef(f->p, "sircc.call.fun.argc_mismatch", "sircc: fun call arg count mismatch (got %zu, want %u)", argc, param_count);
     return NULL;
   }
   if ((unsigned)argc < param_count) {
-    errf(f->p, "sircc: fun call missing required args (got %zu, want >= %u)", argc, param_count);
+    err_codef(f->p, "sircc.call.fun.argc_missing", "sircc: fun call missing required args (got %zu, want >= %u)", argc, param_count);
     return NULL;
   }
   if (param_count) {
@@ -76,7 +76,12 @@ static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueR
         continue;
       }
       free(params);
-      errf(f->p, "sircc: fun call arg[%u] type mismatch", i);
+      char* w = LLVMPrintTypeToString(want);
+      char* g = LLVMPrintTypeToString(got);
+      err_codef(f->p, "sircc.call.fun.arg_type_mismatch",
+                "sircc: fun call arg[%u] type mismatch (want=%s, got=%s)", i, w ? w : "(null)", g ? g : "(null)");
+      if (w) LLVMDisposeMessage(w);
+      if (g) LLVMDisposeMessage(g);
       return NULL;
     }
     free(params);
@@ -84,7 +89,12 @@ static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueR
 
   LLVMValueRef out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
   if (out && want_ret && LLVMTypeOf(out) != want_ret) {
-    errf(f->p, "sircc: fun call return type mismatch");
+    char* w = LLVMPrintTypeToString(want_ret);
+    char* g = LLVMPrintTypeToString(LLVMTypeOf(out));
+    err_codef(f->p, "sircc.call.fun.ret_type_mismatch",
+              "sircc: fun call return type mismatch (want=%s, got=%s)", w ? w : "(null)", g ? g : "(null)");
+    if (w) LLVMDisposeMessage(w);
+    if (g) LLVMDisposeMessage(g);
     return NULL;
   }
   return out;
@@ -121,12 +131,12 @@ static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMVa
   bool is_varargs = LLVMIsFunctionVarArg(code_sig) != 0;
   if (!is_varargs && (unsigned)argc != param_count) {
     free(argv);
-    errf(f->p, "sircc: closure call arg count mismatch (got %zu, want %u)", argc, param_count);
+    err_codef(f->p, "sircc.call.closure.argc_mismatch", "sircc: closure call arg count mismatch (got %zu, want %u)", argc, param_count);
     return NULL;
   }
   if ((unsigned)argc < param_count) {
     free(argv);
-    errf(f->p, "sircc: closure call missing required args (got %zu, want >= %u)", argc, param_count);
+    err_codef(f->p, "sircc.call.closure.argc_missing", "sircc: closure call missing required args (got %zu, want >= %u)", argc, param_count);
     return NULL;
   }
   if (param_count) {
@@ -146,7 +156,12 @@ static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMVa
       }
       free(params);
       free(argv);
-      errf(f->p, "sircc: closure call arg[%u] type mismatch", i);
+      char* w = LLVMPrintTypeToString(want);
+      char* g = LLVMPrintTypeToString(got);
+      err_codef(f->p, "sircc.call.closure.arg_type_mismatch",
+                "sircc: closure call arg[%u] type mismatch (want=%s, got=%s)", i, w ? w : "(null)", g ? g : "(null)");
+      if (w) LLVMDisposeMessage(w);
+      if (g) LLVMDisposeMessage(g);
       return NULL;
     }
     free(params);
@@ -155,7 +170,12 @@ static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMVa
   LLVMValueRef out = LLVMBuildCall2(f->builder, code_sig, code, argv, (unsigned)argc, "call");
   free(argv);
   if (out && want_ret && LLVMTypeOf(out) != want_ret) {
-    errf(f->p, "sircc: closure call return type mismatch");
+    char* w = LLVMPrintTypeToString(want_ret);
+    char* g = LLVMPrintTypeToString(LLVMTypeOf(out));
+    err_codef(f->p, "sircc.call.closure.ret_type_mismatch",
+              "sircc: closure call return type mismatch (want=%s, got=%s)", w ? w : "(null)", g ? g : "(null)");
+    if (w) LLVMDisposeMessage(w);
+    if (g) LLVMDisposeMessage(g);
     return NULL;
   }
   return out;

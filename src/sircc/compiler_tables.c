@@ -29,3 +29,27 @@ NodeRec* get_node(SirProgram* p, int64_t id) {
   if (id < 0 || (size_t)id >= p->nodes_cap) return NULL;
   return p->nodes[id];
 }
+
+NodeRec* find_fn_node_by_name(SirProgram* p, const char* name) {
+  if (!p || !name) return NULL;
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* n = p->nodes[i];
+    if (!n || !n->tag || strcmp(n->tag, "fn") != 0 || !n->fields) continue;
+    const char* nm = json_get_string(json_obj_get(n->fields, "name"));
+    if (!nm) continue;
+    if (strcmp(nm, name) == 0) return n;
+  }
+  return NULL;
+}
+
+NodeRec* find_decl_fn_node_by_name(SirProgram* p, const char* name) {
+  if (!p || !name) return NULL;
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* n = p->nodes[i];
+    if (!n || !n->tag || strcmp(n->tag, "decl.fn") != 0 || !n->fields) continue;
+    const char* nm = json_get_string(json_obj_get(n->fields, "name"));
+    if (!nm) continue;
+    if (strcmp(nm, name) == 0) return n;
+  }
+  return NULL;
+}

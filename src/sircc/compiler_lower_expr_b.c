@@ -55,7 +55,8 @@ static bool reject_opaque_callable_operand(FunctionCtx* f, int64_t operand_node_
   if (!is_opaque_callable_type(f->p, n->type_ref)) return true;
   TypeRec* t = get_type(f->p, n->type_ref);
   const char* tk = (t && t->kind == TYPE_CLOSURE) ? "closure" : "fun";
-  errf(f->p, "sircc: %s cannot operate on opaque %s values (use %s.* / call.%s)", ctx_tag, tk, tk, tk);
+  err_codef(f->p, "sircc.opaque_callable.ptr_op",
+            "sircc: %s cannot operate on opaque %s values (use %s.* / call.%s)", ctx_tag, tk, tk, tk);
   return false;
 }
 
@@ -69,38 +70,76 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (strcmp(op, "sym") == 0) {
       if (!n->fields) {
-        errf(f->p, "sircc: fun.sym node %lld missing fields", (long long)node_id);
+        err_codef(f->p, "sircc.fun.sym.missing_fields", "sircc: fun.sym node %lld missing fields", (long long)node_id);
         goto done;
       }
       if (n->type_ref == 0) {
-        errf(f->p, "sircc: fun.sym node %lld missing type_ref (fun type)", (long long)node_id);
+        err_codef(f->p, "sircc.fun.sym.missing_type", "sircc: fun.sym node %lld missing type_ref (fun type)", (long long)node_id);
         goto done;
       }
       TypeRec* fty = get_type(f->p, n->type_ref);
       if (!fty || fty->kind != TYPE_FUN || fty->sig == 0) {
-        errf(f->p, "sircc: fun.sym node %lld type_ref must be a fun type", (long long)node_id);
+        err_codef(f->p, "sircc.fun.sym.type_ref.bad", "sircc: fun.sym node %lld type_ref must be a fun type", (long long)node_id);
         goto done;
       }
       LLVMTypeRef sig = lower_type(f->p, f->ctx, fty->sig);
       if (!sig || LLVMGetTypeKind(sig) != LLVMFunctionTypeKind) {
-        errf(f->p, "sircc: fun.sym node %lld fun.sig must reference a fn type", (long long)node_id);
+        err_codef(f->p, "sircc.fun.sym.sig.bad", "sircc: fun.sym node %lld fun.sig must reference a fn type", (long long)node_id);
         goto done;
       }
 
       const char* name = json_get_string(json_obj_get(n->fields, "name"));
       if (!name || !is_ident(name)) {
-        errf(f->p, "sircc: fun.sym node %lld requires fields.name Ident", (long long)node_id);
+        err_codef(f->p, "sircc.fun.sym.name.bad", "sircc: fun.sym node %lld requires fields.name Ident", (long long)node_id);
         goto done;
       }
 
+      // A fun.sym must name a function symbol; reject collisions with globals or non-function syms.
+      if (LLVMGetNamedGlobal(f->mod, name)) {
+        err_codef(f->p, "sircc.fun.sym.conflict_global", "sircc: fun.sym '%s' conflicts with a global symbol", name);
+        goto done;
+      }
+      SymRec* s = find_sym_by_name(f->p, name);
+      if (s && s->kind && (strcmp(s->kind, "var") == 0 || strcmp(s->kind, "const") == 0)) {
+        err_codef(f->p, "sircc.fun.sym.conflict_sym", "sircc: fun.sym '%s' references a data symbol (expected function)", name);
+        goto done;
+      }
+
+      // Producer rule: the symbol should be declared/defined as a function in the stream.
+      NodeRec* fn_node = find_fn_node_by_name(f->p, name);
+      if (fn_node && fn_node->type_ref != fty->sig) {
+        err_codef(f->p, "sircc.fun.sym.sig_mismatch", "sircc: fun.sym '%s' signature mismatch vs fn node type_ref", name);
+        goto done;
+      }
+      NodeRec* decl_node = find_decl_fn_node_by_name(f->p, name);
+      if (decl_node) {
+        int64_t decl_sig_id = decl_node->type_ref;
+        if (decl_sig_id == 0) {
+          if (!parse_type_ref_id(f->p, json_obj_get(decl_node->fields, "sig"), &decl_sig_id)) {
+            err_codef(f->p, "sircc.fun.sym.decl.sig.bad", "sircc: fun.sym '%s' has decl.fn without a signature", name);
+            goto done;
+          }
+        }
+        if (decl_sig_id != fty->sig) {
+          err_codef(f->p, "sircc.fun.sym.sig_mismatch", "sircc: fun.sym '%s' signature mismatch vs decl.fn", name);
+          goto done;
+        }
+      }
+
       LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
+      if (!fn && !fn_node && !decl_node) {
+        err_codef(f->p, "sircc.fun.sym.undefined",
+                  "sircc: fun.sym '%s' requires a prior fn or decl.fn of matching signature (producer rule)", name);
+        goto done;
+      }
       if (!fn) {
         fn = LLVMAddFunction(f->mod, name, sig);
         LLVMSetLinkage(fn, LLVMExternalLinkage);
       } else {
         LLVMTypeRef have = LLVMGlobalGetValueType(fn);
         if (have != sig) {
-          errf(f->p, "sircc: fun.sym '%s' type mismatch vs existing declaration/definition", name);
+          err_codef(f->p, "sircc.fun.sym.sig_mismatch",
+                    "sircc: fun.sym '%s' type mismatch vs existing declaration/definition", name);
           goto done;
         }
       }
@@ -111,7 +150,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
           out = LLVMBuildBitCast(f->builder, fn, want_ty, "fun.sym.cast");
           goto done;
         }
-        errf(f->p, "sircc: fun.sym '%s' has unexpected LLVM type", name);
+        err_codef(f->p, "sircc.fun.sym.llvm_type.bad", "sircc: fun.sym '%s' has unexpected LLVM type", name);
         goto done;
       }
 
