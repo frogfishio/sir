@@ -25,6 +25,7 @@ static void usage(FILE* out) {
           "  sircc --check [--dist-root <path>|--examples-dir <path>] [--format text|json]\n"
           "  sircc [--runtime libc|zabi25] [--zabi25-root <path>] ...\n"
           "  sircc [--diagnostics text|json] [--color auto|always|never] [--diag-context N] [--verbose] [--strip]\n"
+          "  sircc --deterministic ...\n"
           "  sircc --require-pinned-triple ...\n"
           "  sircc --version\n");
 }
@@ -208,6 +209,11 @@ int main(int argc, char** argv) {
       continue;
     }
     if (strcmp(a, "--require-pinned-triple") == 0) {
+      opt.require_pinned_triple = true;
+      continue;
+    }
+    if (strcmp(a, "--deterministic") == 0) {
+      // Best-effort reproducibility: require explicit target triple (meta.ext.target.triple or --target-triple).
       opt.require_pinned_triple = true;
       continue;
     }

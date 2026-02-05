@@ -21,6 +21,7 @@ typedef enum TypeKind {
   TYPE_PTR,
   TYPE_ARRAY,
   TYPE_FN,
+  TYPE_STRUCT,
 } TypeKind;
 
 typedef struct SrcRec {
@@ -44,12 +45,20 @@ typedef struct SymRec {
   const char* name;
   const char* kind;
   const char* linkage;
+  int64_t type_ref;   // 0 means absent
+  JsonValue* value;   // optional initializer / constant value
 } SymRec;
+
+typedef struct TypeFieldRec {
+  const char* name;
+  int64_t type_ref;
+} TypeFieldRec;
 
 typedef struct TypeRec {
   int64_t id;
   TypeKind kind;
 
+  const char* name;
   const char* prim;
   int64_t of;
   int64_t len;
@@ -58,6 +67,9 @@ typedef struct TypeRec {
   size_t param_len;
   int64_t ret;
   bool varargs;
+
+  TypeFieldRec* fields;
+  size_t field_len;
 
   LLVMTypeRef llvm;
   bool resolving;
@@ -72,6 +84,14 @@ typedef struct NodeRec {
   LLVMValueRef llvm_value; // cached when lowered (expressions); for fn nodes this is the LLVM function
   bool resolving;
 } NodeRec;
+
+typedef struct PendingFeatureUse {
+  const char* path;
+  size_t line;
+  int64_t rec_id;
+  const char* mnemonic;
+  const char* need;
+} PendingFeatureUse;
 
 typedef struct SirProgram {
   Arena arena;
@@ -91,6 +111,20 @@ typedef struct SirProgram {
   const char* target_triple;
   unsigned ptr_bytes;
   unsigned ptr_bits;
+  bool target_big_endian;
+  unsigned align_i8;
+  unsigned align_i16;
+  unsigned align_i32;
+  unsigned align_i64;
+  unsigned align_f32;
+  unsigned align_f64;
+  unsigned align_ptr;
+  const char* struct_align; // "max" (default) or "packed1" (future)
+  bool target_ptrbits_override;
+  bool target_endian_override;
+  bool target_intalign_override;
+  bool target_floatalign_override;
+  bool target_structalign_override;
 
   bool feat_atomics_v1;
   bool feat_simd_v1;
@@ -120,6 +154,10 @@ typedef struct SirProgram {
 
   NodeRec** nodes;
   size_t nodes_cap;
+
+  PendingFeatureUse* pending_features;
+  size_t pending_features_len;
+  size_t pending_features_cap;
 } SirProgram;
 
 // Diagnostics
@@ -163,6 +201,8 @@ bool is_blank_line(const char* s);
 
 // Tables
 TypeRec* get_type(SirProgram* p, int64_t id);
+SymRec* get_sym(SirProgram* p, int64_t id);
+SymRec* find_sym_by_name(SirProgram* p, const char* name);
 NodeRec* get_node(SirProgram* p, int64_t id);
 
 // Frontend
@@ -183,6 +223,7 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod);
 // Emission
 bool emit_module_ir(SirProgram* p, LLVMModuleRef mod, const char* out_path);
 bool init_target_for_module(SirProgram* p, LLVMModuleRef mod, const char* triple);
+bool init_target_info(SirProgram* p, const char* triple);
 bool emit_module_obj(SirProgram* p, LLVMModuleRef mod, const char* triple, const char* out_path);
 
 // ZASM (zir) emission (zasm-v1.1 JSONL).

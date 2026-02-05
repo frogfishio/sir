@@ -1,0 +1,16 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sircc-example","unit":"global_i32_ptrsym"}
+
+{"ir":"sir-v1.0","k":"type","id":1,"kind":"prim","prim":"i32"}
+{"ir":"sir-v1.0","k":"type","id":2,"kind":"prim","prim":"i64"}
+{"ir":"sir-v1.0","k":"type","id":10,"kind":"fn","params":[],"ret":1}
+
+{"ir":"sir-v1.0","k":"sym","id":1,"name":"g","kind":"var","linkage":"public","type_ref":1,"value":{"t":"num","v":8}}
+
+{"ir":"sir-v1.0","k":"node","id":20,"tag":"ptr.sym","type_ref":0,"fields":{"name":"g","args":[]}}
+{"ir":"sir-v1.0","k":"node","id":21,"tag":"load.i32","type_ref":1,"fields":{"addr":{"t":"ref","id":20},"align":4}}
+{"ir":"sir-v1.0","k":"node","id":22,"tag":"const.i32","type_ref":1,"fields":{"value":4}}
+{"ir":"sir-v1.0","k":"node","id":23,"tag":"i32.add","type_ref":1,"fields":{"args":[{"t":"ref","id":21},{"t":"ref","id":22}]}}
+
+{"ir":"sir-v1.0","k":"node","id":30,"tag":"term.ret","fields":{"value":{"t":"ref","id":23}}}
+{"ir":"sir-v1.0","k":"node","id":31,"tag":"block","fields":{"stmts":[{"t":"ref","id":30}]}}
+{"ir":"sir-v1.0","k":"node","id":32,"tag":"fn","type_ref":10,"fields":{"name":"main","params":[],"body":{"t":"ref","id":31}}}

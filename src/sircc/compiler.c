@@ -38,6 +38,16 @@ int sircc_compile(const SirccOptions* opt) {
   }
 
   if (opt->emit == SIRCC_EMIT_ZASM_IR) {
+    const char* use_triple = opt->target_triple ? opt->target_triple : p.target_triple;
+    if (!use_triple) {
+      owned_triple = LLVMGetDefaultTargetTriple();
+      use_triple = owned_triple;
+    }
+    if (!init_target_info(&p, use_triple)) {
+      ok = false;
+      goto done;
+    }
+
     FILE* map_out = NULL;
     if (opt->zasm_map_path && *opt->zasm_map_path) {
       map_out = fopen(opt->zasm_map_path, "wb");
@@ -148,6 +158,7 @@ done:
   free(p.syms);
   free(p.types);
   free(p.nodes);
+  free(p.pending_features);
   sir_idmaps_free(&p);
   arena_free(&p.arena);
   return ok ? SIRCC_EXIT_OK : p.exit_code;

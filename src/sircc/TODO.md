@@ -29,6 +29,7 @@ This TODO is organized as milestones. Each milestone should end with:
 - [x] “Closed schema” behavior: reject unknown fields for the subset we claim to support (strict for all parsed kinds)
 - [x] Accept stable **string ids** (and mixed int+string) for `src/sym/type/node` and `{"t":"ref","id":...}` (interned into dense internal ids)
 - [ ] Record order independence: allow forward refs with a fixup pass (still warn if producer violates “emit defs first” guideline)
+  - [x] Feature gates: allow `meta.ext.features` anywhere in the stream (defer checks until end-of-parse)
 
 ### 1.2 `meta` contract for codegen
 - [ ] Define `meta.ext` keys used by sircc (document in `schema/sir/v1.0/README.md` or `src/sircc/README.md`)
@@ -42,6 +43,31 @@ This TODO is organized as milestones. Each milestone should end with:
   - [x] `sym`, `lbl`, `reg`, `num`, `str`, `mem`, `ref`
 - [ ] Define the internal IR types: `iN`, `fN`, pointers, vectors, aggregates, sums
 - [ ] Decide + document integer semantics: wraparound by default; explicit trap/saturating variants only where specified
+
+## Next widening tickets (MIR-driven)
+
+These are the next “semantic widening” items to unlock real-language lowering (MIR parity) and make `sem:v1` practical.
+
+- [ ] **Struct types + deterministic layout (base v1.0)**
+  - [x] Parse `type.kind:"struct"` with `fields[]` and lower it to LLVM struct types
+  - [x] Implement size/align with padding rules (baseline, non-packed)
+  - [x] Use target ABI alignments (derived from target triple) for `ptr.sizeof/alignof/offset` and struct layout (no ambient host defaults)
+  - [ ] Add fully explicit layout contract (ptrBits/endian/*Align/structAlign) as a producer requirement for reproducible streams across LLVM versions
+
+- [ ] **Structured constants / aggregates (agg:v1)**
+  - [ ] Define/implement structured constants for arrays/structs (zero/array/repeat/struct) so globals/initializers can be deterministic and large payloads aren’t duplicated
+  - [ ] Add `global`-like data declarations (or equivalent `sym`/node model) + `ptr.sym` support for data symbols (not just functions)
+    - [x] `sym(kind=var|const)` can define LLVM globals (scalar initializer subset) and `ptr.sym` resolves them
+
+- [ ] **Higher-order callables**
+  - [ ] `fun:v1`: `type.kind:"fun"`, `fun.sym`, `fun.cmp.*`, `call.fun`
+  - [ ] `closure:v1`: `type.kind:"closure"`, `closure.*`, `call.closure`
+
+- [ ] **Sum types / ADTs (adt:v1)**
+  - [ ] `type.kind:"sum"` and ops: `adt.make/tag/is/get` with normative layout
+
+- [ ] **Semantic algebra (sem:v1)**
+  - [ ] Implement deterministic desugaring for `sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.match_sum` into base records/nodes, then validate + lower the desugared form
 
 ## Milestone 2 — Core backend architecture (so “all mnemonics” is tractable)
 

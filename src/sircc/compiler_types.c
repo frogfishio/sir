@@ -37,25 +37,25 @@ bool type_size_align_rec(SirProgram* p, int64_t type_id, unsigned char* visiting
     case TYPE_PRIM:
       if (strcmp(tr->prim, "i1") == 0 || strcmp(tr->prim, "bool") == 0) {
         size = 1;
-        align = 1;
+        align = p->align_i8 ? (int64_t)p->align_i8 : 1;
       } else if (strcmp(tr->prim, "i8") == 0) {
         size = 1;
-        align = 1;
+        align = p->align_i8 ? (int64_t)p->align_i8 : 1;
       } else if (strcmp(tr->prim, "i16") == 0) {
         size = 2;
-        align = 2;
+        align = p->align_i16 ? (int64_t)p->align_i16 : 2;
       } else if (strcmp(tr->prim, "i32") == 0) {
         size = 4;
-        align = 4;
+        align = p->align_i32 ? (int64_t)p->align_i32 : 4;
       } else if (strcmp(tr->prim, "i64") == 0) {
         size = 8;
-        align = 8;
+        align = p->align_i64 ? (int64_t)p->align_i64 : 8;
       } else if (strcmp(tr->prim, "f32") == 0) {
         size = 4;
-        align = 4;
+        align = p->align_f32 ? (int64_t)p->align_f32 : 4;
       } else if (strcmp(tr->prim, "f64") == 0) {
         size = 8;
-        align = 8;
+        align = p->align_f64 ? (int64_t)p->align_f64 : 8;
       } else if (strcmp(tr->prim, "void") == 0) {
         if (visiting) visiting[type_id] = 0;
         return false;
@@ -66,7 +66,8 @@ bool type_size_align_rec(SirProgram* p, int64_t type_id, unsigned char* visiting
       break;
     case TYPE_PTR:
       size = (int64_t)(p->ptr_bytes ? p->ptr_bytes : (unsigned)sizeof(void*));
-      align = (int64_t)(p->ptr_bytes ? p->ptr_bytes : (unsigned)sizeof(void*));
+      if (p->align_ptr) align = (int64_t)p->align_ptr;
+      else align = (int64_t)(p->ptr_bytes ? p->ptr_bytes : (unsigned)sizeof(void*));
       break;
     case TYPE_ARRAY: {
       int64_t el_size = 0;
@@ -97,6 +98,39 @@ bool type_size_align_rec(SirProgram* p, int64_t type_id, unsigned char* visiting
       }
       size = stride * tr->len;
       align = el_align;
+      break;
+    }
+    case TYPE_STRUCT: {
+      int64_t off = 0;
+      int64_t max_align = 1;
+      for (size_t i = 0; i < tr->field_len; i++) {
+        int64_t fsz = 0;
+        int64_t fal = 0;
+        if (!type_size_align_rec(p, tr->fields[i].type_ref, visiting, &fsz, &fal)) {
+          if (visiting) visiting[type_id] = 0;
+          return false;
+        }
+        if (fal <= 0) {
+          if (visiting) visiting[type_id] = 0;
+          return false;
+        }
+        if (fal > max_align) max_align = fal;
+        int64_t rem = off % fal;
+        if (rem) off += (fal - rem);
+        if (fsz != 0 && off > INT64_MAX - fsz) {
+          if (visiting) visiting[type_id] = 0;
+          return false;
+        }
+        off += fsz;
+      }
+      if (max_align <= 0) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      int64_t rem = off % max_align;
+      if (rem) off += (max_align - rem);
+      size = off;
+      align = max_align;
       break;
     }
     case TYPE_FN:
@@ -205,6 +239,39 @@ LLVMTypeRef lower_type(SirProgram* p, LLVMContextRef ctx, int64_t id) {
       free(params);
       break;
     }
+    case TYPE_STRUCT: {
+      if (tr->field_len) {
+        LLVMTypeRef* elts = (LLVMTypeRef*)malloc(tr->field_len * sizeof(LLVMTypeRef));
+        if (!elts) break;
+        bool ok = true;
+        for (size_t i = 0; i < tr->field_len; i++) {
+          elts[i] = lower_type(p, ctx, tr->fields[i].type_ref);
+          if (!elts[i]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          if (tr->name && *tr->name) {
+            LLVMTypeRef st = LLVMStructCreateNamed(ctx, tr->name);
+            LLVMStructSetBody(st, elts, (unsigned)tr->field_len, 0);
+            out = st;
+          } else {
+            out = LLVMStructTypeInContext(ctx, elts, (unsigned)tr->field_len, 0);
+          }
+        }
+        free(elts);
+      } else {
+        if (tr->name && *tr->name) {
+          LLVMTypeRef st = LLVMStructCreateNamed(ctx, tr->name);
+          LLVMStructSetBody(st, NULL, 0, 0);
+          out = st;
+        } else {
+          out = LLVMStructTypeInContext(ctx, NULL, 0, 0);
+        }
+      }
+      break;
+    }
     default:
       break;
   }
@@ -213,4 +280,3 @@ LLVMTypeRef lower_type(SirProgram* p, LLVMContextRef ctx, int64_t id) {
   tr->resolving = false;
   return out;
 }
-

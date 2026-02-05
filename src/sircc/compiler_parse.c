@@ -248,6 +248,27 @@ static bool has_feature(SirProgram* p, const char* name) {
   return false;
 }
 
+static bool note_pending_feature_use(SirProgram* p, const char* mnemonic, const char* need) {
+  if (!p || !mnemonic || !need) return false;
+
+  if (p->pending_features_len == p->pending_features_cap) {
+    size_t next = p->pending_features_cap ? (p->pending_features_cap * 2) : 16;
+    PendingFeatureUse* bigger = (PendingFeatureUse*)realloc(p->pending_features, next * sizeof(PendingFeatureUse));
+    if (!bigger) return false;
+    p->pending_features = bigger;
+    p->pending_features_cap = next;
+  }
+
+  p->pending_features[p->pending_features_len++] = (PendingFeatureUse){
+      .path = p->cur_path,
+      .line = p->cur_line,
+      .rec_id = p->cur_rec_id,
+      .mnemonic = mnemonic,
+      .need = need,
+  };
+  return true;
+}
+
 bool read_line(FILE* f, char** buf, size_t* cap, size_t* out_len) {
   if (!*buf || *cap == 0) {
     *cap = 4096;
@@ -293,6 +314,8 @@ static bool require_only_keys(SirProgram* p, const JsonValue* obj, const char* c
   return false;
 }
 
+static bool is_pow2_u64(uint64_t x) { return x && ((x & (x - 1ULL)) == 0ULL); }
+
 static bool parse_meta_record(SirProgram* p, const SirccOptions* opt, JsonValue* obj) {
   static const char* const keys[] = {"ir", "k", "producer", "ts", "unit", "id", "ext"};
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "meta record")) return false;
@@ -307,6 +330,91 @@ static bool parse_meta_record(SirProgram* p, const SirccOptions* opt, JsonValue*
     if (target && target->type == JSON_OBJECT) {
       const char* triple = json_get_string(json_obj_get(target, "triple"));
       if (triple && !(opt && opt->target_triple)) p->target_triple = triple;
+
+      // Optional explicit target contract overrides (used for determinism / cross-target verification).
+      // If provided, these must match the LLVM ABI for the chosen triple (when compiling).
+      JsonValue* ptrBitsV = json_obj_get(target, "ptrBits");
+      if (ptrBitsV) {
+        int64_t ptrBits = 0;
+        if (!must_i64(p, ptrBitsV, &ptrBits, "meta.ext.target.ptrBits")) return false;
+        if (ptrBits != 32 && ptrBits != 64) {
+          err_codef(p, "sircc.meta.target.ptrBits.bad", "sircc: meta.ext.target.ptrBits must be 32 or 64");
+          return false;
+        }
+        p->ptr_bits = (unsigned)ptrBits;
+        p->ptr_bytes = (unsigned)ptrBits / 8u;
+        p->target_ptrbits_override = true;
+      }
+
+      const char* endian = json_get_string(json_obj_get(target, "endian"));
+      if (endian && *endian) {
+        if (strcmp(endian, "le") == 0) p->target_big_endian = false;
+        else if (strcmp(endian, "be") == 0) p->target_big_endian = true;
+        else {
+          err_codef(p, "sircc.meta.target.endian.bad", "sircc: meta.ext.target.endian must be 'le' or 'be'");
+          return false;
+        }
+        p->target_endian_override = true;
+      }
+
+      const char* structAlign = json_get_string(json_obj_get(target, "structAlign"));
+      if (structAlign && *structAlign) {
+        if (strcmp(structAlign, "max") != 0 && strcmp(structAlign, "packed1") != 0) {
+          err_codef(p, "sircc.meta.target.structAlign.bad", "sircc: meta.ext.target.structAlign must be 'max' or 'packed1'");
+          return false;
+        }
+        p->struct_align = structAlign;
+        p->target_structalign_override = true;
+      }
+
+      JsonValue* intAlign = json_obj_get(target, "intAlign");
+      if (intAlign && intAlign->type == JSON_OBJECT) {
+        struct {
+          const char* key;
+          unsigned* out;
+          const char* ctx;
+        } ints[] = {
+            {"i8", &p->align_i8, "meta.ext.target.intAlign.i8"},   {"i16", &p->align_i16, "meta.ext.target.intAlign.i16"},
+            {"i32", &p->align_i32, "meta.ext.target.intAlign.i32"}, {"i64", &p->align_i64, "meta.ext.target.intAlign.i64"},
+            {"ptr", &p->align_ptr, "meta.ext.target.intAlign.ptr"},
+        };
+        for (size_t i = 0; i < sizeof(ints) / sizeof(ints[0]); i++) {
+          JsonValue* vj = json_obj_get(intAlign, ints[i].key);
+          if (!vj) continue;
+          int64_t v = 0;
+          if (!must_i64(p, vj, &v, ints[i].ctx)) return false;
+          if (v <= 0 || v > 1024 || !is_pow2_u64((uint64_t)v)) {
+            err_codef(p, "sircc.meta.target.align.bad", "sircc: %s must be a positive power-of-two <= 1024", ints[i].ctx);
+            return false;
+          }
+          *ints[i].out = (unsigned)v;
+          p->target_intalign_override = true;
+        }
+      }
+
+      JsonValue* floatAlign = json_obj_get(target, "floatAlign");
+      if (floatAlign && floatAlign->type == JSON_OBJECT) {
+        struct {
+          const char* key;
+          unsigned* out;
+          const char* ctx;
+        } floats[] = {
+            {"f32", &p->align_f32, "meta.ext.target.floatAlign.f32"},
+            {"f64", &p->align_f64, "meta.ext.target.floatAlign.f64"},
+        };
+        for (size_t i = 0; i < sizeof(floats) / sizeof(floats[0]); i++) {
+          JsonValue* vj = json_obj_get(floatAlign, floats[i].key);
+          if (!vj) continue;
+          int64_t v = 0;
+          if (!must_i64(p, vj, &v, floats[i].ctx)) return false;
+          if (v <= 0 || v > 1024 || !is_pow2_u64((uint64_t)v)) {
+            err_codef(p, "sircc.meta.target.align.bad", "sircc: %s must be a positive power-of-two <= 1024", floats[i].ctx);
+            return false;
+          }
+          *floats[i].out = (unsigned)v;
+          p->target_floatalign_override = true;
+        }
+      }
     }
 
     // Convention (sircc-defined): ext.features (array of strings)
@@ -396,10 +504,22 @@ static bool parse_sym_record(SirProgram* p, JsonValue* obj) {
   s->name = must_string(p, json_obj_get(obj, "name"), "sym.name");
   s->kind = must_string(p, json_obj_get(obj, "kind"), "sym.kind");
   s->linkage = json_get_string(json_obj_get(obj, "linkage"));
+  s->type_ref = 0;
+  s->value = NULL;
   if (!s->name || !s->kind) return false;
   if (!is_ident(s->name)) {
     err_codef(p, "sircc.schema.ident.bad", "sircc: sym.name must be an Ident");
     return false;
+  }
+
+  JsonValue* tr = json_obj_get(obj, "type_ref");
+  if (tr) {
+    if (!sir_intern_id(p, SIR_ID_TYPE, tr, &s->type_ref, "sym.type_ref")) return false;
+  }
+  JsonValue* v = json_obj_get(obj, "value");
+  if (v) {
+    if (!validate_value(p, v, "sym.value")) return false;
+    s->value = v;
   }
   p->syms[id] = s;
   return true;
@@ -441,8 +561,8 @@ static bool parse_instr_record(SirProgram* p, const SirccOptions* opt, JsonValue
   const char* m = json_get_string(json_obj_get(obj, "m"));
   const char* need = required_feature_for_mnemonic(m);
   if (need && !has_feature(p, need)) {
-    err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature %s (enable via meta.ext.features)", m ? m : "(null)", need);
-    return false;
+    // Defer feature checks until end-of-parse, so meta.ext.features can appear anywhere in the stream.
+    if (!note_pending_feature_use(p, m, need)) return false;
   }
   if (opt && opt->dump_records) {
     fprintf(stderr, "%s:%zu: instr %s (%zu ops)\n", p->cur_path, p->cur_line, m ? m : "(null)", ops->v.arr.len);
@@ -486,10 +606,13 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
   tr->kind = TYPE_INVALID;
   tr->of = 0;
   tr->len = 0;
+  tr->name = json_get_string(json_obj_get(obj, "name"));
   tr->ret = 0;
   tr->params = NULL;
   tr->param_len = 0;
   tr->varargs = false;
+  tr->fields = NULL;
+  tr->field_len = 0;
 
   if (strcmp(kind, "prim") == 0) {
     tr->kind = TYPE_PRIM;
@@ -524,6 +647,34 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
     if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "ret"), &tr->ret, "type.ret")) return false;
     JsonValue* va = json_obj_get(obj, "varargs");
     if (va && va->type == JSON_BOOL) tr->varargs = va->v.b;
+  } else if (strcmp(kind, "struct") == 0) {
+    tr->kind = TYPE_STRUCT;
+    JsonValue* fields = json_obj_get(obj, "fields");
+    if (!fields || fields->type != JSON_ARRAY) {
+      err_codef(p, "sircc.type.struct.fields.not_array", "sircc: expected array for type.fields");
+      return false;
+    }
+    tr->field_len = fields->v.arr.len;
+    if (tr->field_len) {
+      tr->fields = (TypeFieldRec*)arena_alloc(&p->arena, tr->field_len * sizeof(TypeFieldRec));
+      if (!tr->fields) return false;
+      memset(tr->fields, 0, tr->field_len * sizeof(TypeFieldRec));
+    }
+    for (size_t i = 0; i < tr->field_len; i++) {
+      JsonValue* fo = fields->v.arr.items[i];
+      if (!fo || fo->type != JSON_OBJECT) {
+        err_codef(p, "sircc.type.struct.field.bad", "sircc: type.fields[%zu] must be an object", i);
+        return false;
+      }
+      const char* fname = must_string(p, json_obj_get(fo, "name"), "type.fields[i].name");
+      if (!fname || !is_ident(fname)) {
+        err_codef(p, "sircc.schema.ident.bad", "sircc: type.fields[%zu].name must be an Ident", i);
+        return false;
+      }
+      int64_t fty = 0;
+      if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(fo, "type_ref"), &fty, "type.fields[i].type_ref")) return false;
+      tr->fields[i] = (TypeFieldRec){.name = fname, .type_ref = fty};
+    }
   } else {
     err_codef(p, "sircc.type.kind.unsupported", "sircc: unsupported type kind '%s' (v1 subset)", kind);
     return false;
@@ -759,5 +910,26 @@ bool parse_program(SirProgram* p, const SirccOptions* opt, const char* input_pat
 
   free(line);
   fclose(f);
+
+  for (size_t i = 0; i < p->pending_features_len; i++) {
+    const PendingFeatureUse* u = &p->pending_features[i];
+    if (!u->need || !u->mnemonic) continue;
+    if (has_feature(p, u->need)) continue;
+
+    // Restore the originating record's location metadata so the diagnostic points at the right line.
+    p->cur_path = u->path;
+    p->cur_line = u->line;
+    p->cur_kind = "instr";
+    p->cur_rec_id = u->rec_id;
+    p->cur_rec_tag = u->mnemonic;
+    p->cur_src_ref = -1;
+    p->cur_loc.unit = NULL;
+    p->cur_loc.line = 0;
+    p->cur_loc.col = 0;
+
+    err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature %s (enable via meta.ext.features)", u->mnemonic, u->need);
+    return false;
+  }
+
   return true;
 }

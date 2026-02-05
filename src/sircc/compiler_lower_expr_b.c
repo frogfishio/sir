@@ -36,11 +36,74 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         goto done;
       }
       LLVMValueRef fn = LLVMGetNamedFunction(f->mod, name);
-      if (!fn) {
-        errf(f->p, "sircc: ptr.sym references unknown function '%s'", name);
+      if (fn) {
+        out = fn; // function values are pointers in LLVM
         goto done;
       }
-      out = fn; // function values are pointers in LLVM
+
+      // If not a function, allow ptr.sym to name a global defined by a `sym` record (kind=var/const).
+      LLVMValueRef g = LLVMGetNamedGlobal(f->mod, name);
+      if (!g) {
+        SymRec* s = find_sym_by_name(f->p, name);
+        if (!s || !s->kind || (strcmp(s->kind, "var") != 0 && strcmp(s->kind, "const") != 0)) {
+          errf(f->p, "sircc: ptr.sym references unknown function or global '%s'", name);
+          goto done;
+        }
+        if (s->type_ref == 0) {
+          errf(f->p, "sircc: sym '%s' missing type_ref for global definition", name);
+          goto done;
+        }
+        LLVMTypeRef gty = lower_type(f->p, f->ctx, s->type_ref);
+        if (!gty) {
+          errf(f->p, "sircc: sym '%s' has invalid type_ref %lld", name, (long long)s->type_ref);
+          goto done;
+        }
+        g = LLVMAddGlobal(f->mod, gty, name);
+
+        const char* linkage = s->linkage;
+        if (linkage && strcmp(linkage, "local") == 0) LLVMSetLinkage(g, LLVMInternalLinkage);
+        else if (linkage && strcmp(linkage, "public") == 0) LLVMSetLinkage(g, LLVMExternalLinkage);
+        else if (linkage && strcmp(linkage, "extern") == 0) LLVMSetLinkage(g, LLVMExternalLinkage);
+        else if (linkage && *linkage) {
+          errf(f->p, "sircc: sym '%s' has unsupported linkage '%s' (use local/public/extern)", name, linkage);
+          goto done;
+        }
+
+        if (s->kind && strcmp(s->kind, "const") == 0) {
+          LLVMSetGlobalConstant(g, 1);
+        }
+
+        int64_t size = 0;
+        int64_t align = 0;
+        if (type_size_align(f->p, s->type_ref, &size, &align) && align > 0 && align <= 4096) {
+          LLVMSetAlignment(g, (unsigned)align);
+        }
+
+        if (!linkage || strcmp(linkage, "extern") != 0) {
+          LLVMValueRef init = NULL;
+          if (s->value) {
+            const char* vt = json_get_string(json_obj_get(s->value, "t"));
+            if (vt && strcmp(vt, "num") == 0) {
+              int64_t n0 = 0;
+              (void)json_get_i64(json_obj_get(s->value, "v"), &n0);
+              if (LLVMGetTypeKind(gty) == LLVMIntegerTypeKind) {
+                init = LLVMConstInt(gty, (unsigned long long)n0, 1);
+              } else if (LLVMGetTypeKind(gty) == LLVMPointerTypeKind && n0 == 0) {
+                init = LLVMConstNull(gty);
+              }
+            }
+            if (!init) {
+              errf(f->p, "sircc: sym '%s' has unsupported global initializer value", name);
+              goto done;
+            }
+          } else {
+            init = LLVMConstNull(gty);
+          }
+          LLVMSetInitializer(g, init);
+        }
+      }
+
+      out = g;
       goto done;
     }
 

@@ -115,7 +115,7 @@ bool emit_zir_nonterm_stmt(
     }
 
     // call statements.
-    if (strcmp(vn->tag, "call") == 0) {
+    if (vn->tag && strncmp(vn->tag, "call", 4) == 0) {
       if (!zasm_emit_call_stmt(out, p, strs, strs_len, allocas, allocas_len, *names, *name_len, bps, bps_len, vid, io_line)) return false;
       zasm_regcache_clear_all();
 

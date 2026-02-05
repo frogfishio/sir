@@ -1,0 +1,2 @@
+{"ir":"sir-v1.0","k":"instr","m":"simd.add","ops":[],"loc":{"unit":"feature_gate_late_meta","line":1}}
+{"ir":"sir-v1.0","k":"meta","ext":{"features":["simd:v1"]}}

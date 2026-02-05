@@ -143,6 +143,11 @@ add_test(
 )
 
 add_test(
+  NAME sircc_verify_feature_gate_late_meta
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/feature_gate_late_meta.sir.jsonl
+)
+
+add_test(
   NAME sircc_cinterop_export_add2
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -206,6 +211,26 @@ add_test(
 add_test(
   NAME sircc_verify_hello_world_puts
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/hello_world_puts.sir.jsonl
+)
+
+add_test(
+  NAME sircc_run_global_i32_ptrsym
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/global_i32_ptrsym.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/global_i32_ptrsym.exe
+    -DEXPECT=12
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_struct_layout
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/struct_layout.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/struct_layout.exe
+    -DEXPECT=12
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
 )
 
 if(APPLE AND EXISTS ${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/lib/libzingcore25.a)
@@ -436,6 +461,18 @@ if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ze
       -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/hello_zabi25_write.sir.jsonl
       -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/hello_zabi25_write.zem.zasm.jsonl
       "-DEXPECT_STDOUT=hello from zABI25"
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
+  )
+
+  add_test(
+    NAME sircc_emit_zasm_run_zem_struct_layout_exit12
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DZEM=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem
+      -DIRCHECK=${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/zasm_struct_layout.sir.jsonl
+      -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/zasm_struct_layout.zem.zasm.jsonl
+      "-DEXPECT_STDOUT=************"
       -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_run_zem.cmake
   )
 

@@ -104,6 +104,98 @@ bool zasm_lower_value_to_op(
     return true;
   }
 
+  if (strcmp(n->tag, "ptr.sizeof") == 0 || strcmp(n->tag, "ptr.alignof") == 0) {
+    if (!n->fields) {
+      zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.node.missing_fields", "sircc: zasm: %s node %lld missing fields", n->tag,
+                          (long long)node_id);
+      return false;
+    }
+    int64_t ty_id = 0;
+    if (!parse_type_ref_id(p, json_obj_get(n->fields, "ty"), &ty_id)) {
+      zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.node.missing_field", "sircc: zasm: %s node %lld missing fields.ty (type ref)",
+                          n->tag, (long long)node_id);
+      return false;
+    }
+    JsonValue* args = json_obj_get(n->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 0) {
+      zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.value.bad_args", "sircc: zasm: %s node %lld requires args:[]", n->tag,
+                          (long long)node_id);
+      return false;
+    }
+
+    int64_t size = 0;
+    int64_t align = 0;
+    if (!type_size_align(p, ty_id, &size, &align)) {
+      zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.value.unsupported", "sircc: zasm: %s node %lld has invalid/unsized type %lld",
+                          n->tag, (long long)node_id, (long long)ty_id);
+      return false;
+    }
+    out->k = ZOP_NUM;
+    out->n = (strcmp(n->tag, "ptr.sizeof") == 0) ? size : align;
+    return true;
+  }
+
+  if (strncmp(n->tag, "i", 1) == 0) {
+    // Limited support for integer cast mnemonics when they are constant-foldable.
+    // Full arithmetic is handled in statement lowering (let-bound), not as pure value nodes.
+    const char* dot = strchr(n->tag, '.');
+    if (dot) {
+      const char* op = dot + 1;
+      if (strncmp(op, "zext.i", 6) == 0 || strncmp(op, "sext.i", 6) == 0 || strncmp(op, "trunc.i", 7) == 0) {
+        JsonValue* args = n->fields ? json_obj_get(n->fields, "args") : NULL;
+        if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+          zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.value.bad_args", "sircc: zasm: %s node %lld requires args:[x]", n->tag,
+                              (long long)node_id);
+          return false;
+        }
+        int64_t x_id = 0;
+        if (!parse_node_ref_id(p, args->v.arr.items[0], &x_id)) {
+          zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.value.bad_args", "sircc: zasm: %s node %lld arg must be node ref", n->tag,
+                              (long long)node_id);
+          return false;
+        }
+        ZasmOp x = {0};
+        if (!zasm_lower_value_to_op(p, strs, strs_len, allocas, allocas_len, names, names_len, bps, bps_len, x_id, &x)) return false;
+        if (x.k != ZOP_NUM) {
+          zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.value.unsupported", "sircc: zasm: %s requires constant-foldable operand",
+                              n->tag);
+          return false;
+        }
+
+        int dst = 0;
+        int src = 0;
+        char dbuf[8] = {0};
+        size_t dlen = (size_t)(dot - n->tag);
+        if (dlen >= sizeof(dbuf)) dlen = sizeof(dbuf) - 1;
+        memcpy(dbuf, n->tag, dlen);
+        if (sscanf(dbuf, "i%d", &dst) != 1) dst = 0;
+        const char* num = (strncmp(op, "trunc.i", 7) == 0) ? (op + 7) : (op + 6);
+        if (sscanf(num, "%d", &src) != 1) src = 0;
+        if (!(dst == 8 || dst == 16 || dst == 32 || dst == 64) || !(src == 8 || src == 16 || src == 32 || src == 64)) {
+          zasm_err_node_codef(p, node_id, n->tag, "sircc.zasm.value.unsupported", "sircc: zasm: unsupported cast width in %s", n->tag);
+          return false;
+        }
+
+        // Mask/truncate to src width first.
+        uint64_t u = (uint64_t)x.n;
+        if (src < 64) u &= ((1ULL << src) - 1ULL);
+
+        bool is_sext = strncmp(op, "sext.i", 6) == 0;
+        if (is_sext && src < 64) {
+          uint64_t sign = 1ULL << (src - 1);
+          if (u & sign) u |= (~0ULL) << src;
+        }
+
+        // Truncate to dst.
+        if (dst < 64) u &= ((1ULL << dst) - 1ULL);
+
+        out->k = ZOP_NUM;
+        out->n = (int64_t)u;
+        return true;
+      }
+    }
+  }
+
   if (strcmp(n->tag, "ptr.to_i64") == 0) {
     JsonValue* args = n->fields ? json_obj_get(n->fields, "args") : NULL;
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
