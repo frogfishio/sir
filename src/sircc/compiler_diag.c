@@ -22,6 +22,29 @@ static bool want_color(const SirccOptions* opt) {
   return true;
 }
 
+SirDiagSaved sir_diag_push(SirProgram* p, const char* kind, int64_t rec_id, const char* rec_tag) {
+  SirDiagSaved saved = {0};
+  if (!p) return saved;
+  saved.kind = p->cur_kind;
+  saved.rec_id = p->cur_rec_id;
+  saved.rec_tag = p->cur_rec_tag;
+  p->cur_kind = kind;
+  p->cur_rec_id = rec_id;
+  p->cur_rec_tag = rec_tag;
+  return saved;
+}
+
+SirDiagSaved sir_diag_push_node(SirProgram* p, const NodeRec* n) {
+  return sir_diag_push(p, "node", n ? n->id : -1, n ? n->tag : NULL);
+}
+
+void sir_diag_pop(SirProgram* p, SirDiagSaved saved) {
+  if (!p) return;
+  p->cur_kind = saved.kind;
+  p->cur_rec_id = saved.rec_id;
+  p->cur_rec_tag = saved.rec_tag;
+}
+
 void bump_exit_code(SirProgram* p, int code) {
   if (!p) return;
   // Keep internal errors sticky, otherwise prefer toolchain over generic error.
@@ -37,13 +60,13 @@ void bump_exit_code(SirProgram* p, int code) {
   if (p->exit_code == 0) p->exit_code = code;
 }
 
-void errf(SirProgram* p, const char* fmt, ...) {
+static void err_vimpl(SirProgram* p, const char* diag_code, const char* fmt, va_list ap0) {
   const SirccOptions* opt = p ? p->opt : NULL;
   bool as_json = opt && opt->diagnostics == SIRCC_DIAG_JSON;
   bool color = want_color(opt);
 
   va_list ap;
-  va_start(ap, fmt);
+  va_copy(ap, ap0);
 
   // Determine best-effort location.
   const char* file = NULL;
@@ -72,7 +95,7 @@ void errf(SirProgram* p, const char* fmt, ...) {
   // Format message once (so JSON mode can embed it).
   int need = vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
-  va_start(ap, fmt);
+  va_copy(ap, ap0);
   char* msg = NULL;
   char stack_buf[512];
   if (need >= 0 && (size_t)need < sizeof(stack_buf)) {
@@ -87,6 +110,10 @@ void errf(SirProgram* p, const char* fmt, ...) {
   if (as_json) {
     fprintf(stderr, "{\"ir\":\"sir-v1.0\",\"k\":\"diag\",\"level\":\"error\",\"msg\":");
     json_write_escaped(stderr, msg ? msg : "(unknown)");
+    if (diag_code && *diag_code) {
+      fprintf(stderr, ",\"code\":");
+      json_write_escaped(stderr, diag_code);
+    }
     if (p && p->cur_kind) {
       fprintf(stderr, ",\"about\":{");
       fprintf(stderr, "\"k\":");
@@ -164,6 +191,7 @@ void errf(SirProgram* p, const char* fmt, ...) {
     if (color) fprintf(stderr, "\x1b[31merror:\x1b[0m ");
     else fprintf(stderr, "error: ");
     fprintf(stderr, "%s\n", msg ? msg : "(unknown)");
+    if (diag_code && *diag_code) fprintf(stderr, "  code: %s\n", diag_code);
 
     if (p && p->cur_kind) {
       fprintf(stderr, "  record: k=%s", p->cur_kind);
@@ -210,3 +238,16 @@ void errf(SirProgram* p, const char* fmt, ...) {
   if (msg && msg != stack_buf) free(msg);
 }
 
+void errf(SirProgram* p, const char* fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  err_vimpl(p, NULL, fmt, ap);
+  va_end(ap);
+}
+
+void err_codef(SirProgram* p, const char* code, const char* fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  err_vimpl(p, code, fmt, ap);
+  va_end(ap);
+}

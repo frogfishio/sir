@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(sircc
   main.c
   compiler.c
+  compiler_ids.c
   compiler_diag.c
   compiler_emit.c
   compiler_link.c
@@ -15,11 +16,17 @@ add_executable(sircc
   compiler_types.c
   compiler_validate.c
   compiler_zasm_backend.c
+  compiler_zasm_backend_cfg.c
+  compiler_zasm_backend_names.c
+  compiler_zasm_backend_ops.c
+  compiler_zasm_backend_stmt.c
+  compiler_zasm_backend_util.c
   compiler_zasm_addr.c
   compiler_zasm_addr_emit.c
   compiler_zasm_collect.c
   compiler_zasm_diag.c
   compiler_zasm_emit.c
+  compiler_zasm_regcache.c
   compiler_zasm_lower_stmt.c
   compiler_zasm_lower_value.c
   support.c
@@ -101,6 +108,11 @@ add_test(
 )
 
 add_test(
+  NAME sircc_verify_const7_string_ids
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/const7_string_ids.sir.jsonl
+)
+
+add_test(
   NAME sircc_verify_add_mnemonic_tags
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/add_mnemonic_tags.sir.jsonl
 )
@@ -131,6 +143,18 @@ add_test(
 )
 
 add_test(
+  NAME sircc_cinterop_export_add2
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/interop_export_add2.sir.jsonl
+    -DHARNESS_C=${CMAKE_CURRENT_LIST_DIR}/tests/interop_export_add2_harness.c
+    -DOBJ=${CMAKE_CURRENT_BINARY_DIR}/interop_export_add2.o
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/interop_export_add2.exe
+    -DEXPECT=0
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/link_obj_with_c_and_expect_exit.cmake
+)
+
+add_test(
   NAME sircc_verify_cfg_if
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_if.sir.jsonl
 )
@@ -148,6 +172,15 @@ add_test(
 add_test(
   NAME sircc_verify_cfg_join_phi
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/cfg_join_phi.sir.jsonl
+)
+
+add_test(
+  NAME sircc_diag_bad_fn_linkage_json
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_fn_linkage.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_fn_linkage.ll\\;--emit-llvm
+    "-DEXPECT=unsupported linkage"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
 )
 
 add_test(
@@ -243,6 +276,16 @@ add_test(
     -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/mem_copy_fill.sir.jsonl
     -DEXE=${CMAKE_CURRENT_BINARY_DIR}/mem_copy_fill.exe
     -DEXPECT=42
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_const7_string_ids
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/const7_string_ids.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/const7_string_ids.exe
+    -DEXPECT=7
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
 )
 
@@ -370,6 +413,16 @@ if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ir
       -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/hello_zabi25_write.sir.jsonl
       -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/hello_zabi25_write.zasm.jsonl
       -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_ircheck.cmake
+  )
+
+  add_test(
+    NAME sircc_emit_zasm_hello_zabi25_write_map
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRCC=$<TARGET_FILE:sircc>
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/hello_zabi25_write.sir.jsonl
+      -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/hello_zabi25_write.map.zasm.jsonl
+      -DMAP=${CMAKE_CURRENT_BINARY_DIR}/hello_zabi25_write.zasm.map.jsonl
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/emit_zasm_and_map.cmake
   )
 endif()
 

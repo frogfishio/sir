@@ -119,7 +119,7 @@ bool zasm_emit_call_stmt(
   }
 
   int64_t callee_id = 0;
-  if (!parse_node_ref_id(args->v.arr.items[0], &callee_id)) {
+  if (!parse_node_ref_id(p, args->v.arr.items[0], &callee_id)) {
     zasm_err_nodef(p, call_id, n->tag, "sircc: zasm: %s node %lld args[0] must be node ref", n->tag, (long long)call_id);
     return false;
   }
@@ -140,7 +140,7 @@ bool zasm_emit_call_stmt(
 
   for (size_t i = 1; i < args->v.arr.len; i++) {
     int64_t aid = 0;
-    if (!parse_node_ref_id(args->v.arr.items[i], &aid)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[i], &aid)) {
       free(lowered);
       zasm_err_nodef(p, call_id, n->tag, "sircc: zasm: %s node %lld arg[%zu] must be node ref", n->tag, (long long)call_id, i);
       return false;
@@ -233,7 +233,7 @@ bool zasm_emit_store_stmt(
   int64_t value_id = 0;
   JsonValue* av = json_obj_get(s->fields, "addr");
   JsonValue* vv = json_obj_get(s->fields, "value");
-  if (!parse_node_ref_id(av, &addr_id) || !parse_node_ref_id(vv, &value_id)) {
+  if (!parse_node_ref_id(p, av, &addr_id) || !parse_node_ref_id(p, vv, &value_id)) {
     errf(p, "sircc: zasm: %s node %lld requires fields.addr/value node refs", s->tag, (long long)s->id);
     return false;
   }
@@ -302,8 +302,8 @@ bool zasm_emit_mem_fill_stmt(
   }
 
   int64_t dst_id = 0, byte_id = 0, len_id = 0;
-  if (!parse_node_ref_id(args->v.arr.items[0], &dst_id) || !parse_node_ref_id(args->v.arr.items[1], &byte_id) ||
-      !parse_node_ref_id(args->v.arr.items[2], &len_id)) {
+  if (!parse_node_ref_id(p, args->v.arr.items[0], &dst_id) || !parse_node_ref_id(p, args->v.arr.items[1], &byte_id) ||
+      !parse_node_ref_id(p, args->v.arr.items[2], &len_id)) {
     errf(p, "sircc: zasm: mem.fill node %lld args must be node refs", (long long)s->id);
     return false;
   }
@@ -363,8 +363,8 @@ bool zasm_emit_mem_copy_stmt(
   }
 
   int64_t dst_id = 0, src_id = 0, len_id = 0;
-  if (!parse_node_ref_id(args->v.arr.items[0], &dst_id) || !parse_node_ref_id(args->v.arr.items[1], &src_id) ||
-      !parse_node_ref_id(args->v.arr.items[2], &len_id)) {
+  if (!parse_node_ref_id(p, args->v.arr.items[0], &dst_id) || !parse_node_ref_id(p, args->v.arr.items[1], &src_id) ||
+      !parse_node_ref_id(p, args->v.arr.items[2], &len_id)) {
     errf(p, "sircc: zasm: mem.copy node %lld args must be node refs", (long long)s->id);
     return false;
   }
@@ -426,7 +426,7 @@ bool zasm_emit_ret_value_to_hl(
       return false;
     }
     int64_t x_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &x_id)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &x_id)) {
       errf(p, "sircc: zasm: i32.zext.i8 node %lld arg must be node ref", (long long)value_id);
       return false;
     }
@@ -439,7 +439,7 @@ bool zasm_emit_ret_value_to_hl(
     if (strcmp(x->tag, "load.i8") == 0) {
       int64_t addr_id = 0;
       JsonValue* av = x->fields ? json_obj_get(x->fields, "addr") : NULL;
-      if (!parse_node_ref_id(av, &addr_id)) {
+      if (!parse_node_ref_id(p, av, &addr_id)) {
         errf(p, "sircc: zasm: load.i8 node %lld requires fields.addr node ref", (long long)x_id);
         return false;
       }
@@ -471,7 +471,7 @@ bool zasm_emit_ret_value_to_hl(
   if (strcmp(v->tag, "load.i8") == 0) {
     int64_t addr_id = 0;
     JsonValue* av = v->fields ? json_obj_get(v->fields, "addr") : NULL;
-    if (!parse_node_ref_id(av, &addr_id)) {
+    if (!parse_node_ref_id(p, av, &addr_id)) {
       errf(p, "sircc: zasm: load.i8 node %lld requires fields.addr node ref", (long long)value_id);
       return false;
     }

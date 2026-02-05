@@ -27,6 +27,7 @@ This TODO is organized as milestones. Each milestone should end with:
 - [x] Parse **all** record kinds: `meta`, `src`, `diag`, `sym`, `type`, `node`, `ext`, `label`, `instr`, `dir`
 - [x] Preserve `src_ref` + `loc` and plumb through to diagnostics (when present)
 - [x] “Closed schema” behavior: reject unknown fields for the subset we claim to support (strict for all parsed kinds)
+- [x] Accept stable **string ids** (and mixed int+string) for `src/sym/type/node` and `{"t":"ref","id":...}` (interned into dense internal ids)
 - [ ] Record order independence: allow forward refs with a fixup pass (still warn if producer violates “emit defs first” guideline)
 
 ### 1.2 `meta` contract for codegen
@@ -62,6 +63,7 @@ This TODO is organized as milestones. Each milestone should end with:
 
 ### 2.3 Linking and output
 - [x] `--emit-llvm`, `--emit-obj`, default executable
+- [x] C interop: `fn.fields.linkage` (`public|local`) controls emitted symbol linkage for object outputs
 - [ ] Cross-platform link driver strategy (clang/lld/cc) with `--linker` and `--ldflags`
 - [ ] Emit static libs / shared libs (later): `--emit-lib`
 - [ ] Cross-target LLVM backends: keep native-only init as default, add an opt-in “all targets” build/init mode for true cross compilation
@@ -193,6 +195,8 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
 This is a separate emission path (`sircc --emit-zasm`) targeting `zasm-v1.1` JSONL (zir), intended for `zem` execution and future “real lowering” beyond LLVM.
 
 - [x] `--emit-zasm` emits `zasm-v1.1` JSONL for `zir_main`
+- [x] Deterministic per-record `"id"` in emitted zasm JSONL
+- [x] `--emit-zasm-map <path>` sidecar mapping zasm record ids to SIR node context
 - [x] Emits `EXTERN` for `decl.fn` and `PUBLIC zir_main`
 - [x] Emits `STR` for `cstr` nodes
 - [x] Lowers simple memory statements in `zir_main`: `mem.fill`, `mem.copy`, `store.i8` (via `FILL`, `LDIR`, `ST8`)

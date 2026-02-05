@@ -5,9 +5,46 @@
 
 #include <stdio.h>
 
+static int64_t g_zasm_record_id = 0;
+static FILE* g_zasm_map_out = NULL;
+static int64_t g_zasm_about_node_id = -1;
+static const char* g_zasm_about_node_tag = NULL;
+
+void zasm_reset_record_ids(void) { g_zasm_record_id = 0; }
+
+void zasm_set_map_output(FILE* out) { g_zasm_map_out = out; }
+
+void zasm_set_about_node(int64_t node_id, const char* node_tag) {
+  g_zasm_about_node_id = node_id;
+  g_zasm_about_node_tag = node_tag;
+}
+
+void zasm_clear_about(void) {
+  g_zasm_about_node_id = -1;
+  g_zasm_about_node_tag = NULL;
+}
+
 void zasm_write_ir_k(FILE* out, const char* k) {
+  int64_t zid = g_zasm_record_id++;
   fprintf(out, "{\"ir\":\"zasm-v1.1\",\"k\":");
   json_write_escaped(out, k);
+  fprintf(out, ",\"id\":%lld", (long long)zid);
+
+  if (g_zasm_map_out) {
+    fprintf(g_zasm_map_out, "{\"k\":\"zasm_map\",\"zid\":%lld", (long long)zid);
+    if (k && *k) {
+      fprintf(g_zasm_map_out, ",\"z_k\":");
+      json_write_escaped(g_zasm_map_out, k);
+    }
+    if (g_zasm_about_node_id >= 0) {
+      fprintf(g_zasm_map_out, ",\"sir_node\":%lld", (long long)g_zasm_about_node_id);
+      if (g_zasm_about_node_tag && *g_zasm_about_node_tag) {
+        fprintf(g_zasm_map_out, ",\"sir_tag\":");
+        json_write_escaped(g_zasm_map_out, g_zasm_about_node_tag);
+      }
+    }
+    fprintf(g_zasm_map_out, "}\n");
+  }
 }
 
 void zasm_write_loc(FILE* out, int64_t line) { fprintf(out, ",\"loc\":{\"line\":%lld}", (long long)line); }

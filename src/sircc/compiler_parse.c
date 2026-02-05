@@ -69,7 +69,7 @@ static bool ensure_node_slot(SirProgram* p, int64_t id) {
 
 JsonValue* must_obj(SirProgram* p, JsonValue* v, const char* ctx) {
   if (!v || v->type != JSON_OBJECT) {
-    errf(p, "sircc: expected object for %s", ctx);
+    err_codef(p, "sircc.json.expected_object", "sircc: expected object for %s", ctx);
     return NULL;
   }
   return v;
@@ -77,43 +77,20 @@ JsonValue* must_obj(SirProgram* p, JsonValue* v, const char* ctx) {
 
 const char* must_string(SirProgram* p, JsonValue* v, const char* ctx) {
   const char* s = json_get_string(v);
-  if (!s) errf(p, "sircc: expected string for %s", ctx);
+  if (!s) err_codef(p, "sircc.json.expected_string", "sircc: expected string for %s", ctx);
   return s;
 }
 
 bool must_i64(SirProgram* p, JsonValue* v, int64_t* out, const char* ctx) {
   if (!json_get_i64(v, out)) {
-    errf(p, "sircc: expected integer for %s", ctx);
+    err_codef(p, "sircc.json.expected_int", "sircc: expected integer for %s", ctx);
     return false;
   }
   return true;
 }
 
-bool parse_node_ref_id(const JsonValue* v, int64_t* out_id) {
-  if (!v || v->type != JSON_OBJECT) return false;
-  JsonValue* t = json_obj_get(v, "t");
-  const char* ts = json_get_string(t);
-  if (!ts || strcmp(ts, "ref") != 0) return false;
-  JsonValue* idv = json_obj_get(v, "id");
-  return json_get_i64(idv, out_id);
-}
-
-bool parse_type_ref_id(const JsonValue* v, int64_t* out_id) {
-  if (!v) return false;
-  int64_t id = 0;
-  if (json_get_i64((JsonValue*)v, &id)) {
-    *out_id = id;
-    return true;
-  }
-  if (v->type != JSON_OBJECT) return false;
-  const char* t = json_get_string(json_obj_get((JsonValue*)v, "t"));
-  if (!t || strcmp(t, "ref") != 0) return false;
-  const char* k = json_get_string(json_obj_get((JsonValue*)v, "k"));
-  if (k && strcmp(k, "type") != 0) return false;
-  if (!json_get_i64(json_obj_get((JsonValue*)v, "id"), &id)) return false;
-  *out_id = id;
-  return true;
-}
+// NOTE: parse_{node,type,sym}_ref_id are implemented in compiler_ids.c to support
+// both integer and string ids.
 
 bool is_ident(const char* s) {
   if (!s || !*s) return false;
@@ -131,12 +108,12 @@ bool is_ident(const char* s) {
 
 static bool validate_value(SirProgram* p, const JsonValue* v, const char* what) {
   if (!v || v->type != JSON_OBJECT) {
-    errf(p, "sircc: %s must be an object value", what);
+    err_codef(p, "sircc.schema.value.not_object", "sircc: %s must be an object value", what);
     return false;
   }
   const char* t = json_get_string(json_obj_get(v, "t"));
   if (!t) {
-    errf(p, "sircc: %s missing string field 't'", what);
+    err_codef(p, "sircc.schema.value.missing_t", "sircc: %s missing string field 't'", what);
     return false;
   }
 
@@ -352,7 +329,7 @@ static bool parse_src_record(SirProgram* p, JsonValue* obj) {
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "src record")) return false;
 
   int64_t id = 0;
-  if (!must_i64(p, json_obj_get(obj, "id"), &id, "src.id")) return false;
+  if (!sir_intern_id(p, SIR_ID_SRC, json_obj_get(obj, "id"), &id, "src.id")) return false;
   if (!ensure_src_slot(p, id)) return false;
   if (p->srcs[id]) {
     errf(p, "sircc: duplicate src id %lld", (long long)id);
@@ -403,7 +380,7 @@ static bool parse_sym_record(SirProgram* p, JsonValue* obj) {
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "sym record")) return false;
 
   int64_t id = 0;
-  if (!must_i64(p, json_obj_get(obj, "id"), &id, "sym.id")) return false;
+  if (!sir_intern_id(p, SIR_ID_SYM, json_obj_get(obj, "id"), &id, "sym.id")) return false;
   if (!ensure_sym_slot(p, id)) return false;
   if (p->syms[id]) {
     errf(p, "sircc: duplicate sym id %lld", (long long)id);
@@ -491,7 +468,7 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "type record")) return false;
 
   int64_t id = 0;
-  if (!must_i64(p, json_obj_get(obj, "id"), &id, "type.id")) return false;
+  if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "id"), &id, "type.id")) return false;
   const char* kind = must_string(p, json_obj_get(obj, "kind"), "type.kind");
   if (!kind) return false;
   if (!ensure_type_slot(p, id)) return false;
@@ -517,10 +494,10 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
     if (!tr->prim) return false;
   } else if (strcmp(kind, "ptr") == 0) {
     tr->kind = TYPE_PTR;
-    if (!must_i64(p, json_obj_get(obj, "of"), &tr->of, "type.of")) return false;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "of"), &tr->of, "type.of")) return false;
   } else if (strcmp(kind, "array") == 0) {
     tr->kind = TYPE_ARRAY;
-    if (!must_i64(p, json_obj_get(obj, "of"), &tr->of, "type.of")) return false;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "of"), &tr->of, "type.of")) return false;
     if (!must_i64(p, json_obj_get(obj, "len"), &tr->len, "type.len")) return false;
     if (tr->len < 0) {
       errf(p, "sircc: type.array len must be >= 0");
@@ -538,10 +515,10 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
     if (!tr->params) return false;
     for (size_t i = 0; i < tr->param_len; i++) {
       int64_t pid = 0;
-      if (!must_i64(p, params->v.arr.items[i], &pid, "type.params[i]")) return false;
+      if (!sir_intern_id(p, SIR_ID_TYPE, params->v.arr.items[i], &pid, "type.params[i]")) return false;
       tr->params[i] = pid;
     }
-    if (!must_i64(p, json_obj_get(obj, "ret"), &tr->ret, "type.ret")) return false;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "ret"), &tr->ret, "type.ret")) return false;
     JsonValue* va = json_obj_get(obj, "varargs");
     if (va && va->type == JSON_BOOL) tr->varargs = va->v.b;
   } else {
@@ -558,14 +535,14 @@ static bool parse_node_record(SirProgram* p, JsonValue* obj) {
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "node record")) return false;
 
   int64_t id = 0;
-  if (!must_i64(p, json_obj_get(obj, "id"), &id, "node.id")) return false;
+  if (!sir_intern_id(p, SIR_ID_NODE, json_obj_get(obj, "id"), &id, "node.id")) return false;
   const char* tag = must_string(p, json_obj_get(obj, "tag"), "node.tag");
   if (!tag) return false;
 
   int64_t type_ref = 0;
   JsonValue* tr = json_obj_get(obj, "type_ref");
   if (tr) {
-    if (!must_i64(p, tr, &type_ref, "node.type_ref")) return false;
+    if (!sir_intern_id(p, SIR_ID_TYPE, tr, &type_ref, "node.type_ref")) return false;
   }
 
   JsonValue* fields = json_obj_get(obj, "fields");
@@ -654,8 +631,7 @@ bool parse_program(SirProgram* p, const SirccOptions* opt, const char* input_pat
     JsonValue* src_ref = json_obj_get(root, "src_ref");
     if (src_ref) {
       int64_t sid = -1;
-      if (!json_get_i64(src_ref, &sid)) {
-        errf(p, "sircc: src_ref must be an integer");
+      if (!sir_intern_id(p, SIR_ID_SRC, src_ref, &sid, "src_ref")) {
         free(line);
         fclose(f);
         return false;
@@ -782,4 +758,3 @@ bool parse_program(SirProgram* p, const SirccOptions* opt, const char* input_pat
   fclose(f);
   return true;
 }
-

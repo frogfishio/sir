@@ -54,6 +54,10 @@ typedef struct {
 
 // emit helpers
 void zasm_write_ir_k(FILE* out, const char* k);
+void zasm_reset_record_ids(void);
+void zasm_set_map_output(FILE* out);
+void zasm_set_about_node(int64_t node_id, const char* node_tag);
+void zasm_clear_about(void);
 void zasm_write_loc(FILE* out, int64_t line);
 void zasm_write_op_reg(FILE* out, const char* r);
 void zasm_write_op_sym(FILE* out, const char* s);

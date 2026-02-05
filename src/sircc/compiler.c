@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "compiler_internal.h"
+#include "compiler_zasm_internal.h"
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/Core.h>
@@ -22,6 +23,7 @@ int sircc_compile(const SirccOptions* opt) {
   p.opt = opt;
   p.exit_code = SIRCC_EXIT_ERROR;
   arena_init(&p.arena);
+  sir_idmaps_init(&p);
   char* owned_triple = NULL;
 
   bool ok = parse_program(&p, opt, opt->input_path);
@@ -36,7 +38,20 @@ int sircc_compile(const SirccOptions* opt) {
   }
 
   if (opt->emit == SIRCC_EMIT_ZASM_IR) {
+    FILE* map_out = NULL;
+    if (opt->zasm_map_path && *opt->zasm_map_path) {
+      map_out = fopen(opt->zasm_map_path, "wb");
+      if (!map_out) {
+        errf(&p, "sircc: failed to open zasm map output: %s", strerror(errno));
+        ok = false;
+        goto done;
+      }
+      zasm_set_map_output(map_out);
+    }
+    zasm_clear_about();
     ok = emit_zasm_v11(&p, opt->output_path);
+    zasm_set_map_output(NULL);
+    if (map_out) fclose(map_out);
     goto done;
   }
 
@@ -133,6 +148,7 @@ done:
   free(p.syms);
   free(p.types);
   free(p.nodes);
+  sir_idmaps_free(&p);
   arena_free(&p.arena);
   return ok ? SIRCC_EXIT_OK : p.exit_code;
 }

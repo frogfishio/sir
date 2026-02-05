@@ -153,7 +153,7 @@ static bool try_lower_addr_const(
     JsonValue* args = n->fields ? json_obj_get(n->fields, "args") : NULL;
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) return false;
     int64_t base_id = 0, off_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &off_id)) return false;
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(p, args->v.arr.items[1], &off_id)) return false;
     int64_t off = 0;
     if (!is_const_i64(p, off_id, &off)) return false;
 
@@ -168,11 +168,11 @@ static bool try_lower_addr_const(
 
   if (strcmp(n->tag, "ptr.offset") == 0) {
     int64_t ty_id = 0;
-    if (!parse_type_ref_id(n->fields ? json_obj_get(n->fields, "ty") : NULL, &ty_id)) return false;
+    if (!parse_type_ref_id(p, n->fields ? json_obj_get(n->fields, "ty") : NULL, &ty_id)) return false;
     JsonValue* args = n->fields ? json_obj_get(n->fields, "args") : NULL;
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) return false;
     int64_t base_id = 0, idx_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &idx_id)) return false;
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(p, args->v.arr.items[1], &idx_id)) return false;
     int64_t idx = 0;
     if (!is_const_i64(p, idx_id, &idx)) return false;
 
@@ -259,7 +259,7 @@ static bool materialize_addr_into_hl(
       return false;
     }
     int64_t base_id = 0, off_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &off_id)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(p, args->v.arr.items[1], &off_id)) {
       zasm_err_nodef(p, addr_id, n->tag, "sircc: zasm: ptr.add node %lld args must be node refs", (long long)addr_id);
       return false;
     }
@@ -274,7 +274,7 @@ static bool materialize_addr_into_hl(
 
   if (strcmp(n->tag, "ptr.offset") == 0) {
     int64_t ty_id = 0;
-    if (!parse_type_ref_id(n->fields ? json_obj_get(n->fields, "ty") : NULL, &ty_id)) {
+    if (!parse_type_ref_id(p, n->fields ? json_obj_get(n->fields, "ty") : NULL, &ty_id)) {
       zasm_err_nodef(p, addr_id, n->tag, "sircc: zasm: ptr.offset node %lld missing fields.ty type ref", (long long)addr_id);
       return false;
     }
@@ -284,7 +284,7 @@ static bool materialize_addr_into_hl(
       return false;
     }
     int64_t base_id = 0, idx_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &idx_id)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(p, args->v.arr.items[1], &idx_id)) {
       zasm_err_nodef(p, addr_id, n->tag, "sircc: zasm: ptr.offset node %lld args must be node refs", (long long)addr_id);
       return false;
     }

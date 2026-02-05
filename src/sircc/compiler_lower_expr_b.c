@@ -24,7 +24,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (n->fields) name = json_get_string(json_obj_get(n->fields, "name"));
       if (!name && args && args->type == JSON_ARRAY && args->v.arr.len == 1) {
         int64_t aid = 0;
-        if (parse_node_ref_id(args->v.arr.items[0], &aid)) {
+        if (parse_node_ref_id(f->p, args->v.arr.items[0], &aid)) {
           NodeRec* an = get_node(f->p, aid);
           if (an && strcmp(an->tag, "name") == 0 && an->fields) {
             name = json_get_string(json_obj_get(an->fields, "name"));
@@ -50,7 +50,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         goto done;
       }
       int64_t ty_id = 0;
-      if (!parse_type_ref_id(json_obj_get(n->fields, "ty"), &ty_id)) {
+      if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &ty_id)) {
         errf(f->p, "sircc: %s node %lld missing fields.ty (type ref)", n->tag, (long long)node_id);
         goto done;
       }
@@ -90,7 +90,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
           goto done;
         }
         int64_t base_id = 0, idx_id = 0;
-        if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &idx_id)) {
+        if (!parse_node_ref_id(f->p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &idx_id)) {
           errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
           goto done;
         }
@@ -129,7 +129,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         goto done;
       }
       int64_t a_id = 0, b_id = 0;
-      if (!parse_node_ref_id(args->v.arr.items[0], &a_id) || !parse_node_ref_id(args->v.arr.items[1], &b_id)) {
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
         errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
@@ -153,7 +153,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         goto done;
       }
       int64_t p_id = 0, off_id = 0;
-      if (!parse_node_ref_id(args->v.arr.items[0], &p_id) || !parse_node_ref_id(args->v.arr.items[1], &off_id)) {
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &p_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &off_id)) {
         errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
@@ -191,7 +191,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         goto done;
       }
       int64_t x_id = 0;
-      if (!parse_node_ref_id(args->v.arr.items[0], &x_id)) {
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &x_id)) {
         errf(f->p, "sircc: %s node %lld arg must be node ref", n->tag, (long long)node_id);
         goto done;
       }
@@ -229,7 +229,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       goto done;
     }
     int64_t ty_id = 0;
-    if (!parse_type_ref_id(json_obj_get(n->fields, "ty"), &ty_id)) {
+    if (!parse_type_ref_id(f->p, json_obj_get(n->fields, "ty"), &ty_id)) {
       errf(f->p, "sircc: alloca node %lld missing fields.ty (type ref)", (long long)node_id);
       goto done;
     }
@@ -291,7 +291,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
         count_val = LLVMConstInt(i64, (unsigned long long)c, 0);
       } else {
         int64_t cid = 0;
-        if (!parse_node_ref_id(countv, &cid)) {
+        if (!parse_node_ref_id(f->p, countv, &cid)) {
           errf(f->p, "sircc: alloca node %lld count must be i64 or node ref", (long long)node_id);
           goto done;
         }
@@ -373,7 +373,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
     }
     JsonValue* addr = json_obj_get(n->fields, "addr");
     int64_t aid = 0;
-    if (!parse_node_ref_id(addr, &aid)) {
+    if (!parse_node_ref_id(f->p, addr, &aid)) {
       errf(f->p, "sircc: %s node %lld missing fields.addr ref", n->tag, (long long)node_id);
       goto done;
     }
@@ -442,7 +442,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
 
     if (args->v.arr.len == 1) {
       int64_t a_id = 0;
-      if (!parse_node_ref_id(args->v.arr.items[0], &a_id)) {
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id)) {
         errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }
@@ -450,7 +450,7 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
       if (!a) goto done;
     } else if (args->v.arr.len == 2) {
       int64_t a_id = 0, b_id = 0;
-      if (!parse_node_ref_id(args->v.arr.items[0], &a_id) || !parse_node_ref_id(args->v.arr.items[1], &b_id)) {
+      if (!parse_node_ref_id(f->p, args->v.arr.items[0], &a_id) || !parse_node_ref_id(f->p, args->v.arr.items[1], &b_id)) {
         errf(f->p, "sircc: %s node %lld args must be node refs", n->tag, (long long)node_id);
         goto done;
       }

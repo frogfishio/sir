@@ -45,6 +45,7 @@ typedef struct SirccOptions {
   const char* target_triple;
   SirccRuntimeKind runtime;
   const char* zabi25_root; // optional; default probes repo and dist paths
+  const char* zasm_map_path; // optional; when emitting zasm, write a sidecar id map JSONL
   bool verify_only;
   bool dump_records;
   bool print_target;

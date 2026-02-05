@@ -105,7 +105,7 @@ bool zasm_lower_value_to_op(
       return false;
     }
     int64_t x_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &x_id)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &x_id)) {
       zasm_err_nodef(p, node_id, n->tag, "sircc: zasm: ptr.to_i64 node %lld arg must be node ref", (long long)node_id);
       return false;
     }

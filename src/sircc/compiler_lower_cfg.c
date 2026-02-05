@@ -27,7 +27,7 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     int64_t vid = 0;
-    if (!parse_node_ref_id(json_obj_get(n->fields, "value"), &vid)) {
+    if (!parse_node_ref_id(f->p, json_obj_get(n->fields, "value"), &vid)) {
       errf(f->p, "sircc: let node %lld missing fields.value ref", (long long)node_id);
       return false;
     }
@@ -44,7 +44,7 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     int64_t aid = 0, vid = 0;
-    if (!parse_node_ref_id(json_obj_get(n->fields, "addr"), &aid) || !parse_node_ref_id(json_obj_get(n->fields, "value"), &vid)) {
+    if (!parse_node_ref_id(f->p, json_obj_get(n->fields, "addr"), &aid) || !parse_node_ref_id(f->p, json_obj_get(n->fields, "value"), &vid)) {
       errf(f->p, "sircc: %s node %lld requires fields.addr and fields.value refs", n->tag, (long long)node_id);
       return false;
     }
@@ -110,8 +110,8 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     int64_t did = 0, sid = 0, lid = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &did) || !parse_node_ref_id(args->v.arr.items[1], &sid) ||
-        !parse_node_ref_id(args->v.arr.items[2], &lid)) {
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &did) || !parse_node_ref_id(f->p, args->v.arr.items[1], &sid) ||
+        !parse_node_ref_id(f->p, args->v.arr.items[2], &lid)) {
       errf(f->p, "sircc: mem.copy node %lld args must be node refs", (long long)node_id);
       return false;
     }
@@ -225,8 +225,8 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     int64_t did = 0, bid = 0, lid = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &did) || !parse_node_ref_id(args->v.arr.items[1], &bid) ||
-        !parse_node_ref_id(args->v.arr.items[2], &lid)) {
+    if (!parse_node_ref_id(f->p, args->v.arr.items[0], &did) || !parse_node_ref_id(f->p, args->v.arr.items[1], &bid) ||
+        !parse_node_ref_id(f->p, args->v.arr.items[2], &lid)) {
       errf(f->p, "sircc: mem.fill node %lld args must be node refs", (long long)node_id);
       return false;
     }
@@ -311,7 +311,7 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
   if (strcmp(n->tag, "return") == 0) {
     JsonValue* v = n->fields ? json_obj_get(n->fields, "value") : NULL;
     int64_t vid = 0;
-    if (!parse_node_ref_id(v, &vid)) {
+    if (!parse_node_ref_id(f->p, v, &vid)) {
       errf(f->p, "sircc: return node %lld missing value ref", (long long)node_id);
       return false;
     }
@@ -328,7 +328,7 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
       return true;
     }
     int64_t vid = 0;
-    if (!parse_node_ref_id(v, &vid)) {
+    if (!parse_node_ref_id(f->p, v, &vid)) {
       errf(f->p, "sircc: term.ret node %lld invalid value ref", (long long)node_id);
       return false;
     }
@@ -364,7 +364,7 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
     }
     for (size_t i = 0; i < stmts->v.arr.len; i++) {
       int64_t sid = 0;
-      if (!parse_node_ref_id(stmts->v.arr.items[i], &sid)) {
+      if (!parse_node_ref_id(f->p, stmts->v.arr.items[i], &sid)) {
         errf(f->p, "sircc: block node %lld has non-ref stmt", (long long)node_id);
         return false;
       }
@@ -419,7 +419,7 @@ static bool add_block_args(FunctionCtx* f, LLVMBasicBlockRef from_bb, int64_t to
 
   for (size_t i = 0; i < pcount; i++) {
     int64_t pid = 0;
-    if (!parse_node_ref_id(params->v.arr.items[i], &pid)) {
+    if (!parse_node_ref_id(f->p, params->v.arr.items[i], &pid)) {
       errf(f->p, "sircc: block %lld params[%zu] must be node refs", (long long)to_block_id, i);
       return false;
     }
@@ -430,7 +430,7 @@ static bool add_block_args(FunctionCtx* f, LLVMBasicBlockRef from_bb, int64_t to
     }
 
     int64_t aid = 0;
-    if (!parse_node_ref_id(args->v.arr.items[i], &aid)) {
+    if (!parse_node_ref_id(f->p, args->v.arr.items[i], &aid)) {
       errf(f->p, "sircc: block %lld args[%zu] must be node refs", (long long)to_block_id, i);
       return false;
     }
@@ -455,7 +455,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
     }
     JsonValue* to = json_obj_get(n->fields, "to");
     int64_t bid = 0;
-    if (!parse_node_ref_id(to, &bid)) {
+    if (!parse_node_ref_id(f->p, to, &bid)) {
       errf(f->p, "sircc: term.br node %lld missing to ref", (long long)node_id);
       return false;
     }
@@ -477,7 +477,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
     }
 
     int64_t cond_id = 0;
-    if (!parse_node_ref_id(json_obj_get(n->fields, "cond"), &cond_id)) {
+    if (!parse_node_ref_id(f->p, json_obj_get(n->fields, "cond"), &cond_id)) {
       errf(f->p, "sircc: %s node %lld missing cond ref", n->tag, (long long)node_id);
       return false;
     }
@@ -497,7 +497,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
 
     int64_t then_id = 0;
     int64_t else_id = 0;
-    if (!parse_node_ref_id(json_obj_get(thenb, "to"), &then_id) || !parse_node_ref_id(json_obj_get(elseb, "to"), &else_id)) {
+    if (!parse_node_ref_id(f->p, json_obj_get(thenb, "to"), &then_id) || !parse_node_ref_id(f->p, json_obj_get(elseb, "to"), &else_id)) {
       errf(f->p, "sircc: %s node %lld then/else missing to ref", n->tag, (long long)node_id);
       return false;
     }
@@ -524,7 +524,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     int64_t scrut_id = 0;
-    if (!parse_node_ref_id(json_obj_get(n->fields, "scrut"), &scrut_id)) {
+    if (!parse_node_ref_id(f->p, json_obj_get(n->fields, "scrut"), &scrut_id)) {
       errf(f->p, "sircc: term.switch node %lld missing scrut ref", (long long)node_id);
       return false;
     }
@@ -549,7 +549,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
       return false;
     }
     int64_t def_id = 0;
-    if (!parse_node_ref_id(json_obj_get(def, "to"), &def_id)) {
+    if (!parse_node_ref_id(f->p, json_obj_get(def, "to"), &def_id)) {
       errf(f->p, "sircc: term.switch default missing to ref");
       return false;
     }
@@ -574,7 +574,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
         return false;
       }
       int64_t lit_id = 0;
-      if (!parse_node_ref_id(json_obj_get(c, "lit"), &lit_id)) {
+      if (!parse_node_ref_id(f->p, json_obj_get(c, "lit"), &lit_id)) {
         errf(f->p, "sircc: term.switch case[%zu] missing lit ref", i);
         return false;
       }
@@ -588,7 +588,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id) {
       LLVMValueRef lit = LLVMConstInt(sty, (unsigned long long)litv, 1);
 
       int64_t to_id = 0;
-      if (!parse_node_ref_id(json_obj_get(c, "to"), &to_id)) {
+      if (!parse_node_ref_id(f->p, json_obj_get(c, "to"), &to_id)) {
         errf(f->p, "sircc: term.switch case[%zu] missing to ref", i);
         return false;
       }
@@ -634,6 +634,15 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
       return false;
     }
     LLVMValueRef fn = LLVMAddFunction(mod, name, fnty);
+    const char* linkage = n->fields ? json_get_string(json_obj_get(n->fields, "linkage")) : NULL;
+    if (linkage && strcmp(linkage, "local") == 0) {
+      LLVMSetLinkage(fn, LLVMInternalLinkage);
+    } else if (linkage && strcmp(linkage, "public") == 0) {
+      LLVMSetLinkage(fn, LLVMExternalLinkage);
+    } else if (linkage && *linkage) {
+      errf(p, "sircc: fn node %lld has unsupported linkage '%s' (use 'local' or 'public')", (long long)n->id, linkage);
+      return false;
+    }
     n->llvm_value = fn;
   }
 
@@ -672,13 +681,13 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
       return false;
     }
 
-    for (unsigned pi = 0; pi < param_count; pi++) {
-      int64_t pid = 0;
-      if (!parse_node_ref_id(paramsv->v.arr.items[pi], &pid)) {
-        errf(p, "sircc: fn node %lld has non-ref param", (long long)n->id);
-        free(f.binds);
-        return false;
-      }
+	    for (unsigned pi = 0; pi < param_count; pi++) {
+	      int64_t pid = 0;
+	      if (!parse_node_ref_id(p, paramsv->v.arr.items[pi], &pid)) {
+	        errf(p, "sircc: fn node %lld has non-ref param", (long long)n->id);
+	        free(f.binds);
+	        return false;
+	      }
       NodeRec* pn = get_node(p, pid);
       if (!pn || strcmp(pn->tag, "param") != 0) {
         errf(p, "sircc: fn node %lld param ref %lld is not a param node", (long long)n->id, (long long)pid);
@@ -704,13 +713,13 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
     JsonValue* blocks_v = n->fields ? json_obj_get(n->fields, "blocks") : NULL;
     JsonValue* entry_v = n->fields ? json_obj_get(n->fields, "entry") : NULL;
     if (blocks_v && blocks_v->type == JSON_ARRAY && entry_v) {
-      // CFG form: explicit list of basic blocks + entry.
-      int64_t entry_id = 0;
-      if (!parse_node_ref_id(entry_v, &entry_id)) {
-        errf(p, "sircc: fn node %lld entry must be a block ref", (long long)n->id);
-        free(f.binds);
-        return false;
-      }
+	      // CFG form: explicit list of basic blocks + entry.
+	      int64_t entry_id = 0;
+	      if (!parse_node_ref_id(p, entry_v, &entry_id)) {
+	        errf(p, "sircc: fn node %lld entry must be a block ref", (long long)n->id);
+	        free(f.binds);
+	        return false;
+	      }
 
       f.blocks_by_node = (LLVMBasicBlockRef*)calloc(p->nodes_cap, sizeof(LLVMBasicBlockRef));
       if (!f.blocks_by_node) {
@@ -718,14 +727,14 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
         return false;
       }
 
-      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
-        int64_t bid = 0;
-        if (!parse_node_ref_id(blocks_v->v.arr.items[bi], &bid)) {
-          errf(p, "sircc: fn node %lld blocks[%zu] must be block refs", (long long)n->id, bi);
-          free(f.blocks_by_node);
-          free(f.binds);
-          return false;
-        }
+	      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
+	        int64_t bid = 0;
+	        if (!parse_node_ref_id(p, blocks_v->v.arr.items[bi], &bid)) {
+	          errf(p, "sircc: fn node %lld blocks[%zu] must be block refs", (long long)n->id, bi);
+	          free(f.blocks_by_node);
+	          free(f.binds);
+	          return false;
+	        }
         NodeRec* bn = get_node(p, bid);
         if (!bn || strcmp(bn->tag, "block") != 0) {
           errf(p, "sircc: fn node %lld blocks[%zu] does not reference a block node", (long long)n->id, bi);
@@ -751,12 +760,12 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
 
       // Pre-create PHIs for block params so branches can add incoming values regardless of block order.
       // (Otherwise, a forward branch would see pn->llvm_value == NULL.)
-      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
-        int64_t bid = 0;
-        if (!parse_node_ref_id(blocks_v->v.arr.items[bi], &bid)) continue;
-        NodeRec* bn = get_node(p, bid);
-        LLVMBasicBlockRef bb = f.blocks_by_node[bid];
-        if (!bn || !bb || !bn->fields) continue;
+	      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
+	        int64_t bid = 0;
+	        if (!parse_node_ref_id(p, blocks_v->v.arr.items[bi], &bid)) continue;
+	        NodeRec* bn = get_node(p, bid);
+	        LLVMBasicBlockRef bb = f.blocks_by_node[bid];
+	        if (!bn || !bb || !bn->fields) continue;
 
         JsonValue* params = json_obj_get(bn->fields, "params");
         if (!params) continue;
@@ -772,15 +781,15 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
         if (first) LLVMPositionBuilderBefore(b, first);
         else LLVMPositionBuilderAtEnd(b, bb);
 
-        for (size_t pi = 0; pi < params->v.arr.len; pi++) {
-          int64_t pid = 0;
-          if (!parse_node_ref_id(params->v.arr.items[pi], &pid)) {
-            errf(p, "sircc: block %lld params[%zu] must be node refs", (long long)bid, pi);
-            LLVMDisposeBuilder(b);
-            free(f.blocks_by_node);
-            free(f.binds);
-            return false;
-          }
+	        for (size_t pi = 0; pi < params->v.arr.len; pi++) {
+	          int64_t pid = 0;
+	          if (!parse_node_ref_id(p, params->v.arr.items[pi], &pid)) {
+	            errf(p, "sircc: block %lld params[%zu] must be node refs", (long long)bid, pi);
+	            LLVMDisposeBuilder(b);
+	            free(f.blocks_by_node);
+	            free(f.binds);
+	            return false;
+	          }
           NodeRec* pn = get_node(p, pid);
           if (!pn || strcmp(pn->tag, "bparam") != 0) {
             errf(p, "sircc: block %lld params[%zu] must reference bparam nodes", (long long)bid, pi);
@@ -812,12 +821,12 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
         LLVMDisposeBuilder(b);
       }
 
-      // Lower blocks in listed order.
-      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
-        int64_t bid = 0;
-        (void)parse_node_ref_id(blocks_v->v.arr.items[bi], &bid);
-        NodeRec* bn = get_node(p, bid);
-        LLVMBasicBlockRef bb = f.blocks_by_node[bid];
+	      // Lower blocks in listed order.
+	      for (size_t bi = 0; bi < blocks_v->v.arr.len; bi++) {
+	        int64_t bid = 0;
+	        (void)parse_node_ref_id(p, blocks_v->v.arr.items[bi], &bid);
+	        NodeRec* bn = get_node(p, bid);
+	        LLVMBasicBlockRef bb = f.blocks_by_node[bid];
         if (!bn || !bb) continue;
 
         LLVMBuilderRef builder = LLVMCreateBuilderInContext(ctx);
@@ -838,7 +847,7 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
           }
           for (size_t pi = 0; pi < params->v.arr.len; pi++) {
             int64_t pid = 0;
-            if (!parse_node_ref_id(params->v.arr.items[pi], &pid)) {
+            if (!parse_node_ref_id(p, params->v.arr.items[pi], &pid)) {
               errf(p, "sircc: block %lld params[%zu] must be node refs", (long long)bid, pi);
               LLVMDisposeBuilder(builder);
               free(f.blocks_by_node);
@@ -884,7 +893,7 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
         }
         for (size_t si = 0; si < stmts->v.arr.len; si++) {
           int64_t sid = 0;
-          if (!parse_node_ref_id(stmts->v.arr.items[si], &sid)) {
+          if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) {
             errf(p, "sircc: block node %lld has non-ref stmt", (long long)bid);
             LLVMDisposeBuilder(builder);
             free(f.blocks_by_node);
@@ -932,7 +941,7 @@ bool lower_functions(SirProgram* p, LLVMContextRef ctx, LLVMModuleRef mod) {
     // Legacy form: single entry block with `body:ref`.
     JsonValue* bodyv = n->fields ? json_obj_get(n->fields, "body") : NULL;
     int64_t body_id = 0;
-    if (!parse_node_ref_id(bodyv, &body_id)) {
+    if (!parse_node_ref_id(p, bodyv, &body_id)) {
       errf(p, "sircc: fn node %lld missing body ref", (long long)n->id);
       free(f.binds);
       return false;

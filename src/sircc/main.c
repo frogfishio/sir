@@ -17,6 +17,7 @@ static void usage(FILE* out) {
   fprintf(out,
           "Usage:\n"
           "  sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj|--emit-zasm] [--clang <path>] [--target-triple <triple>]\n"
+          "  sircc <input.sir.jsonl> -o <output.zasm.jsonl> --emit-zasm [--emit-zasm-map <map.jsonl>]\n"
           "  sircc --verify-only <input.sir.jsonl>\n"
           "  sircc --dump-records --verify-only <input.sir.jsonl>\n"
           "  sircc --print-target [--target-triple <triple>]\n"
@@ -53,6 +54,7 @@ int main(int argc, char** argv) {
       .target_triple = NULL,
       .runtime = SIRCC_RUNTIME_LIBC,
       .zabi25_root = NULL,
+      .zasm_map_path = NULL,
       .verify_only = false,
       .dump_records = false,
       .print_target = false,
@@ -163,6 +165,14 @@ int main(int argc, char** argv) {
     }
     if (strcmp(a, "--emit-zasm") == 0) {
       opt.emit = SIRCC_EMIT_ZASM_IR;
+      continue;
+    }
+    if (strcmp(a, "--emit-zasm-map") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      opt.zasm_map_path = argv[++i];
       continue;
     }
     if (strcmp(a, "-o") == 0) {

@@ -116,7 +116,7 @@ bool zasm_lower_addr_to_mem(
       return false;
     }
     int64_t base_id = 0, off_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &off_id)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(p, args->v.arr.items[1], &off_id)) {
       errf(p, "sircc: zasm: ptr.add node %lld args must be node refs", (long long)addr_id);
       return false;
     }
@@ -137,7 +137,7 @@ bool zasm_lower_addr_to_mem(
 
   if (strcmp(n->tag, "ptr.offset") == 0) {
     int64_t ty_id = 0;
-    if (!parse_type_ref_id(n->fields ? json_obj_get(n->fields, "ty") : NULL, &ty_id)) {
+    if (!parse_type_ref_id(p, n->fields ? json_obj_get(n->fields, "ty") : NULL, &ty_id)) {
       errf(p, "sircc: zasm: ptr.offset node %lld missing fields.ty type ref", (long long)addr_id);
       return false;
     }
@@ -147,7 +147,7 @@ bool zasm_lower_addr_to_mem(
       return false;
     }
     int64_t base_id = 0, idx_id = 0;
-    if (!parse_node_ref_id(args->v.arr.items[0], &base_id) || !parse_node_ref_id(args->v.arr.items[1], &idx_id)) {
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &base_id) || !parse_node_ref_id(p, args->v.arr.items[1], &idx_id)) {
       errf(p, "sircc: zasm: ptr.offset node %lld args must be node refs", (long long)addr_id);
       return false;
     }

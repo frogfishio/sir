@@ -4,6 +4,7 @@
 #pragma once
 
 #include "compiler.h"
+#include "compiler_ids.h"
 #include "json.h"
 #include "sircc.h"
 
@@ -101,6 +102,13 @@ typedef struct SirProgram {
   bool feat_gc_v1;
   bool feat_sem_v1;
 
+  // Input IDs may be integers or strings; we intern them into dense internal ids
+  // to keep storage compact while allowing stable, non-brittle identifiers.
+  SirIdMap src_ids;
+  SirIdMap sym_ids;
+  SirIdMap type_ids;
+  SirIdMap node_ids;
+
   SrcRec** srcs;
   size_t srcs_cap;
 
@@ -117,13 +125,22 @@ typedef struct SirProgram {
 // Diagnostics
 void bump_exit_code(SirProgram* p, int code);
 void errf(SirProgram* p, const char* fmt, ...);
+void err_codef(SirProgram* p, const char* code, const char* fmt, ...);
+
+typedef struct SirDiagSaved {
+  const char* kind;
+  int64_t rec_id;
+  const char* rec_tag;
+} SirDiagSaved;
+
+SirDiagSaved sir_diag_push(SirProgram* p, const char* kind, int64_t rec_id, const char* rec_tag);
+SirDiagSaved sir_diag_push_node(SirProgram* p, const NodeRec* n);
+void sir_diag_pop(SirProgram* p, SirDiagSaved saved);
 
 // Shared parsing helpers (used by lowering/validation).
 JsonValue* must_obj(SirProgram* p, JsonValue* v, const char* ctx);
 const char* must_string(SirProgram* p, JsonValue* v, const char* ctx);
 bool must_i64(SirProgram* p, JsonValue* v, int64_t* out, const char* ctx);
-bool parse_node_ref_id(const JsonValue* v, int64_t* out_id);
-bool parse_type_ref_id(const JsonValue* v, int64_t* out_id);
 bool is_ident(const char* s);
 
 bool read_line(FILE* f, char** buf, size_t* cap, size_t* out_len);
