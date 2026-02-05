@@ -48,6 +48,7 @@ add_custom_target(dist_sircc
   # docs
   COMMAND ${CMAKE_COMMAND} -E rm -f ${SIR_DIST_DOC}/src.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/src.md ${SIR_DIST_DOC}/sircc.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/mir_producer.md ${SIR_DIST_DOC}/mir_producer.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/test.md ${SIR_DIST_TEST}/README.md
 
   # normative JSONL examples (subset)
@@ -68,6 +69,12 @@ add_custom_target(dist_sircc
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/adt_make_get.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/adt_make_get.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/sem_if_thunk_trap_not_taken.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/sem_if_thunk_trap_not_taken.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/sem_match_sum_option_i32.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/sem_match_sum_option_i32.sir.jsonl
+
+  # negative fixtures (verify-only; diagnostics)
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/bad_unknown_field.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/bad_unknown_field.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/bad_instr_operand.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/bad_instr_operand.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/bad_feature_gate_atomic.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/bad_feature_gate_atomic.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/cfg_bad_early_term.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/cfg_bad_early_term.sir.jsonl
 )
 
 # Optional: bundle zABI 2.5 integration-pack runtime for macOS/arm64 in dist/

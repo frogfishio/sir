@@ -1,0 +1,3 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sircc-test","unit":"feature-gate"}
+{"ir":"sir-v1.0","k":"instr","m":"atomic.load.i32","ops":[{"t":"sym","v":"ptr"}]}
+

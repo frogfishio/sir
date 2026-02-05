@@ -72,6 +72,48 @@ Notes:
 - `--runtime zabi25` links against the zABI 2.5 host runtime (default root is autodetected; override via `--zabi25-root` or `SIRCC_ZABI25_ROOT`)
   - zABI mode expects you to export an entrypoint named `zir_main` (the host shim provides `main()` and calls `zir_main()` after installing the zABI host).
 
+## Type and semantics (LLVM/node path)
+
+This section describes the core value model and execution semantics `sircc` implements for the Stage-3 node frontend when compiling via LLVM.
+
+### Value and type model
+
+- Integers: `i8`, `i16`, `i32`, `i64`
+- Booleans: `i1` (`bool.*` and comparisons produce `i1`)
+- Floats: `f32`, `f64`
+- Pointers: `ptr` (target pointer width is derived from the selected target triple; `ptr.to_i64` / `ptr.from_i64` are available)
+- Aggregates:
+  - `type.kind:"struct"` (ABI layout derived from target triple; determinism can be enforced via `meta.ext.target.*` contract)
+  - `type.kind:"array"`
+  - `type.kind:"sum"` (via `adt:v1`)
+- Callables:
+  - `type.kind:"fn"` (direct/indirect calls)
+  - `type.kind:"fun"` / `type.kind:"closure"` (via `fun:v1` / `closure:v1`; both are treated as opaque values)
+
+Not currently in scope: SIMD/vector types and atomic/eh/gc/coro packs.
+
+### Integer semantics
+
+- Default integer operations are **two’s-complement wraparound** (modulo 2^N) unless the mnemonic explicitly specifies traps or saturation.
+- Division/remainder:
+  - `.trap` variants deterministically trap on divide-by-zero and signed overflow (e.g. `INT_MIN / -1` for signed).
+  - `.sat` variants are total (no UB): they clamp/produce specified saturated results.
+- Shifts/rotates use a **masked shift count** (so shifting by >= bitwidth is well-defined and deterministic).
+
+### Floating point semantics
+
+- `f32`/`f64` arithmetic uses LLVM FP ops, plus **canonical NaN** behavior: results are canonicalized to a quiet NaN (payloads are not propagated).
+
+### Memory + effects
+
+- `load.*` / `store.*` support `align` and `vol`.
+  - If `align` is omitted, `sircc` defaults to `1` (avoids implicit UB from over-assumed alignment).
+  - If `align > 1`, `sircc` emits a deterministic runtime trap on misaligned access.
+- `mem.copy` / `mem.fill` lower to LLVM bulk ops.
+  - `mem.copy overlap:"allow"` uses memmove semantics.
+  - `mem.copy overlap:"disallow"` emits a deterministic overlap check and traps on overlap.
+- `eff.fence` validates `mode`; `relaxed` is a no-op, other modes lower to an LLVM fence.
+
 ## Packs (node frontend)
 
 These feature gates are enabled via `meta.ext.features` (array of strings). If a gate is missing, `sircc` rejects gated node tags.

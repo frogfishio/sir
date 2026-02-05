@@ -20,6 +20,7 @@
 typedef enum {
   CHECK_VERIFY = 0,
   CHECK_RUN,
+  CHECK_VERIFY_FAIL,
 } CheckKind;
 
 typedef struct {
@@ -27,6 +28,7 @@ typedef struct {
   const char* file;
   CheckKind kind;
   int expect_exit;
+  const char* expect_code; // for CHECK_VERIFY_FAIL (JSON diagnostics)
 } CheckCase;
 
 static bool path_join(char* out, size_t out_cap, const char* a, const char* b) {
@@ -155,6 +157,100 @@ static bool mk_tmpdir(char* out_dir, size_t out_cap) {
   return true;
 }
 
+static bool extract_json_string_field(const char* line, const char* key, char* out, size_t out_cap) {
+  if (!line || !key || !out || !out_cap) return false;
+  out[0] = 0;
+  char pat[64];
+  int n = snprintf(pat, sizeof(pat), "\"%s\":\"", key);
+  if (n <= 0 || (size_t)n >= sizeof(pat)) return false;
+  const char* p = strstr(line, pat);
+  if (!p) return false;
+  p += (size_t)n;
+  // Codes are expected to be simple ASCII without escapes; parse until next quote.
+  const char* end = strchr(p, '"');
+  if (!end) return false;
+  size_t len = (size_t)(end - p);
+  if (len + 1 > out_cap) return false;
+  memcpy(out, p, len);
+  out[len] = 0;
+  return true;
+}
+
+static bool extract_first_diag_code_from_stderr(const char* buf, char* out_code, size_t out_cap) {
+  if (!buf || !out_code || !out_cap) return false;
+  out_code[0] = 0;
+  const char* p = buf;
+  while (*p) {
+    const char* eol = strchr(p, '\n');
+    size_t len = eol ? (size_t)(eol - p) : strlen(p);
+    if (len > 0) {
+      // Look for a diag record line (sircc emits compact JSON without whitespace).
+      if (strstr(p, "\"k\":\"diag\"")) {
+        char code[128];
+        if (extract_json_string_field(p, "code", code, sizeof(code))) {
+          snprintf(out_code, out_cap, "%s", code);
+          return true;
+        }
+      }
+    }
+    if (!eol) break;
+    p = eol + 1;
+  }
+  return false;
+}
+
+static bool capture_sircc_compile_stderr(const SirccOptions* opt, int* out_rc, char** out_buf) {
+  if (!opt || !out_rc || !out_buf) return false;
+  *out_rc = -1;
+  *out_buf = NULL;
+
+  int pipefd[2] = {-1, -1};
+  if (pipe(pipefd) != 0) return false;
+
+  int saved = dup(STDERR_FILENO);
+  if (saved < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return false;
+  }
+
+  if (dup2(pipefd[1], STDERR_FILENO) < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    close(saved);
+    return false;
+  }
+  close(pipefd[1]);
+
+  int rc = sircc_compile(opt);
+
+  // Restore stderr before reading to avoid confusing output if the read blocks.
+  (void)dup2(saved, STDERR_FILENO);
+  close(saved);
+
+  // Read captured stderr (bounded).
+  size_t cap = 64 * 1024;
+  size_t len = 0;
+  char* buf = (char*)malloc(cap + 1);
+  if (!buf) {
+    close(pipefd[0]);
+    *out_rc = rc;
+    return true;
+  }
+  for (;;) {
+    ssize_t r = read(pipefd[0], buf + len, cap - len);
+    if (r <= 0) break;
+    len += (size_t)r;
+    if (len == cap) break;
+  }
+  close(pipefd[0]);
+  buf[len] = 0;
+
+  *out_rc = rc;
+  *out_buf = buf;
+  return true;
+}
+
 int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOptions* chk) {
   if (!out || !base_opt || !chk) return SIRCC_EXIT_USAGE;
 
@@ -179,6 +275,12 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
       {.name = "adt_make_get", .file = "adt_make_get.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 12},
       {.name = "sem_if_thunk_trap_not_taken", .file = "sem_if_thunk_trap_not_taken.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 7},
       {.name = "sem_match_sum_option_i32", .file = "sem_match_sum_option_i32.sir.jsonl", .kind = CHECK_RUN, .expect_exit = 12},
+
+      // Negative fixtures (verify-only): ensure stable diagnostic codes for integrators.
+      {.name = "bad_unknown_field", .file = "bad_unknown_field.sir.jsonl", .kind = CHECK_VERIFY_FAIL, .expect_exit = 0, .expect_code = "sircc.schema.unknown_field"},
+      {.name = "bad_instr_operand", .file = "bad_instr_operand.sir.jsonl", .kind = CHECK_VERIFY_FAIL, .expect_exit = 0, .expect_code = "sircc.schema.value.num.bad"},
+      {.name = "bad_feature_gate_atomic", .file = "bad_feature_gate_atomic.sir.jsonl", .kind = CHECK_VERIFY_FAIL, .expect_exit = 0, .expect_code = "sircc.feature.gate"},
+      {.name = "cfg_bad_early_term", .file = "cfg_bad_early_term.sir.jsonl", .kind = CHECK_VERIFY_FAIL, .expect_exit = 0, .expect_code = "sircc.cfg.block.term.not_last"},
   };
 
   char tmpdir[PATH_MAX];
@@ -230,7 +332,7 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
     opt.zabi25_root = NULL;
 
     char exe[PATH_MAX];
-    if (tc->kind == CHECK_VERIFY) {
+    if (tc->kind == CHECK_VERIFY || tc->kind == CHECK_VERIFY_FAIL) {
       opt.verify_only = true;
       opt.output_path = NULL;
     } else {
@@ -252,8 +354,30 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
       opt.strip = false;
     }
 
-    int rc = sircc_compile(&opt);
-    bool ok = (rc == 0);
+    int rc = 0;
+    bool ok = false;
+    char diag_code[128];
+    diag_code[0] = 0;
+
+    if (tc->kind == CHECK_VERIFY_FAIL) {
+      opt.diagnostics = SIRCC_DIAG_JSON;
+      opt.color = SIRCC_COLOR_NEVER;
+      opt.diag_context = 0;
+
+      char* errbuf = NULL;
+      if (!capture_sircc_compile_stderr(&opt, &rc, &errbuf)) {
+        ok = false;
+      } else {
+        bool want_fail = (rc != 0);
+        bool have_code = errbuf && extract_first_diag_code_from_stderr(errbuf, diag_code, sizeof(diag_code));
+        ok = want_fail && have_code && tc->expect_code && strcmp(diag_code, tc->expect_code) == 0;
+      }
+      free(errbuf);
+    } else {
+      rc = sircc_compile(&opt);
+      ok = (rc == 0);
+    }
+
     int run_rc = 0;
     if (ok && tc->kind == CHECK_RUN) {
       run_rc = run_exe(exe);
@@ -271,9 +395,15 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
       fprintf(out, ",\"file\":");
       json_write_escaped(out, tc->file);
       fprintf(out, ",\"kind\":");
-      json_write_escaped(out, (tc->kind == CHECK_VERIFY) ? "verify" : "run");
+      json_write_escaped(out, (tc->kind == CHECK_VERIFY) ? "verify" : (tc->kind == CHECK_VERIFY_FAIL) ? "verify_fail" : "run");
       fprintf(out, ",\"ok\":%s", ok ? "true" : "false");
       fprintf(out, ",\"compile_rc\":%d", rc);
+      if (tc->kind == CHECK_VERIFY_FAIL) {
+        fprintf(out, ",\"expect_code\":");
+        json_write_escaped(out, tc->expect_code ? tc->expect_code : "");
+        fprintf(out, ",\"code\":");
+        json_write_escaped(out, diag_code);
+      }
       if (tc->kind == CHECK_RUN) {
         fprintf(out, ",\"expect_exit\":%d", tc->expect_exit);
         fprintf(out, ",\"exit\":%d", run_rc);
@@ -282,6 +412,9 @@ int sircc_run_check(FILE* out, const SirccOptions* base_opt, const SirccCheckOpt
     } else {
       if (tc->kind == CHECK_VERIFY) {
         fprintf(out, "  %s %s\n", ok ? "OK  " : "FAIL", tc->name);
+      } else if (tc->kind == CHECK_VERIFY_FAIL) {
+        fprintf(out, "  %s %s (code %s, expect %s)\n", ok ? "OK  " : "FAIL", tc->name, diag_code[0] ? diag_code : "(none)",
+                tc->expect_code ? tc->expect_code : "(none)");
       } else {
         fprintf(out, "  %s %s (exit %d, expect %d)\n", ok ? "OK  " : "FAIL", tc->name, run_rc, tc->expect_exit);
       }

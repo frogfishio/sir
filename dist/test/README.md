@@ -40,6 +40,13 @@ Expected exit codes:
 - `sem_if_thunk_trap_not_taken.sir.jsonl` → `7`
 - `sem_match_sum_option_i32.sir.jsonl` → `12`
 
+Negative fixtures (verify-only; expected to fail with stable diagnostic codes in JSON mode):
+
+- `bad_unknown_field.sir.jsonl` → `sircc.schema.unknown_field`
+- `bad_instr_operand.sir.jsonl` → `sircc.schema.value.num.bad`
+- `bad_feature_gate_atomic.sir.jsonl` → `sircc.feature.gate`
+- `cfg_bad_early_term.sir.jsonl` → `sircc.cfg.block.term.not_last`
+
 ## Mnemonic coverage (dev)
 
 `sircc` includes a Milestone 3 mnemonic coverage gate against the normative table in `schema/sir/v1.0/mnemonics.html`:

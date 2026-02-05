@@ -41,8 +41,8 @@ This TODO is organized as milestones. Each milestone should end with:
 ### 1.3 Typed operands model (shared across instr/dir)
 - [x] Implement operand decoding for `Value` union (validation-level):
   - [x] `sym`, `lbl`, `reg`, `num`, `str`, `mem`, `ref`
-- [ ] Define the internal IR types: `iN`, `fN`, pointers, vectors, aggregates, sums
-- [ ] Decide + document integer semantics: wraparound by default; explicit trap/saturating variants only where specified
+- [x] Define the internal IR types/value model: integers/floats/bool/ptr + aggregates + sums (documented in `src/sircc/docs/src.md`)
+- [x] Decide + document integer semantics: wraparound by default; explicit trap/saturating variants only where specified (documented in `src/sircc/docs/src.md`)
 
 ## Next widening tickets (MIR-driven)
 
@@ -93,13 +93,13 @@ Goal: make the LLVM backend + node frontend stable enough that an integrator can
   - [x] Add explicit tests for padding/align edge cases (payload align > 4, mixed sizes)
   - [x] Add negative tests: out-of-range variant traps; `adt.get` wrong-variant trap; nullary get rejected
 
-- [ ] **Diagnostics hardening**
-  - [ ] Replace remaining `errf(...)` in new packs with `err_codef(...)` (stable codes)
+- [x] **Diagnostics hardening**
+  - [x] Replace remaining `errf(...)` in new packs with `err_codef(...)` (stable codes)
     - [x] `fun:v1` / `closure:v1` / `adt:v1` / `sem:v1`: all pack-specific errors use `err_codef(...)`
     - [x] `agg:v1`-style `const.*` nodes and `sym(kind=var|const)` globals use `err_codef(...)` for validation/lowering failures
     - [x] CFG/effects lowering (`let`/`store.*`/`mem.*`/`eff.*`/`term.*`/CFG `fn`) uses `err_codef(...)` for stable diagnostic codes
     - [x] LLVM/node lowering uses `err_codef(...)` for user-facing errors (no generic `sircc.error` fallbacks for common validation failures)
-  - [ ] Ensure every error produced during lowering includes record context (`k/id/tag`) when available
+  - [x] Ensure every error produced during lowering includes record context (`k/id/tag`) when available
     - [x] Expression lowering always sets node context (push/pop in `lower_expr`)
     - [x] CFG/effects lowering errors use node context (`SIRCC_ERR_NODE`) where possible
 
