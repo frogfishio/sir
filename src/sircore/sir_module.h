@@ -139,6 +139,9 @@ typedef struct sir_inst {
     } i32_cmp_eq;
     struct {
       uint32_t target_ip;
+      const sir_val_id_t* src_slots; // module-owned; len=arg_count
+      const sir_val_id_t* dst_slots; // module-owned; len=arg_count
+      uint32_t arg_count;
     } br;
     struct {
       sir_val_id_t cond;
@@ -229,6 +232,8 @@ bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
                              uint32_t len);
 bool sir_mb_emit_i32_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_br_args(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, const sir_val_id_t* src_slots, const sir_val_id_t* dst_slots,
+                         uint32_t arg_count, uint32_t* out_ip);
 bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip);
 bool sir_mb_emit_cbr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t cond, uint32_t then_ip, uint32_t else_ip, uint32_t* out_ip);
 bool sir_mb_emit_alloca(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint32_t size, uint32_t align);

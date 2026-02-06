@@ -401,18 +401,38 @@ bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id
   return emit_inst(b, f, i);
 }
 
-bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip) {
+bool sir_mb_emit_br_args(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, const sir_val_id_t* src_slots, const sir_val_id_t* dst_slots,
+                         uint32_t arg_count, uint32_t* out_ip) {
   if (!b) return false;
   if (f == 0 || f > b->funcs.n) return false;
   sir_dyn_insts_t* d = &b->func_insts[f - 1];
   const uint32_t ip = d->n;
+
+  const uint32_t bytes = arg_count * (uint32_t)sizeof(sir_val_id_t);
+  const uint8_t* sp = NULL;
+  const uint8_t* dp = NULL;
+  if (arg_count) {
+    if (!src_slots || !dst_slots) return false;
+    sp = pool_copy_bytes(b, (const uint8_t*)src_slots, bytes);
+    if (!sp) return false;
+    dp = pool_copy_bytes(b, (const uint8_t*)dst_slots, bytes);
+    if (!dp) return false;
+  }
+
   sir_inst_t i = {0};
   i.k = SIR_INST_BR;
   i.result_count = 0;
   i.u.br.target_ip = target_ip;
+  i.u.br.src_slots = (const sir_val_id_t*)sp;
+  i.u.br.dst_slots = (const sir_val_id_t*)dp;
+  i.u.br.arg_count = arg_count;
   if (!emit_inst(b, f, i)) return false;
   if (out_ip) *out_ip = ip;
   return true;
+}
+
+bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip) {
+  return sir_mb_emit_br_args(b, f, target_ip, NULL, NULL, 0, out_ip);
 }
 
 bool sir_mb_emit_cbr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t cond, uint32_t then_ip, uint32_t else_ip, uint32_t* out_ip) {
@@ -830,6 +850,18 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
           if (inst->u.br.target_ip >= f->inst_count) {
             set_err(err, err_cap, "br target_ip out of range");
             return false;
+          }
+          if (inst->u.br.arg_count) {
+            if (!inst->u.br.src_slots || !inst->u.br.dst_slots) {
+              set_err(err, err_cap, "br arg_count set but slot arrays are null");
+              return false;
+            }
+            for (uint32_t ai = 0; ai < inst->u.br.arg_count; ai++) {
+              if (inst->u.br.src_slots[ai] >= vc || inst->u.br.dst_slots[ai] >= vc) {
+                set_err(err, err_cap, "br arg slot out of range");
+                return false;
+              }
+            }
           }
           break;
         case SIR_INST_CBR:
@@ -1316,6 +1348,46 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         break;
       }
       case SIR_INST_BR:
+        if (i->u.br.arg_count) {
+          const uint32_t n = i->u.br.arg_count;
+          const sir_val_id_t* src = i->u.br.src_slots;
+          const sir_val_id_t* dst = i->u.br.dst_slots;
+          if (!src || !dst) {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+
+          sir_value_t tmp_small[16];
+          sir_value_t* tmp = tmp_small;
+          if (n > (uint32_t)(sizeof(tmp_small) / sizeof(tmp_small[0]))) {
+            tmp = (sir_value_t*)malloc((size_t)n * sizeof(*tmp));
+            if (!tmp) {
+              free(vals);
+              return ZI_E_OOM;
+            }
+          }
+
+          for (uint32_t ai = 0; ai < n; ai++) {
+            const sir_val_id_t s = src[ai];
+            if (s >= f->value_count) {
+              if (tmp != tmp_small) free(tmp);
+              free(vals);
+              return ZI_E_BOUNDS;
+            }
+            tmp[ai] = vals[s];
+          }
+          for (uint32_t ai = 0; ai < n; ai++) {
+            const sir_val_id_t d = dst[ai];
+            if (d >= f->value_count) {
+              if (tmp != tmp_small) free(tmp);
+              free(vals);
+              return ZI_E_BOUNDS;
+            }
+            vals[d] = tmp[ai];
+          }
+
+          if (tmp != tmp_small) free(tmp);
+        }
         ip = i->u.br.target_ip;
         break;
       case SIR_INST_CBR: {

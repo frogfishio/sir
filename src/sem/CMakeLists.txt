@@ -123,3 +123,19 @@ target_link_libraries(sem_unit_run_mem_stack PRIVATE sircore_hosted_zabi sircore
 target_compile_options(sem_unit_run_mem_stack PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sem_run_mem_stack COMMAND sem_unit_run_mem_stack)
+
+add_executable(sem_unit_run_cfg_join_phi
+  tests/test_run_cfg_join_phi.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_cfg_join_phi PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_cfg_join_phi PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_cfg_join_phi PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_cfg_join_phi PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_cfg_join_phi PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_cfg_join_phi COMMAND sem_unit_run_cfg_join_phi)
