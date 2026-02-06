@@ -1,5 +1,5 @@
-#include "../sem_host.h"
-#include "../zcl1.h"
+#include "sem_host.h"
+#include "zcl1.h"
 
 #include <stdint.h>
 #include <stdio.h>

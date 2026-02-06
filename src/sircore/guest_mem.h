@@ -25,3 +25,4 @@ bool sem_guest_mem_map_rw(sem_guest_mem_t* m, zi_ptr_t ptr, zi_size32_t len, uin
 // Simple deterministic bump allocator (MVP). `free` does not reuse memory.
 zi_ptr_t sem_guest_alloc(sem_guest_mem_t* m, zi_size32_t size, zi_size32_t align);
 int32_t sem_guest_free(sem_guest_mem_t* m, zi_ptr_t ptr);
+

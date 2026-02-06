@@ -35,14 +35,9 @@ typedef struct sem_handles {
 bool sem_handles_init(sem_handles_t* hs, uint32_t cap);
 void sem_handles_dispose(sem_handles_t* hs);
 
-// Installs a fixed handle id (used for 0/1/2).
 bool sem_handle_install(sem_handles_t* hs, zi_handle_t h, sem_handle_entry_t e);
-
-// Allocates a new handle >=3.
 zi_handle_t sem_handle_alloc(sem_handles_t* hs, sem_handle_entry_t e);
-
 bool sem_handle_lookup(const sem_handles_t* hs, zi_handle_t h, sem_handle_entry_t* out);
 bool sem_handle_release(sem_handles_t* hs, zi_handle_t h);
-
 uint32_t sem_handle_hflags(const sem_handles_t* hs, zi_handle_t h);
 

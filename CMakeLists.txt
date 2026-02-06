@@ -16,6 +16,7 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/VERSION)
 endif()
 set(SIR_VERSION "${SIR_VERSION}" CACHE STRING "Project version (from ./VERSION)")
 
+add_subdirectory(src/sircore)
 add_subdirectory(src/sircc)
 add_subdirectory(src/sem)
 

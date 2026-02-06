@@ -1,5 +1,5 @@
-#include "../semrt.h"
-#include "../semrt_file_fs.h"
+#include "hosted_zabi.h"
+#include "hosted_file_fs.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -60,16 +60,17 @@ int main(void) {
   caps[0].name = "fs";
   caps[0].flags = SEM_ZI_CAP_CAN_OPEN | SEM_ZI_CAP_MAY_BLOCK;
 
-  semrt_t rt;
-  if (!semrt_init(&rt, (semrt_cfg_t){.guest_mem_cap = 1024 * 1024, .guest_mem_base = 0x10000ull, .caps = caps, .cap_count = 1, .fs_root = root})) {
-    return fail("semrt_init failed");
+  sir_hosted_zabi_t rt;
+  if (!sir_hosted_zabi_init(
+          &rt, (sir_hosted_zabi_cfg_t){.guest_mem_cap = 1024 * 1024, .guest_mem_base = 0x10000ull, .caps = caps, .cap_count = 1, .fs_root = root})) {
+    return fail("sir_hosted_zabi_init failed");
   }
 
   // Guest path is absolute within sandbox.
   const char* guest_path = "/a.txt";
   const zi_size32_t guest_path_len = (zi_size32_t)strlen(guest_path);
 
-  const zi_ptr_t guest_path_ptr = semrt_zi_alloc(&rt, guest_path_len);
+  const zi_ptr_t guest_path_ptr = sir_zi_alloc(&rt, guest_path_len);
   if (!guest_path_ptr) return fail("alloc guest_path failed");
   uint8_t* w = NULL;
   if (!sem_guest_mem_map_rw(&rt.mem, guest_path_ptr, guest_path_len, &w) || !w) return fail("map path failed");
@@ -82,7 +83,7 @@ int main(void) {
   u32le(params + 12, ZI_FILE_O_READ);
   u32le(params + 16, 0);
 
-  const zi_ptr_t params_ptr = semrt_zi_alloc(&rt, (zi_size32_t)sizeof(params));
+  const zi_ptr_t params_ptr = sir_zi_alloc(&rt, (zi_size32_t)sizeof(params));
   if (!params_ptr) return fail("alloc params failed");
   if (!sem_guest_mem_map_rw(&rt.mem, params_ptr, (zi_size32_t)sizeof(params), &w) || !w) return fail("map params failed");
   memcpy(w, params, sizeof(params));
@@ -93,8 +94,8 @@ int main(void) {
   const uint32_t kind_len = (uint32_t)strlen(kind);
   const uint32_t name_len = (uint32_t)strlen(name);
 
-  const zi_ptr_t kind_ptr = semrt_zi_alloc(&rt, kind_len);
-  const zi_ptr_t name_ptr = semrt_zi_alloc(&rt, name_len);
+  const zi_ptr_t kind_ptr = sir_zi_alloc(&rt, kind_len);
+  const zi_ptr_t name_ptr = sir_zi_alloc(&rt, name_len);
   if (!kind_ptr || !name_ptr) return fail("alloc kind/name failed");
   if (!sem_guest_mem_map_rw(&rt.mem, kind_ptr, kind_len, &w) || !w) return fail("map kind failed");
   memcpy(w, kind, kind_len);
@@ -111,26 +112,26 @@ int main(void) {
   u64le(open_req + 28, (uint64_t)params_ptr);
   u32le(open_req + 36, (uint32_t)sizeof(params));
 
-  const zi_ptr_t open_req_ptr = semrt_zi_alloc(&rt, (zi_size32_t)sizeof(open_req));
+  const zi_ptr_t open_req_ptr = sir_zi_alloc(&rt, (zi_size32_t)sizeof(open_req));
   if (!open_req_ptr) return fail("alloc open req failed");
   if (!sem_guest_mem_map_rw(&rt.mem, open_req_ptr, (zi_size32_t)sizeof(open_req), &w) || !w) return fail("map open req failed");
   memcpy(w, open_req, sizeof(open_req));
 
-  const zi_handle_t h = semrt_zi_cap_open(&rt, open_req_ptr);
+  const zi_handle_t h = sir_zi_cap_open(&rt, open_req_ptr);
   if (h < 3) return fail("cap_open failed");
 
   // Read back file content.
-  const zi_ptr_t buf_ptr = semrt_zi_alloc(&rt, 64);
+  const zi_ptr_t buf_ptr = sir_zi_alloc(&rt, 64);
   if (!buf_ptr) return fail("alloc read buf failed");
-  const int32_t n = semrt_zi_read(&rt, h, buf_ptr, 64);
+  const int32_t n = sir_zi_read(&rt, h, buf_ptr, 64);
   if (n <= 0) return fail("read failed");
   const uint8_t* r = NULL;
   if (!sem_guest_mem_map_ro(&rt.mem, buf_ptr, (zi_size32_t)n, &r) || !r) return fail("map read buf failed");
   if ((size_t)n != sizeof(contents) - 1) return fail("read size mismatch");
   if (memcmp(r, contents, sizeof(contents) - 1) != 0) return fail("read contents mismatch");
 
-  (void)semrt_zi_end(&rt, h);
-  semrt_dispose(&rt);
+  (void)sir_zi_end(&rt, h);
+  sir_hosted_zabi_dispose(&rt);
 
   // Best effort cleanup.
   (void)unlink(path);

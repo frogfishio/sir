@@ -86,3 +86,4 @@ bool zcl1_write_error_payload(uint8_t* buf, uint32_t cap, const char* trace, con
   *out_len = off;
   return true;
 }
+

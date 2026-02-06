@@ -70,15 +70,13 @@ int32_t sem_zi_ctl(void* user, const uint8_t* req, uint32_t req_len, uint8_t* re
     return SEM_ZI_E_INVALID;
   }
 
-  // Requests must have status=0 and empty reserved (validated by parser).
   if (rh.status != 0) {
     return SEM_ZI_E_INVALID;
   }
 
   if (rh.op == SEM_ZI_CTL_OP_CAPS_LIST) {
     if (rh.payload_len != 0) {
-      return sem_write_error(resp, resp_cap, rh.op, rh.rid, "sem.zi_ctl.invalid", "CAPS_LIST payload must be empty",
-                             "");
+      return sem_write_error(resp, resp_cap, rh.op, rh.rid, "sem.zi_ctl.invalid", "CAPS_LIST payload must be empty", "");
     }
     uint8_t payload_buf[2048];
     uint32_t payload_len2 = 0;
@@ -99,3 +97,4 @@ int32_t sem_zi_ctl(void* user, const uint8_t* req, uint32_t req_len, uint8_t* re
 bool sem_build_caps_list_req(uint32_t rid, uint8_t* out, uint32_t cap, uint32_t* out_len) {
   return zcl1_write(out, cap, SEM_ZI_CTL_OP_CAPS_LIST, rid, 0, NULL, 0, out_len);
 }
+

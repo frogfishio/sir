@@ -25,8 +25,8 @@ bool zcl1_write(uint8_t* buf, uint32_t cap, uint16_t op, uint32_t rid, uint32_t 
 bool zcl1_write_error_payload(uint8_t* buf, uint32_t cap, const char* trace, const char* msg, const char* detail,
                               uint32_t* out_len);
 
-// Little-endian helpers (stable across host endianness)
 uint16_t zcl1_read_u16le(const uint8_t* p);
 uint32_t zcl1_read_u32le(const uint8_t* p);
 void zcl1_write_u16le(uint8_t* p, uint16_t v);
 void zcl1_write_u32le(uint8_t* p, uint32_t v);
+
