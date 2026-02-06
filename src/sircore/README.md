@@ -11,6 +11,8 @@
 
 All host interaction is performed via a single message‑ABI call: **`zi_ctl`**.
 
+Wire framing and op registry: `src/sircore/zi_ctl.md`.
+
 ## Goals
 
 - **Deterministic semantics**: same module + same inputs + same host responses ⇒ same outputs.
@@ -54,7 +56,7 @@ This ABI is capability‑based: all IO is performed against opaque handles retur
 
 To keep execution reproducible across hosts:
 
-- all nondeterminism (time, randomness, env, fs, scheduling) is modeled as `zi_ctl` selectors
+- all nondeterminism (time, randomness, env, fs, scheduling) is modeled as `zi_ctl` operations
 - `sircore` never reads host env directly; the host may choose to snapshot it (`sem --inherit-env`)
 - `sircore` defines canonical trap behavior for invalid operations (bounds/misalignment/etc.)
 
@@ -64,7 +66,7 @@ To keep execution reproducible across hosts:
 
 - step events (node executed, ids, tags)
 - memory read/write events (logical, not host pointers)
-- host call events (selector + sizes + rc)
+- host call events (`op` + sizes + rc)
 - trap events (code + about)
 
 `instrument` consumes these to implement tracing/coverage/fuzzing/etc.

@@ -35,7 +35,7 @@ It is a **thin CLI frontend** over `sircore`:
 
 ## ABI: `zi_ctl` (message based)
 
-`sem` implements the host’s `zi_ctl` entrypoint and routes selectors to:
+`sem` implements the host’s `zi_ctl` entrypoint and routes requests to:
 
 - argv/env snapshots
 - stdin/stdout/stderr handles
@@ -43,4 +43,4 @@ It is a **thin CLI frontend** over `sircore`:
 - heap allocator (with debug options like poison/redzones)
 - telemetry sink
 
-The `zi_ctl` selector set should match the existing zABI naming (`zi_read`, `zi_write`, etc.), but encoded as selector ids.
+`zi_ctl` uses ZCL1 framing; the operation is carried in the ZCL1 `op` field. See `src/sircore/zi_ctl.md`.

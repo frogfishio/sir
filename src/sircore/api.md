@@ -4,6 +4,8 @@ This document sketches the public API boundary for `sircore` as a library.
 
 `sircore` executes an in-memory SIR module and interacts with the host solely via `zi_ctl` messages.
 
+Wire framing (ZCL1) and the baseline op registry are documented in `src/sircore/zi_ctl.md`.
+
 ## 1. Core types
 
 ### 1.1 Module and VM
@@ -16,7 +18,7 @@ This document sketches the public API boundary for `sircore` as a library.
 `sircore` does not link to a runtime ABI directly. Instead, the embedding tool provides:
 
 ```
-typedef int64_t (*zi_ctl_fn)(
+typedef int32_t (*zi_ctl_fn)(
   void* user,
   const uint8_t* req, size_t req_len,
   uint8_t* resp, size_t resp_cap
@@ -73,7 +75,7 @@ The embedding tool may register an event sink:
 
 - `on_step` (node id, tag, block/pc if applicable)
 - `on_mem` (read/write, addr, size)
-- `on_hostcall` (selector, sizes, rc)
+- `on_hostcall` (op, sizes, rc)
 - `on_trap` (code, about)
 
 The key idea: instrumentation lives outside the VM, built on stable events.
@@ -86,4 +88,3 @@ Start by matching the “integrator stage” node-frontend subset used by `sircc
 - no GC/eh/coro initially
 
 The exact supported set should be discoverable and versioned similarly to `sircc --print-support`.
-

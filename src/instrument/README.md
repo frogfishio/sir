@@ -11,6 +11,8 @@ Important boundary:
 
 Host calls are still only performed via the pure message ABI (`zi_ctl`); `instrument` may wrap/record/replay/perturb those host responses.
 
+Wire framing and op registry: `src/sircore/zi_ctl.md`.
+
 
 zem --help
 zem — zasm IR v1.1 emulator (minimal)
@@ -39,7 +41,7 @@ Usage:
 Info:
   --help            Print this help and exit
   --version         Print version and exit
-  --caps            Print loaded host capabilities and registered selectors
+  --caps            Print loaded host capabilities and registered ops
   --strip MODE       Rewrite IR JSONL using a coverage profile (no execution)
                     MODE: uncovered-ret | uncovered-delete
   --strip-profile PATH Coverage JSONL produced by --coverage-out
@@ -165,7 +167,7 @@ All tooling should be built on a single execution engine (`sircore`) that emits 
 
 - step events (node id/tag, basic-block/pc where applicable)
 - memory events (loads/stores, sizes, logical addresses)
-- host call events (`zi_ctl` selector + sizes + rc)
+- host call events (`zi_ctl` op + sizes + rc)
 - trap/diag events (code + about)
 
 Tooling features are implemented as consumers/producers of event streams, not as VM modifications.

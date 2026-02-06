@@ -1,168 +1,146 @@
-# zi_ctl message ABI (conceptual spec, v0)
+# `zi_ctl` message ABI for `sircore` (ZCL1 / zABI 2.5 aligned)
 
-This document defines the **pure message ABI** used by `sircore` to call the host.
+This document defines the **pure message ABI** used by `sircore` (and its frontends like `sem` / `instrument`) to call the host.
 
-All host interaction is performed via a single entrypoint:
+We intentionally align with the existing zABI 2.5 control-plane:
+
+- framing is **ZCL1** (`magic="ZCL1"`, header size 24 bytes)
+- the syscall name is **`zi_ctl`**
+- core error codes are `ZI_E_*` (negative `int32_t`)
+
+The authoritative wire contract lives in:
+
+- `ext/zingcore_readonly/2.5/abi/ZCL1_PROTOCOL.md`
+- `ext/zingcore_readonly/2.5/abi/ZI_CTL_PROTOCOL.md`
+- `ext/zingcore_readonly/2.5/zingcore/include/zi_sysabi25.h`
+
+## 1. Function signature(s)
+
+### 1.1 zABI syscall form (guest pointers)
+
+zABI 2.5 defines:
+
+```c
+int32_t zi_ctl(zi_ptr_t req_ptr, zi_size32_t req_len,
+               zi_ptr_t resp_ptr, zi_size32_t resp_cap);
+```
+
+Return value:
+
+- `>= 0`: number of bytes written into `resp_ptr`
+- `< 0`: `ZI_E_*` error code (transport-level failure; no response frame produced)
+
+### 1.2 In-process embedding form (host pointers)
+
+When `sircore` is embedded as a native library, the embedding tool typically provides a callback with the same semantics but using host pointers:
+
+```c
+typedef int32_t (*sir_zi_ctl_fn)(
+  void* user,
+  const uint8_t* req, uint32_t req_len,
+  uint8_t* resp, uint32_t resp_cap
+);
+```
+
+The **wire framing is identical**; only the pointer interpretation differs.
+
+## 2. Wire framing: ZCL1 (normative)
+
+All integers are **little-endian**.
+
+Header layout (24 bytes) + payload:
 
 ```
-zi_ctl(req_bytes, req_len, resp_bytes, resp_cap) -> n_or_err
+Offset | Size | Field       | Meaning
+-------|------|-------------|------------------------------------
+0      | 4    | magic       | ASCII "ZCL1"
+4      | 2    | version     | MUST be 1
+6      | 2    | op          | operation code (u16)
+8      | 4    | rid         | request id (u32 correlation id)
+12     | 4    | status      | request: 0; response: 1 ok / 0 err
+16     | 4    | reserved    | MUST be 0
+20     | 4    | payload_len | payload byte length
+24     | N    | payload     | op-specific bytes
 ```
 
-Where:
+Validation rules (`sircore` and tools MUST enforce):
 
-- request and response are **binary** messages
-- guest never passes raw host pointers
-- variable-length data uses `(offset,len)` within the message buffer
-- both directions are treated as untrusted and validated
+- `magic == "ZCL1"`
+- `version == 1`
+- `reserved == 0`
+- `24 + payload_len <= req_len` (requests) / `<= resp_bytes_written` (responses)
 
-The selector set is intended to align with existing zABI naming (`zi_*`), but encoded as selector ids.
+## 3. Error responses (status=0 payload)
 
-## 1. Design goals
+When a response frame has `status=0`, the payload is a packed UTF‑8 triple (no NUL terminators):
 
-- **Zero trust**: guest cannot access anything without explicit host capability.
-- **Forward compatible**: selectors can be added without breaking old guests.
-- **Deterministic**: host nondeterminism is explicit and can be snapshotted/replayed by tooling.
-- **Language neutral**: request/response structs are stable across C, Rust, Go, etc.
+```
+u32 trace_len;  u8 trace[trace_len];
+u32 msg_len;    u8 msg[msg_len];
+u32 detail_len; u8 detail[detail_len];
+```
 
-## 2. Message framing
+Tools should treat these as:
 
-Every request begins with a fixed-size header followed by selector-specific payload.
+- `trace`: stable origin identifier (grep-friendly)
+- `msg`: one-line human message
+- `detail`: optional extended detail (may be empty)
 
-### 2.1. Common integer sizes / endianness
+## 4. Operation codes (op registry)
 
-- All message integers are **little-endian**.
-- All offsets/lengths are `u32` unless otherwise noted.
-- Handles are `u64`.
+ZCL1 reserves:
 
-Rationale: stable wire format independent of target endianness; conversions are explicit.
+- ops `1..999` for core zABI protocols
+- ops `>= 1000` for tool / user-defined protocols
 
-### 2.2. Request header (`zi_req_hdr_v0`)
+zABI 2.5 currently defines these `zi_ctl` ops (see `zi_sysabi25.h`):
 
-Conceptual fields:
+- `ZI_CTL_OP_CAPS_LIST = 1`
+- `ZI_CTL_OP_CAPS_DESCRIBE = 2` (reserved; not yet normatively specified here)
+- `ZI_CTL_OP_CAPS_OPEN = 3` (reserved; not yet normatively specified here)
 
-- `u32 abi_magic`  (e.g. `'ZICT'`)
-- `u16 abi_major` / `u16 abi_minor`
-- `u32 selector`   (operation id)
-- `u32 flags`      (selector-generic; must be 0 for now)
-- `u64 corr_id`    (caller-chosen correlation id; may be 0)
-- `u32 payload_len`
-- `u32 reserved`   (must be 0)
+### 4.1 `CAPS_LIST` (op=1)
 
-The full request size is `sizeof(hdr) + payload_len`.
+Request:
 
-### 2.3. Response header (`zi_resp_hdr_v0`)
+- `status=0`
+- `payload_len=0`
 
-Conceptual fields:
+Success response (`status=1`) payload (packed LE):
 
-- `u32 abi_magic`
-- `u16 abi_major` / `u16 abi_minor`
-- `i32 rc`         (0 ok, negative errno-like)
-- `u64 corr_id`    (echoed)
-- `u32 payload_len`
-- `u32 reserved`
+```
+u32 version;    // MUST be 1
+u32 cap_count;
+cap_entry[cap_count];
+```
 
-The return value of `zi_ctl` is:
+Each `cap_entry`:
 
-- `>= 0`: number of response bytes written (`sizeof(hdr)+payload_len`)
-- `< 0`: transport error (host could not produce a response)
+```
+u32 kind_len; u8 kind[kind_len];   // UTF-8 (e.g. "file", "async")
+u32 name_len; u8 name[name_len];   // UTF-8 (e.g. "fs", "default")
+u32 flags;                           // ZI_CAP_* bitset
+```
 
-`sircore` treats **any** malformed framing as an immediate deterministic trap (or VM error, depending on mode).
+`flags` values (from `zi_sysabi25.h`):
 
-## 3. Memory model: spans and offsets
+- `ZI_CAP_CAN_OPEN`  (bit 0): can be opened
+- `ZI_CAP_PURE`      (bit 1): deterministic/pure service
+- `ZI_CAP_MAY_BLOCK` (bit 2): may block
 
-Selectors refer to byte regions via `span` descriptors:
+Error response (`status=0`): ZCL1 error payload (see §3).
 
-- `u32 off` (offset into message buffer)
-- `u32 len` (length in bytes)
+## 5. How `sircore` uses `zi_ctl`
 
-Validation rule:
+`sircore` treats `zi_ctl` as the *only* host boundary it needs:
 
-- `off+len` must be within the message size/capacity and must not overflow.
+- it emits requests as ZCL1 frames
+- it validates responses as untrusted bytes
+- it never assumes any capability exists unless the host provides it
 
-Strings are UTF-8 byte sequences. Null terminators are not required unless the selector says so.
+Integration choices (frontends decide, `sircore` stays policy-free):
 
-## 4. Capability model
+1) **Native zABI mode**: use `CAPS_LIST` / `CAPS_OPEN` to obtain handles and then interact using whatever protocols the host provides.
+2) **Tool-defined mode**: reserve `op >= 1000` for a “sem host protocol” (argv/env/fs/stdio) when running purely under `sem` without binding to a specific zABI runtime.
 
-All IO and privileged operations are performed against **opaque handles** (`u64`).
-
-How handles are obtained:
-
-1) list caps (host policy decides what exists)
-2) open cap by key/name/descriptor
-3) use resulting handle with typed selectors (read/write/etc.)
-
-`sircore` never fabricates handles; handle `0` is reserved as “invalid”.
-
-## 5. MVP selector set (conceptual)
-
-The initial set is intentionally small and mirrors the existing zABI surface:
-
-### 5.1 ABI version
-
-- `ZI_ABI_VERSION`: returns `{u32 major,u32 minor,u32 patch}`
-
-### 5.2 Capabilities
-
-- `ZI_CAP_COUNT`: returns `u32 n`
-- `ZI_CAP_GET_SIZE(i)`: returns `u32 need`
-- `ZI_CAP_GET(i, out_span)`: writes a capability descriptor
-- `ZI_CAP_OPEN(req_span)`: returns `u64 handle_or_err`
-
-Capability descriptors are host-defined but must be treated as structured bytes (not pointers).
-
-### 5.3 Handle flags (introspection)
-
-- `ZI_HANDLE_HFLAGS(handle)`: returns `u64 flags_or_0`
-
-### 5.4 I/O
-
-- `ZI_READ(handle, dst_span)`: returns `i64 n_or_err`
-- `ZI_WRITE(handle, src_span)`: returns `i64 n_or_err`
-- `ZI_END(handle)`: returns `i32 rc`
-
-### 5.5 Process argv/env (snapshotted)
-
-- `ZI_ARGC()`: returns `i32 argc`
-- `ZI_ARGV_LEN(i)`: returns `i32 len_or_err`
-- `ZI_ARGV_COPY(i, out_span)`: returns `i32 written_or_err`
-- `ZI_ENV_GET_LEN(key_span)`: returns `i32 len_or_err`
-- `ZI_ENV_GET_COPY(key_span, out_span)`: returns `i32 written_or_err`
-
-### 5.6 Heap / arenas
-
-For debug tooling, it is useful for alloc/free to go through host selectors:
-
-- `ZI_ALLOC(size, align?)`: returns `u64 guest_ptr_or_err`
-- `ZI_FREE(ptr)`: returns `i32 rc`
-
-Note: “guest_ptr” is a **logical address in the guest address space**, not a host pointer.
-
-### 5.7 Telemetry (optional)
-
-- `ZI_TELEMETRY(topic_span, msg_span)`: returns `i32 rc`
-
-## 6. Determinism knobs (host policy)
-
-Tools like `instrument` may wrap `zi_ctl` to implement:
-
-- short reads (chunking)
-- env snapshots / clear env
-- deterministic RNG
-- redzones/poison/quarantine for guest heap
-- record/replay of host interactions
-
-These must be visible in host behavior and should never be hidden inside `sircore`.
-
-## 7. Versioning rules
-
-- `sircore` requires `abi_major` match.
-- `abi_minor` may increase; unknown selectors must return a structured “not supported” error (`rc = -ENOSYS`).
-- selectors must remain backward compatible within a major version.
-
-## 8. Open questions (to resolve when making v1)
-
-- exact numeric selector ids (registry)
-- exact error code set (errno-like vs custom)
-- whether spans may reference request buffer only, response buffer only, or both
-- handle namespace and standard handle ids for stdin/stdout/stderr
-
+`sircore` is compatible with either, as long as the embedding layer provides deterministic behavior and stable diagnostics.
