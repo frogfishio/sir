@@ -92,6 +92,10 @@ The current `--run` MVP supports (growing over time):
 - structured constants (for global init): `const.array`, `const.repeat`
 - pointers: `ptr.add`, `ptr.sub`, `ptr.offset`, `ptr.cmp.eq`, `ptr.cmp.ne`, `load.ptr`, `store.ptr`
 - value-level: `select`
+- booleans: `const.bool`, `bool.not`, `bool.and`, `bool.or`, `bool.xor`
+- compares: `i32.cmp.*` (eq/ne, signed + unsigned)
+- layout queries: `ptr.sizeof`, `ptr.alignof`
+- casts: `ptr.to_i64`, `ptr.from_i64`
 - control flow: `term.br` (including `fields.args` passing block params), `term.cbr` / `term.condbr`, `term.switch` (i32 scrut)
 - traps: `term.trap`, `term.unreachable` (SEM exits with code 255/254)
 - block params: `block.fields.params` with `bparam` nodes

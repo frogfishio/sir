@@ -363,3 +363,83 @@ target_link_libraries(sem_unit_run_ptr_cmp PRIVATE sircore_hosted_zabi sircore_m
 target_compile_options(sem_unit_run_ptr_cmp PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sem_run_ptr_cmp COMMAND sem_unit_run_ptr_cmp)
+
+add_executable(sem_unit_run_sem_bool_ops
+  tests/test_run_sem_bool_ops.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_bool_ops PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_bool_ops PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_bool_ops PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_bool_ops PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_bool_ops PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_bool_ops COMMAND sem_unit_run_sem_bool_ops)
+
+add_executable(sem_unit_run_sem_i32_cmp_variants
+  tests/test_run_sem_i32_cmp_variants.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_i32_cmp_variants PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_i32_cmp_variants PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_i32_cmp_variants PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_i32_cmp_variants PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_i32_cmp_variants PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_i32_cmp_variants COMMAND sem_unit_run_sem_i32_cmp_variants)
+
+add_executable(sem_unit_run_sem_ptr_cast_roundtrip
+  tests/test_run_sem_ptr_cast_roundtrip.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_ptr_cast_roundtrip PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_ptr_cast_roundtrip PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_ptr_cast_roundtrip PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_ptr_cast_roundtrip PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_ptr_cast_roundtrip PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_ptr_cast_roundtrip COMMAND sem_unit_run_sem_ptr_cast_roundtrip)
+
+add_executable(sem_unit_run_sem_ptr_sizeof_array
+  tests/test_run_sem_ptr_sizeof_array.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_ptr_sizeof_array PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_ptr_sizeof_array PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_ptr_sizeof_array PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_ptr_sizeof_array PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_ptr_sizeof_array PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_ptr_sizeof_array COMMAND sem_unit_run_sem_ptr_sizeof_array)
+
+add_executable(sem_unit_run_sem_ptr_alignof_array
+  tests/test_run_sem_ptr_alignof_array.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_ptr_alignof_array PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_ptr_alignof_array PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_ptr_alignof_array PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_ptr_alignof_array PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_ptr_alignof_array PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_ptr_alignof_array COMMAND sem_unit_run_sem_ptr_alignof_array)

@@ -15,7 +15,7 @@ Scope notes:
 - [x] `term.switch` (MVP: i32 scrutinee, `const.i32` literals)
 - [x] Memory MVP: `alloca.i8/i32/i64`, `load.i8/i32/i64`, `store.i8/i32/i64`
 - [x] Calls MVP: `call.indirect` with callee `decl.fn` (extern) or `ptr.sym` (in-module by name)
-- [x] Values MVP: `const.i8/i32/i64`, `cstr`, `name`, `i32.add`, `binop.add`, `i32.cmp.eq`
+- [x] Values MVP: `const.i8/i32/i64/bool`, `cstr`, `name`, `i32.add`, `binop.add`, `i32.cmp.eq`
 
 ## P0 (ship-grade DX): make failures actionable
 
@@ -54,18 +54,18 @@ Scope notes:
 ### Integer / boolean ops (broad coverage before floats/vectors)
 - [x] `i32.add` (plus `binop.add` alias)
 - [ ] `i8.or / i16.or / i32.or / i64.or`
-- [ ] `bool.and / bool.or / bool.xor`
-- [ ] `bool.not`
+- [x] `bool.and / bool.or / bool.xor`
+- [x] `bool.not`
 - [x] `select` (SSA-ish conditional value select)
-- [ ] Minimal compare set beyond `i32.cmp.eq` (at least `ne`, signed `< > <= >=` as needed by MIR)
+- [x] Minimal compare set beyond `i32.cmp.eq` (`ne`, signed `< > <= >=`, unsigned `< > <= >=`)
 
 ### Pointers + memory (beyond stack slots)
 - [x] `load.ptr` / `store.ptr`
 - [x] `ptr.add / ptr.sub`
 - [x] `ptr.offset`
-- [ ] `ptr.to_i64 / ptr.from_i64` (currently only `ptr.to_i64` passthrough in SEM)
+- [x] `ptr.to_i64 / ptr.from_i64`
 - [x] `ptr.cmp.eq / ptr.cmp.ne`
-- [ ] `ptr.sizeof` / `ptr.alignof` (at least for prims; later for structs)
+- [x] `ptr.sizeof` / `ptr.alignof` (MVP: prims/arrays)
 - [x] `mem.copy` (overlap: disallow/allow; disallow traps on overlap)
 - [x] `mem.fill`
 

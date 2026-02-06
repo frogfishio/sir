@@ -1,0 +1,12 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sircc-example","unit":"sem_ptr_sizeof_array"}
+
+{"ir":"sir-v1.0","k":"type","id":1,"kind":"prim","prim":"i32"}
+{"ir":"sir-v1.0","k":"type","id":2,"kind":"prim","prim":"i64"}
+{"ir":"sir-v1.0","k":"type","id":6,"kind":"array","of":1,"len":4}
+{"ir":"sir-v1.0","k":"type","id":10,"kind":"fn","params":[],"ret":2}
+
+{"ir":"sir-v1.0","k":"node","id":10,"tag":"ptr.sizeof","type_ref":2,"fields":{"ty":{"t":"ref","k":"type","id":6},"args":[]}}
+{"ir":"sir-v1.0","k":"node","id":20,"tag":"term.ret","fields":{"value":{"t":"ref","id":10}}}
+{"ir":"sir-v1.0","k":"node","id":21,"tag":"block","fields":{"stmts":[{"t":"ref","id":20}]}}
+{"ir":"sir-v1.0","k":"node","id":22,"tag":"fn","type_ref":10,"fields":{"name":"main","params":[],"body":{"t":"ref","id":21}}}
+

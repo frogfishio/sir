@@ -713,6 +713,21 @@ static bool eval_const_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
   return true;
 }
 
+static bool eval_const_bool(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* vv = json_obj_get(n->fields_obj, "value");
+  int64_t i = 0;
+  if (!json_get_i64(vv, &i)) return false;
+  if (i != 0 && i != 1) return false;
+  const sir_val_id_t slot = alloc_slot(c, VK_BOOL);
+  if (!sir_mb_emit_const_bool(c->mb, c->fn, slot, i == 1)) return false;
+  if (!set_node_val(c, node_id, slot, VK_BOOL)) return false;
+  *out_slot = slot;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
 static bool eval_alloca_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, uint32_t size, uint32_t align, sir_val_id_t* out_slot,
                                  val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
@@ -940,14 +955,163 @@ static bool eval_binop_add(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
 
 static bool eval_ptr_to_i64_passthrough(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
-  (void)node_id;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t arg_id = 0;
   if (!parse_ref_id(av->v.arr.items[0], &arg_id)) return false;
-  // MVP: treat ptr.to_i64 as passthrough for host calls.
-  return eval_node(c, arg_id, out_slot, out_kind);
+  sir_val_id_t arg_slot = 0;
+  val_kind_t ak = VK_INVALID;
+  if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
+  if (ak != VK_PTR) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_I64);
+  if (!sir_mb_emit_ptr_to_i64(c->mb, c->fn, dst, arg_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_I64)) return false;
+  *out_slot = dst;
+  *out_kind = VK_I64;
+  return true;
+}
+
+static bool eval_ptr_from_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 1) return false;
+  uint32_t arg_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &arg_id)) return false;
+  sir_val_id_t arg_slot = 0;
+  val_kind_t ak = VK_INVALID;
+  if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
+  if (ak != VK_I64 && ak != VK_I32) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+  if (!sir_mb_emit_ptr_from_i64(c->mb, c->fn, dst, arg_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
+  *out_slot = dst;
+  *out_kind = VK_PTR;
+  return true;
+}
+
+static bool eval_bool_not(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 1) return false;
+  uint32_t x_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &x_id)) return false;
+  sir_val_id_t x_slot = 0;
+  val_kind_t xk = VK_INVALID;
+  if (!eval_node(c, x_id, &x_slot, &xk)) return false;
+  if (xk != VK_BOOL) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  if (!sir_mb_emit_bool_not(c->mb, c->fn, dst, x_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
+  *out_slot = dst;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
+static bool eval_bool_bin(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_inst_kind_t k, sir_val_id_t* out_slot,
+                          val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 2) return false;
+  uint32_t a_id = 0, b_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  sir_val_id_t a_slot = 0, b_slot = 0;
+  val_kind_t ak = VK_INVALID, bk = VK_INVALID;
+  if (!eval_node(c, a_id, &a_slot, &ak)) return false;
+  if (!eval_node(c, b_id, &b_slot, &bk)) return false;
+  if (ak != VK_BOOL || bk != VK_BOOL) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  bool ok = false;
+  if (k == SIR_INST_BOOL_AND) ok = sir_mb_emit_bool_and(c->mb, c->fn, dst, a_slot, b_slot);
+  else if (k == SIR_INST_BOOL_OR) ok = sir_mb_emit_bool_or(c->mb, c->fn, dst, a_slot, b_slot);
+  else ok = sir_mb_emit_bool_xor(c->mb, c->fn, dst, a_slot, b_slot);
+  if (!ok) return false;
+  if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
+  *out_slot = dst;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
+static bool eval_i32_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_inst_kind_t k, sir_val_id_t* out_slot,
+                         val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 2) return false;
+  uint32_t a_id = 0, b_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  sir_val_id_t a_slot = 0, b_slot = 0;
+  val_kind_t ak = VK_INVALID, bk = VK_INVALID;
+  if (!eval_node(c, a_id, &a_slot, &ak)) return false;
+  if (!eval_node(c, b_id, &b_slot, &bk)) return false;
+  if (ak != VK_I32 || bk != VK_I32) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  bool ok = false;
+  switch (k) {
+    case SIR_INST_I32_CMP_NE:
+      ok = sir_mb_emit_i32_cmp_ne(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_SLT:
+      ok = sir_mb_emit_i32_cmp_slt(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_SLE:
+      ok = sir_mb_emit_i32_cmp_sle(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_SGT:
+      ok = sir_mb_emit_i32_cmp_sgt(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_SGE:
+      ok = sir_mb_emit_i32_cmp_sge(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_ULT:
+      ok = sir_mb_emit_i32_cmp_ult(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_ULE:
+      ok = sir_mb_emit_i32_cmp_ule(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_UGT:
+      ok = sir_mb_emit_i32_cmp_ugt(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    case SIR_INST_I32_CMP_UGE:
+      ok = sir_mb_emit_i32_cmp_uge(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
+    default:
+      return false;
+  }
+  if (!ok) return false;
+  if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
+  *out_slot = dst;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
+static bool eval_ptr_size_alignof(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, bool want_sizeof, sir_val_id_t* out_slot,
+                                  val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  uint32_t ty_id = 0;
+  if (!parse_ref_id(json_obj_get(n->fields_obj, "ty"), &ty_id)) return false;
+  uint32_t size = 0, align = 0;
+  if (!type_layout(c, ty_id, &size, &align)) return false;
+  if (want_sizeof) {
+    const sir_val_id_t dst = alloc_slot(c, VK_I64);
+    if (!sir_mb_emit_const_i64(c->mb, c->fn, dst, (int64_t)size)) return false;
+    if (!set_node_val(c, node_id, dst, VK_I64)) return false;
+    *out_slot = dst;
+    *out_kind = VK_I64;
+    return true;
+  }
+  const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  if (!sir_mb_emit_const_i32(c->mb, c->fn, dst, (int32_t)align)) return false;
+  if (!set_node_val(c, node_id, dst, VK_I32)) return false;
+  *out_slot = dst;
+  *out_kind = VK_I32;
+  return true;
 }
 
 static bool find_global_gid_by_name(const sirj_ctx_t* c, const char* name, sir_global_id_t* out_gid) {
@@ -1242,18 +1406,35 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "const.i8") == 0) return eval_const_i8(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "const.i32") == 0) return eval_const_i32(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "const.i64") == 0) return eval_const_i64(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "const.bool") == 0) return eval_const_bool(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "cstr") == 0) return eval_cstr(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "name") == 0) return eval_name(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.sym") == 0) return eval_ptr_sym(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "ptr.sizeof") == 0) return eval_ptr_size_alignof(c, node_id, n, true, out_slot, out_kind);
+  if (strcmp(n->tag, "ptr.alignof") == 0) return eval_ptr_size_alignof(c, node_id, n, false, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.offset") == 0) return eval_ptr_offset(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.add") == 0) return eval_ptr_addsub(c, node_id, n, false, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.sub") == 0) return eval_ptr_addsub(c, node_id, n, true, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.cmp.eq") == 0) return eval_ptr_cmp(c, node_id, n, false, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.cmp.ne") == 0) return eval_ptr_cmp(c, node_id, n, true, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.to_i64") == 0) return eval_ptr_to_i64_passthrough(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "ptr.from_i64") == 0) return eval_ptr_from_i64(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "bool.not") == 0) return eval_bool_not(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "bool.and") == 0) return eval_bool_bin(c, node_id, n, SIR_INST_BOOL_AND, out_slot, out_kind);
+  if (strcmp(n->tag, "bool.or") == 0) return eval_bool_bin(c, node_id, n, SIR_INST_BOOL_OR, out_slot, out_kind);
+  if (strcmp(n->tag, "bool.xor") == 0) return eval_bool_bin(c, node_id, n, SIR_INST_BOOL_XOR, out_slot, out_kind);
   if (strcmp(n->tag, "select") == 0) return eval_select(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.add") == 0) return eval_i32_add_mnemonic(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.eq") == 0) return eval_i32_cmp_eq(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.ne") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_NE, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.slt") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_SLT, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.sle") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_SLE, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.sgt") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_SGT, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.sge") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_SGE, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.ult") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_ULT, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.ule") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_ULE, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.ugt") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_UGT, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.uge") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_UGE, out_slot, out_kind);
   if (strcmp(n->tag, "binop.add") == 0) return eval_binop_add(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "alloca.i8") == 0) return eval_alloca_mnemonic(c, node_id, n, 1, 1, out_slot, out_kind);
   if (strcmp(n->tag, "alloca.i32") == 0) return eval_alloca_mnemonic(c, node_id, n, 4, 4, out_slot, out_kind);
