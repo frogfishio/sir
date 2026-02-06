@@ -372,6 +372,27 @@ static bool eval_i32_add_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
   return true;
 }
 
+static bool eval_i32_cmp_eq(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 2) return false;
+  uint32_t a_id = 0, b_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  sir_val_id_t a_slot = 0, b_slot = 0;
+  val_kind_t ak = VK_INVALID, bk = VK_INVALID;
+  if (!eval_node(c, a_id, &a_slot, &ak)) return false;
+  if (!eval_node(c, b_id, &b_slot, &bk)) return false;
+  if (ak != VK_I32 || bk != VK_I32) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  if (!sir_mb_emit_i32_cmp_eq(c->mb, c->fn, dst, a_slot, b_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
+  *out_slot = dst;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
 static bool eval_binop_add(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
@@ -530,6 +551,7 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "name") == 0) return eval_name(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.to_i64") == 0) return eval_ptr_to_i64_passthrough(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.add") == 0) return eval_i32_add_mnemonic(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.cmp.eq") == 0) return eval_i32_cmp_eq(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "binop.add") == 0) return eval_binop_add(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "call.indirect") == 0) return eval_call_indirect(c, node_id, n, out_slot, out_kind);
 
@@ -583,12 +605,207 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
   return false;
 }
 
+typedef enum term_kind {
+  TERM_NONE = 0,
+  TERM_RETURN_SLOT,
+  TERM_BR,
+  TERM_CBR,
+} term_kind_t;
+
+typedef struct term_info {
+  term_kind_t k;
+  sir_val_id_t value_slot; // for return
+  uint32_t to_block;       // for br
+  sir_val_id_t cond_slot;  // for cbr
+  uint32_t then_block;     // for cbr
+  uint32_t else_block;     // for cbr
+} term_info_t;
+
+static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
+  if (!c || !out) return false;
+  memset(out, 0, sizeof(*out));
+  if (term_id >= c->node_cap || !c->nodes[term_id].present) return false;
+  const node_info_t* n = &c->nodes[term_id];
+  if (!n->tag) return false;
+
+  if (strcmp(n->tag, "term.ret") == 0 || strcmp(n->tag, "return") == 0) {
+    uint32_t rid = 0;
+    if (n->fields_obj && n->fields_obj->type == JSON_OBJECT) {
+      const JsonValue* vv = json_obj_get(n->fields_obj, "value");
+      if (vv && !parse_ref_id(vv, &rid)) return false;
+    }
+    sir_val_id_t slot = 0;
+    val_kind_t k = VK_INVALID;
+    if (rid) {
+      if (!eval_node(c, rid, &slot, &k)) return false;
+    } else {
+      slot = alloc_slot(c, VK_I32);
+      if (!sir_mb_emit_const_i32(c->mb, c->fn, slot, 0)) return false;
+      k = VK_I32;
+    }
+    (void)k;
+    out->k = TERM_RETURN_SLOT;
+    out->value_slot = slot;
+    return true;
+  }
+
+  if (strcmp(n->tag, "term.br") == 0) {
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    const JsonValue* tov = json_obj_get(n->fields_obj, "to");
+    uint32_t bid = 0;
+    if (!parse_ref_id(tov, &bid)) return false;
+    out->k = TERM_BR;
+    out->to_block = bid;
+    return true;
+  }
+
+  if (strcmp(n->tag, "term.cbr") == 0 || strcmp(n->tag, "term.condbr") == 0) {
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    uint32_t cond_id = 0;
+    if (!parse_ref_id(json_obj_get(n->fields_obj, "cond"), &cond_id)) return false;
+    sir_val_id_t cond_slot = 0;
+    val_kind_t ck = VK_INVALID;
+    if (!eval_node(c, cond_id, &cond_slot, &ck)) return false;
+    if (ck != VK_BOOL) return false;
+
+    const JsonValue* thenv = json_obj_get(n->fields_obj, "then");
+    const JsonValue* elsev = json_obj_get(n->fields_obj, "else");
+    if (!json_is_object(thenv) || !json_is_object(elsev)) return false;
+    const JsonValue* thto = json_obj_get(thenv, "to");
+    const JsonValue* elto = json_obj_get(elsev, "to");
+    if (!json_is_object(thto) || !json_is_object(elto)) return false;
+    uint32_t then_bid = 0, else_bid = 0;
+    if (!parse_ref_id(thto, &then_bid)) return false;
+    if (!parse_ref_id(elto, &else_bid)) return false;
+
+    out->k = TERM_CBR;
+    out->cond_slot = cond_slot;
+    out->then_block = then_bid;
+    out->else_block = else_bid;
+    return true;
+  }
+
+  return false;
+}
+
+typedef struct patch_rec {
+  uint8_t k; // 1=br,2=cbr
+  uint32_t ip;
+  uint32_t a;
+  uint32_t b;
+} patch_rec_t;
+
 static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
   if (!c) return false;
   if (fn_node_id >= c->node_cap || !c->nodes[fn_node_id].present) return false;
   const node_info_t* fnn = &c->nodes[fn_node_id];
   if (!fnn->fields_obj || fnn->fields_obj->type != JSON_OBJECT) return false;
+
+  // CFG form: entry + blocks.
+  const JsonValue* entryv = json_obj_get(fnn->fields_obj, "entry");
+  const JsonValue* blocksv = json_obj_get(fnn->fields_obj, "blocks");
+  if (entryv && blocksv) {
+    uint32_t entry_block = 0;
+    if (!parse_ref_id(entryv, &entry_block)) return false;
+    if (!json_is_array(blocksv)) return false;
+    const JsonArray* blks = &blocksv->v.arr;
+    if (blks->len == 0) return false;
+
+    // Build block->ip map (node_id indexed).
+    uint32_t* block_ip = (uint32_t*)arena_alloc(&c->arena, (size_t)c->node_cap * sizeof(uint32_t));
+    if (!block_ip) return false;
+    for (uint32_t i = 0; i < c->node_cap; i++) block_ip[i] = 0xFFFFFFFFu;
+
+    patch_rec_t patches[128];
+    uint32_t patch_n = 0;
+
+    // Ensure control enters entry block.
+    uint32_t first_bid = 0;
+    if (!parse_ref_id(blks->items[0], &first_bid)) return false;
+    if (first_bid != entry_block) {
+      uint32_t jip = 0;
+      if (!sir_mb_emit_br(c->mb, c->fn, 0, &jip)) return false;
+      if (patch_n >= (uint32_t)(sizeof(patches) / sizeof(patches[0]))) return false;
+      patches[patch_n++] = (patch_rec_t){.k = 1, .ip = jip, .a = entry_block, .b = 0};
+    }
+
+    // Emit blocks in declared order.
+    for (size_t bi = 0; bi < blks->len; bi++) {
+      uint32_t bid = 0;
+      if (!parse_ref_id(blks->items[bi], &bid)) return false;
+      if (bid >= c->node_cap || !c->nodes[bid].present) return false;
+      const node_info_t* bn = &c->nodes[bid];
+      if (!bn->tag || strcmp(bn->tag, "block") != 0) return false;
+      if (!bn->fields_obj || bn->fields_obj->type != JSON_OBJECT) return false;
+
+      block_ip[bid] = sir_mb_func_ip(c->mb, c->fn);
+
+      const JsonValue* sv = json_obj_get(bn->fields_obj, "stmts");
+      if (!json_is_array(sv)) return false;
+      const JsonArray* a = &sv->v.arr;
+
+      bool saw_term = false;
+      for (size_t si = 0; si < a->len; si++) {
+        uint32_t sid = 0;
+        if (!parse_ref_id(a->items[si], &sid)) return false;
+
+        term_info_t term = {0};
+        if (lower_term_node(c, sid, &term)) {
+          saw_term = true;
+          if (si + 1 != a->len) return false; // no stmts after terminator (MVP)
+
+          if (term.k == TERM_RETURN_SLOT) {
+            if (is_entry) {
+              if (!sir_mb_emit_exit_val(c->mb, c->fn, term.value_slot)) return false;
+            } else {
+              if (!sir_mb_emit_ret_val(c->mb, c->fn, term.value_slot)) return false;
+            }
+          } else if (term.k == TERM_BR) {
+            uint32_t ip = 0;
+            if (!sir_mb_emit_br(c->mb, c->fn, 0, &ip)) return false;
+            if (patch_n >= (uint32_t)(sizeof(patches) / sizeof(patches[0]))) return false;
+            patches[patch_n++] = (patch_rec_t){.k = 1, .ip = ip, .a = term.to_block, .b = 0};
+          } else if (term.k == TERM_CBR) {
+            uint32_t ip = 0;
+            if (!sir_mb_emit_cbr(c->mb, c->fn, term.cond_slot, 0, 0, &ip)) return false;
+            if (patch_n >= (uint32_t)(sizeof(patches) / sizeof(patches[0]))) return false;
+            patches[patch_n++] = (patch_rec_t){.k = 2, .ip = ip, .a = term.then_block, .b = term.else_block};
+          } else {
+            return false;
+          }
+        } else {
+          if (saw_term) return false;
+          bool did_ret = false;
+          sir_val_id_t exit_slot = 0;
+          if (!exec_stmt(c, sid, &did_ret, &exit_slot)) return false;
+          if (did_ret) return false;
+        }
+      }
+
+      if (!saw_term) return false;
+    }
+
+    // Patch branch targets to block start IPs.
+    for (uint32_t i = 0; i < patch_n; i++) {
+      if (patches[i].k == 1) {
+        const uint32_t to = patches[i].a;
+        if (to >= c->node_cap || block_ip[to] == 0xFFFFFFFFu) return false;
+        if (!sir_mb_patch_br(c->mb, c->fn, patches[i].ip, block_ip[to])) return false;
+      } else if (patches[i].k == 2) {
+        const uint32_t th = patches[i].a;
+        const uint32_t el = patches[i].b;
+        if (th >= c->node_cap || el >= c->node_cap) return false;
+        if (block_ip[th] == 0xFFFFFFFFu || block_ip[el] == 0xFFFFFFFFu) return false;
+        if (!sir_mb_patch_cbr(c->mb, c->fn, patches[i].ip, block_ip[th], block_ip[el])) return false;
+      }
+    }
+
+    return true;
+  }
+
+  // Legacy single-block form: body.
   const JsonValue* bodyv = json_obj_get(fnn->fields_obj, "body");
+  if (!bodyv) return false;
   uint32_t body_id = 0;
   if (!parse_ref_id(bodyv, &body_id)) return false;
   if (body_id >= c->node_cap || !c->nodes[body_id].present) return false;
@@ -803,7 +1020,11 @@ static bool build_fn_sig(sirj_ctx_t* c, uint32_t fn_type_id, sir_sig_t* out_sig)
   if (!ensure_prim_types(c)) return false;
 
   if (ti->param_count > 16) return false;
-  sir_type_id_t params[16];
+  sir_type_id_t* params = NULL;
+  if (ti->param_count) {
+    params = (sir_type_id_t*)arena_alloc(&c->arena, (size_t)ti->param_count * sizeof(sir_type_id_t));
+    if (!params) return false;
+  }
   for (uint32_t i = 0; i < ti->param_count; i++) {
     const uint32_t pid = ti->params[i];
     if (pid == 0 || pid >= c->type_cap) return false;
@@ -814,7 +1035,7 @@ static bool build_fn_sig(sirj_ctx_t* c, uint32_t fn_type_id, sir_sig_t* out_sig)
     params[i] = mt;
   }
 
-  sir_type_id_t results[1];
+  sir_type_id_t* results = NULL;
   uint32_t result_count = 0;
   if (ti->ret) {
     const uint32_t rid = ti->ret;
@@ -823,13 +1044,15 @@ static bool build_fn_sig(sirj_ctx_t* c, uint32_t fn_type_id, sir_sig_t* out_sig)
     if (!rt->present || rt->is_fn) return false;
     const sir_type_id_t mt = mod_ty_for_prim(c, rt->prim);
     if (!mt) return false;
+    results = (sir_type_id_t*)arena_alloc(&c->arena, sizeof(sir_type_id_t));
+    if (!results) return false;
     results[0] = mt;
     result_count = 1;
   }
 
   out_sig->params = params;
   out_sig->param_count = ti->param_count;
-  out_sig->results = result_count ? results : NULL;
+  out_sig->results = results;
   out_sig->result_count = result_count;
   return true;
 }
@@ -1019,6 +1242,12 @@ int sem_run_sir_jsonl(const char* path, const sem_cap_t* caps, uint32_t cap_coun
 
   const sir_host_t host = sem_hosted_make_host(&hz);
   const int32_t rc = sir_module_run(m, hz.mem, host);
+  if (rc == -1) {
+    char derr[160];
+    if (!sir_module_validate(m, derr, sizeof(derr))) {
+      fprintf(stderr, "sem: internal: module re-validate failed at run-time: %s\n", derr[0] ? derr : "invalid");
+    }
+  }
   sir_hosted_zabi_dispose(&hz);
   sir_module_free(m);
   ctx_dispose(&c);

@@ -78,6 +78,9 @@ typedef enum sir_inst_kind {
   SIR_INST_CONST_PTR_NULL,
   SIR_INST_CONST_BYTES, // yields {ptr, i64 len}
   SIR_INST_I32_ADD,
+  SIR_INST_I32_CMP_EQ,
+  SIR_INST_BR,
+  SIR_INST_CBR,
   SIR_INST_CALL_EXTERN, // currently supports zi_write/zi_end/zi_alloc/zi_free/zi_telemetry
   SIR_INST_CALL_FUNC,
   SIR_INST_RET,
@@ -114,6 +117,19 @@ typedef struct sir_inst {
       sir_val_id_t b;
       sir_val_id_t dst;
     } i32_add;
+    struct {
+      sir_val_id_t a;
+      sir_val_id_t b;
+      sir_val_id_t dst;
+    } i32_cmp_eq;
+    struct {
+      uint32_t target_ip;
+    } br;
+    struct {
+      sir_val_id_t cond;
+      uint32_t then_ip;
+      uint32_t else_ip;
+    } cbr;
     struct {
       sir_sym_id_t callee;
       const sir_val_id_t* args; // module-owned
@@ -181,6 +197,9 @@ bool sir_mb_emit_const_null_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_va
 bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst_ptr, sir_val_id_t dst_len, const uint8_t* bytes,
                              uint32_t len);
 bool sir_mb_emit_i32_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip);
+bool sir_mb_emit_cbr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t cond, uint32_t then_ip, uint32_t else_ip, uint32_t* out_ip);
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count);
 bool sir_mb_emit_call_extern_res(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count,
                                  const sir_val_id_t* results, uint8_t result_count);
@@ -190,6 +209,11 @@ bool sir_mb_emit_exit(sir_module_builder_t* b, sir_func_id_t f, int32_t code);
 bool sir_mb_emit_exit_val(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t code);
 bool sir_mb_emit_ret(sir_module_builder_t* b, sir_func_id_t f);
 bool sir_mb_emit_ret_val(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t value);
+
+// CFG helpers (ip is 0-based instruction index within the function).
+uint32_t sir_mb_func_ip(const sir_module_builder_t* b, sir_func_id_t f);
+bool sir_mb_patch_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t ip, uint32_t target_ip);
+bool sir_mb_patch_cbr(sir_module_builder_t* b, sir_func_id_t f, uint32_t ip, uint32_t then_ip, uint32_t else_ip);
 
 // Finalize: produces an immutable module. The module owns all memory.
 // Returns NULL on OOM or malformed builder state.

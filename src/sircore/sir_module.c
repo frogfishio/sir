@@ -19,9 +19,8 @@ enum {
 };
 
 typedef struct sir_dyn_bytes {
-  uint8_t* p;
-  uint32_t n;
-  uint32_t cap;
+  struct sir_pool_block* head;
+  struct sir_pool_block* cur;
 } sir_dyn_bytes_t;
 
 typedef struct sir_dyn_types {
@@ -66,7 +65,7 @@ struct sir_module_builder {
 
 typedef struct sir_module_impl {
   sir_module_t pub;
-  uint8_t* pool;
+  struct sir_pool_block* pool_head;
 } sir_module_impl_t;
 
 static sir_module_impl_t* module_impl_from_pub(sir_module_t* m) {
@@ -74,19 +73,48 @@ static sir_module_impl_t* module_impl_from_pub(sir_module_t* m) {
   return (sir_module_impl_t*)((uint8_t*)m - offsetof(sir_module_impl_t, pub));
 }
 
-static bool grow_bytes(sir_dyn_bytes_t* d, uint32_t add) {
-  if (!d) return false;
-  const uint64_t need64 = (uint64_t)d->n + (uint64_t)add;
-  if (need64 > 0xFFFFFFFFull) return false;
-  uint32_t need = (uint32_t)need64;
-  if (need <= d->cap) return true;
-  uint32_t cap = d->cap ? d->cap : 256;
-  while (cap < need) cap *= 2;
-  uint8_t* np = (uint8_t*)realloc(d->p, cap);
-  if (!np) return false;
-  d->p = np;
-  d->cap = cap;
-  return true;
+typedef struct sir_pool_block {
+  struct sir_pool_block* next;
+  uint32_t cap;
+  uint32_t len;
+  uint8_t data[];
+} sir_pool_block_t;
+
+static void* pool_alloc(sir_dyn_bytes_t* d, uint32_t size) {
+  if (!d) return NULL;
+  if (size == 0) size = 1;
+  sir_pool_block_t* b = (sir_pool_block_t*)d->cur;
+  if (!b) {
+    uint32_t cap = 4096;
+    while (cap < size) cap *= 2;
+    b = (sir_pool_block_t*)malloc(sizeof(*b) + cap);
+    if (!b) return NULL;
+    b->next = NULL;
+    b->cap = cap;
+    b->len = 0;
+    d->head = (struct sir_pool_block*)b;
+    d->cur = (struct sir_pool_block*)b;
+  }
+
+  // Align to 4 bytes for u32 arrays stored in the pool.
+  uint32_t aligned = (b->len + 3u) & ~3u;
+  if (aligned + size > b->cap) {
+    uint32_t cap = b->cap * 2u;
+    while (cap < size) cap *= 2u;
+    sir_pool_block_t* n = (sir_pool_block_t*)malloc(sizeof(*n) + cap);
+    if (!n) return NULL;
+    n->next = NULL;
+    n->cap = cap;
+    n->len = 0;
+    b->next = n;
+    d->cur = (struct sir_pool_block*)n;
+    b = n;
+    aligned = 0;
+  }
+
+  void* p = b->data + aligned;
+  b->len = aligned + size;
+  return p;
 }
 
 static bool grow_types(sir_dyn_types_t* d, uint32_t add) {
@@ -152,22 +180,20 @@ static bool grow_insts(sir_dyn_insts_t* d, uint32_t add) {
 static const uint8_t* pool_copy_bytes(sir_module_builder_t* b, const uint8_t* bytes, uint32_t len) {
   if (!b) return NULL;
   if (len && !bytes) return NULL;
-  if (!grow_bytes(&b->pool, len)) return NULL;
-  const uint32_t off = b->pool.n;
-  if (len) memcpy(b->pool.p + off, bytes, len);
-  b->pool.n += len;
-  return b->pool.p + off;
+  uint8_t* p = (uint8_t*)pool_alloc(&b->pool, len);
+  if (!p && len) return NULL;
+  if (len) memcpy(p, bytes, len);
+  return p;
 }
 
 static const char* pool_copy_cstr(sir_module_builder_t* b, const char* s) {
   if (!b || !s) return NULL;
   const uint32_t len = (uint32_t)strlen(s);
   const uint32_t need = len + 1;
-  if (!grow_bytes(&b->pool, need)) return NULL;
-  const uint32_t off = b->pool.n;
-  memcpy(b->pool.p + off, s, need);
-  b->pool.n += need;
-  return (const char*)(b->pool.p + off);
+  char* p = (char*)pool_alloc(&b->pool, need);
+  if (!p) return NULL;
+  memcpy(p, s, need);
+  return p;
 }
 
 sir_module_builder_t* sir_mb_new(void) {
@@ -187,7 +213,12 @@ void sir_mb_free(sir_module_builder_t* b) {
   free(b->types.p);
   free(b->syms.p);
   free(b->funcs.p);
-  free(b->pool.p);
+  sir_pool_block_t* pb = (sir_pool_block_t*)b->pool.head;
+  while (pb) {
+    sir_pool_block_t* next = pb->next;
+    free(pb);
+    pb = next;
+  }
   free(b);
 }
 
@@ -349,6 +380,47 @@ bool sir_mb_emit_i32_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t 
   return emit_inst(b, f, i);
 }
 
+bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_I32_CMP_EQ;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i32_cmp_eq.a = a;
+  i.u.i32_cmp_eq.b = b_;
+  i.u.i32_cmp_eq.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip) {
+  if (!b) return false;
+  if (f == 0 || f > b->funcs.n) return false;
+  sir_dyn_insts_t* d = &b->func_insts[f - 1];
+  const uint32_t ip = d->n;
+  sir_inst_t i = {0};
+  i.k = SIR_INST_BR;
+  i.result_count = 0;
+  i.u.br.target_ip = target_ip;
+  if (!emit_inst(b, f, i)) return false;
+  if (out_ip) *out_ip = ip;
+  return true;
+}
+
+bool sir_mb_emit_cbr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t cond, uint32_t then_ip, uint32_t else_ip, uint32_t* out_ip) {
+  if (!b) return false;
+  if (f == 0 || f > b->funcs.n) return false;
+  sir_dyn_insts_t* d = &b->func_insts[f - 1];
+  const uint32_t ip = d->n;
+  sir_inst_t i = {0};
+  i.k = SIR_INST_CBR;
+  i.result_count = 0;
+  i.u.cbr.cond = cond;
+  i.u.cbr.then_ip = then_ip;
+  i.u.cbr.else_ip = else_ip;
+  if (!emit_inst(b, f, i)) return false;
+  if (out_ip) *out_ip = ip;
+  return true;
+}
+
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count) {
   return sir_mb_emit_call_extern_res(b, f, callee, args, arg_count, NULL, 0);
 }
@@ -423,6 +495,34 @@ bool sir_mb_emit_ret_val(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t 
   return emit_inst(b, f, i);
 }
 
+uint32_t sir_mb_func_ip(const sir_module_builder_t* b, sir_func_id_t f) {
+  if (!b) return 0;
+  if (f == 0 || f > b->funcs.n) return 0;
+  const sir_dyn_insts_t* d = &b->func_insts[f - 1];
+  return d->n;
+}
+
+bool sir_mb_patch_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t ip, uint32_t target_ip) {
+  if (!b) return false;
+  if (f == 0 || f > b->funcs.n) return false;
+  sir_dyn_insts_t* d = &b->func_insts[f - 1];
+  if (ip >= d->n) return false;
+  if (d->p[ip].k != SIR_INST_BR) return false;
+  d->p[ip].u.br.target_ip = target_ip;
+  return true;
+}
+
+bool sir_mb_patch_cbr(sir_module_builder_t* b, sir_func_id_t f, uint32_t ip, uint32_t then_ip, uint32_t else_ip) {
+  if (!b) return false;
+  if (f == 0 || f > b->funcs.n) return false;
+  sir_dyn_insts_t* d = &b->func_insts[f - 1];
+  if (ip >= d->n) return false;
+  if (d->p[ip].k != SIR_INST_CBR) return false;
+  d->p[ip].u.cbr.then_ip = then_ip;
+  d->p[ip].u.cbr.else_ip = else_ip;
+  return true;
+}
+
 static void* dup_mem(const void* p, size_t n) {
   if (n == 0) return NULL;
   void* r = malloc(n);
@@ -478,46 +578,9 @@ sir_module_t* sir_mb_finalize(sir_module_builder_t* b) {
     }
   }
 
-  // Copy pool.
-  uint8_t* pool = NULL;
-  if (b->pool.n) {
-    pool = (uint8_t*)dup_mem(b->pool.p, b->pool.n);
-    if (!pool) {
-      free(syms);
-      free(types);
-      for (uint32_t fi = 0; fi < b->funcs.n; fi++) free((void*)funcs[fi].insts);
-      free(funcs);
-      return NULL;
-    }
-  }
-
-  // Fix pointers in funcs/syms/insts into the copied pool.
-  const intptr_t delta = (intptr_t)pool - (intptr_t)b->pool.p;
-  for (uint32_t si = 0; si < b->syms.n; si++) {
-    if (syms[si].name) syms[si].name = (const char*)((intptr_t)syms[si].name + delta);
-    if (syms[si].sig.params) syms[si].sig.params = (const sir_type_id_t*)((intptr_t)syms[si].sig.params + delta);
-    if (syms[si].sig.results) syms[si].sig.results = (const sir_type_id_t*)((intptr_t)syms[si].sig.results + delta);
-  }
-  for (uint32_t fi = 0; fi < b->funcs.n; fi++) {
-    if (funcs[fi].name) funcs[fi].name = (const char*)((intptr_t)funcs[fi].name + delta);
-    if (funcs[fi].sig.params) funcs[fi].sig.params = (const sir_type_id_t*)((intptr_t)funcs[fi].sig.params + delta);
-    if (funcs[fi].sig.results) funcs[fi].sig.results = (const sir_type_id_t*)((intptr_t)funcs[fi].sig.results + delta);
-    sir_inst_t* insts = (sir_inst_t*)funcs[fi].insts;
-    for (uint32_t ii = 0; ii < funcs[fi].inst_count; ii++) {
-      if (insts[ii].k == SIR_INST_CONST_BYTES) {
-        if (insts[ii].u.const_bytes.bytes) insts[ii].u.const_bytes.bytes = (const uint8_t*)((intptr_t)insts[ii].u.const_bytes.bytes + delta);
-      } else if (insts[ii].k == SIR_INST_CALL_EXTERN) {
-        if (insts[ii].u.call_extern.args) insts[ii].u.call_extern.args = (const sir_val_id_t*)((intptr_t)insts[ii].u.call_extern.args + delta);
-      } else if (insts[ii].k == SIR_INST_CALL_FUNC) {
-        if (insts[ii].u.call_func.args) insts[ii].u.call_func.args = (const sir_val_id_t*)((intptr_t)insts[ii].u.call_func.args + delta);
-      }
-    }
-  }
-
   // Package module.
   sir_module_impl_t* impl = (sir_module_impl_t*)calloc(1, sizeof(*impl));
   if (!impl) {
-    free(pool);
     free(syms);
     free(types);
     for (uint32_t fi = 0; fi < b->funcs.n; fi++) free((void*)funcs[fi].insts);
@@ -525,7 +588,11 @@ sir_module_t* sir_mb_finalize(sir_module_builder_t* b) {
     return NULL;
   }
 
-  impl->pool = pool;
+  // Steal pool blocks from the builder so pointers remain valid even though
+  // the pool grows via multiple allocations.
+  impl->pool_head = b->pool.head;
+  b->pool.head = NULL;
+  b->pool.cur = NULL;
   impl->pub = (sir_module_t){
       .types = types,
       .type_count = b->types.n,
@@ -554,7 +621,12 @@ void sir_module_free(sir_module_t* m) {
   free((void*)pub->funcs);
   free((void*)pub->syms);
   free((void*)pub->types);
-  free(impl->pool);
+  sir_pool_block_t* pb = (sir_pool_block_t*)impl->pool_head;
+  while (pb) {
+    sir_pool_block_t* next = pb->next;
+    free(pb);
+    pb = next;
+  }
   free(impl);
 }
 
@@ -678,6 +750,28 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_I32_ADD:
           if (inst->u.i32_add.dst >= vc || inst->u.i32_add.a >= vc || inst->u.i32_add.b >= vc) {
             set_err(err, err_cap, "i32_add operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_I32_CMP_EQ:
+          if (inst->u.i32_cmp_eq.dst >= vc || inst->u.i32_cmp_eq.a >= vc || inst->u.i32_cmp_eq.b >= vc) {
+            set_err(err, err_cap, "i32_cmp_eq operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_BR:
+          if (inst->u.br.target_ip >= f->inst_count) {
+            set_err(err, err_cap, "br target_ip out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_CBR:
+          if (inst->u.cbr.cond >= vc) {
+            set_err(err, err_cap, "cbr cond out of range");
+            return false;
+          }
+          if (inst->u.cbr.then_ip >= f->inst_count || inst->u.cbr.else_ip >= f->inst_count) {
+            set_err(err, err_cap, "cbr target_ip out of range");
             return false;
           }
           break;
@@ -957,23 +1051,78 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
   if (fid == 0 || fid > m->func_count) return ZI_E_NOENT;
 
   const sir_func_t* f = &m->funcs[fid - 1];
-  if (arg_count != f->sig.param_count) return ZI_E_INVALID;
+  const char* trace = getenv("SIRCORE_TRACE");
+  if (trace && trace[0]) {
+    fprintf(stderr, "sircore: trace: enter func=%s fid=%u args=%u results=%u depth=%u\n", f->name ? f->name : "?", (unsigned)fid,
+            (unsigned)arg_count, (unsigned)out_result_count, (unsigned)depth);
+  }
+  if (!(args == NULL && arg_count == 0 && fid == m->entry) && arg_count != f->sig.param_count) return ZI_E_INVALID;
   if (out_result_count != f->sig.result_count) return ZI_E_INVALID;
 
   if (f->value_count > 1u << 20) return ZI_E_INVALID;
   sir_value_t* vals = (sir_value_t*)calloc(f->value_count, sizeof(*vals));
   if (!vals) return ZI_E_OOM;
 
-  for (uint32_t i = 0; i < arg_count; i++) {
-    if (i >= f->value_count) {
-      free(vals);
-      return ZI_E_BOUNDS;
+  if (args == NULL && arg_count == 0 && fid == m->entry) {
+    // Default-initialize entry params to zero (DX convenience).
+    if (trace && trace[0]) {
+      fprintf(stderr, "sircore: trace: entry default-init params=%u sig_params=%s ptr=%p\n", (unsigned)f->sig.param_count,
+              f->sig.params ? "yes" : "no", (const void*)f->sig.params);
+      if (f->sig.params && f->sig.param_count) {
+        const uint8_t* bp = (const uint8_t*)f->sig.params;
+        fprintf(stderr, "sircore: trace: param0 bytes=%02x %02x %02x %02x\n", (unsigned)bp[0], (unsigned)bp[1], (unsigned)bp[2],
+                (unsigned)bp[3]);
+      }
     }
-    vals[i] = args[i];
+    for (uint32_t i = 0; i < f->sig.param_count; i++) {
+      if (i >= f->value_count) {
+        free(vals);
+        return ZI_E_BOUNDS;
+      }
+      const sir_type_id_t tid = f->sig.params ? f->sig.params[i] : 0;
+      if (tid == 0 || tid > m->type_count) {
+        if (trace && trace[0]) {
+          fprintf(stderr, "sircore: trace: bad param type id=%u at i=%u type_count=%u\n", (unsigned)tid, (unsigned)i,
+                  (unsigned)m->type_count);
+        }
+        free(vals);
+        return ZI_E_INVALID;
+      }
+      const sir_prim_type_t prim = m->types[tid - 1].prim;
+      switch (prim) {
+        case SIR_PRIM_I32:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = 0};
+          break;
+        case SIR_PRIM_I64:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_I64, .u.i64 = 0};
+          break;
+        case SIR_PRIM_PTR:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = 0};
+          break;
+        case SIR_PRIM_BOOL:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = 0};
+          break;
+        default:
+          free(vals);
+          return ZI_E_INVALID;
+      }
+    }
+  } else {
+    for (uint32_t i = 0; i < arg_count; i++) {
+      if (i >= f->value_count) {
+        free(vals);
+        return ZI_E_BOUNDS;
+      }
+      vals[i] = args[i];
+    }
   }
 
-  for (uint32_t ip = 0; ip < f->inst_count; ip++) {
+  for (uint32_t ip = 0; ip < f->inst_count;) {
     const sir_inst_t* i = &f->insts[ip];
+    if (trace && trace[0]) {
+      fprintf(stderr, "sircore: trace: func=%s fid=%u ip=%u k=%u\n", f->name ? f->name : "?", (unsigned)fid, (unsigned)ip,
+              (unsigned)i->k);
+    }
     switch (i->k) {
       case SIR_INST_CONST_I32:
         if (i->u.const_i32.dst >= f->value_count) {
@@ -981,6 +1130,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_BOUNDS;
         }
         vals[i->u.const_i32.dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = i->u.const_i32.v};
+        ip++;
         break;
       case SIR_INST_CONST_I64:
         if (i->u.const_i64.dst >= f->value_count) {
@@ -988,6 +1138,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_BOUNDS;
         }
         vals[i->u.const_i64.dst] = (sir_value_t){.kind = SIR_VAL_I64, .u.i64 = i->u.const_i64.v};
+        ip++;
         break;
       case SIR_INST_CONST_PTR_NULL:
         if (i->u.const_null.dst >= f->value_count) {
@@ -995,6 +1146,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_BOUNDS;
         }
         vals[i->u.const_null.dst] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = 0};
+        ip++;
         break;
       case SIR_INST_CONST_BYTES: {
         if (!host.v.zi_alloc) {
@@ -1020,6 +1172,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         }
         vals[i->u.const_bytes.dst_ptr] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = p};
         vals[i->u.const_bytes.dst_len] = (sir_value_t){.kind = SIR_VAL_I64, .u.i64 = (int64_t)i->u.const_bytes.len};
+        ip++;
         break;
       }
       case SIR_INST_I32_ADD: {
@@ -1037,6 +1190,42 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_INVALID;
         }
         vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = (int32_t)(av.u.i32 + bv.u.i32)};
+        ip++;
+        break;
+      }
+      case SIR_INST_I32_CMP_EQ: {
+        const sir_val_id_t a = i->u.i32_cmp_eq.a;
+        const sir_val_id_t b = i->u.i32_cmp_eq.b;
+        const sir_val_id_t dst = i->u.i32_cmp_eq.dst;
+        if (a >= f->value_count || b >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t av = vals[a];
+        const sir_value_t bv = vals[b];
+        if (av.kind != SIR_VAL_I32 || bv.kind != SIR_VAL_I32) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = (uint8_t)(av.u.i32 == bv.u.i32)};
+        ip++;
+        break;
+      }
+      case SIR_INST_BR:
+        ip = i->u.br.target_ip;
+        break;
+      case SIR_INST_CBR: {
+        const sir_val_id_t cvid = i->u.cbr.cond;
+        if (cvid >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t cv = vals[cvid];
+        if (cv.kind != SIR_VAL_BOOL) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        ip = cv.u.b ? i->u.cbr.then_ip : i->u.cbr.else_ip;
         break;
       }
       case SIR_INST_CALL_EXTERN: {
@@ -1045,6 +1234,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           free(vals);
           return r;
         }
+        ip++;
         break;
       }
       case SIR_INST_CALL_FUNC: {
@@ -1053,6 +1243,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           free(vals);
           return r;
         }
+        ip++;
         break;
       }
       case SIR_INST_RET:

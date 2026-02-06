@@ -81,7 +81,11 @@ sem --run src/sircc/examples/hello_zabi25_write.sir.jsonl
 
 The current `--run` MVP supports (growing over time):
 
-- `fn` with a single `block` body
+- `fn` in either form:
+  - single `body: block` form
+  - CFG form: `entry: block` + `blocks: [block...]`
 - statements: `let`, `term.ret` / `return`
 - expressions: `const.i32`, `const.i64`, `cstr`, `name`, `i32.add`, `binop.add`
+- comparisons: `i32.cmp.eq`
 - calls: `call.indirect` where callee is `decl.fn` (extern) or `ptr.sym` (in-module function)
+- control flow: `term.br`, `term.cbr` / `term.condbr`
