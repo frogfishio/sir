@@ -33,6 +33,12 @@ bool validate_program(SirProgram* p) {
   for (size_t i = 0; i < p->types_cap; i++) {
     TypeRec* t = p->types[i];
     if (!t) continue;
+    if (t->kind == TYPE_VEC && !p->feat_simd_v1) {
+      SirDiagSaved saved = sir_diag_push(p, "type", t->id, "vec");
+      err_codef(p, "sircc.feature.gate", "sircc: type kind 'vec' requires feature simd:v1 (enable via meta.ext.features)");
+      sir_diag_pop(p, saved);
+      return false;
+    }
     if (t->kind == TYPE_FUN && !p->feat_fun_v1) {
       SirDiagSaved saved = sir_diag_push(p, "type", t->id, "fun");
       err_codef(p, "sircc.feature.gate", "sircc: type kind 'fun' requires feature fun:v1 (enable via meta.ext.features)");
@@ -51,11 +57,42 @@ bool validate_program(SirProgram* p) {
       sir_diag_pop(p, saved);
       return false;
     }
+
+    if (t->kind == TYPE_VEC) {
+      TypeRec* lane = get_type(p, t->lane_ty);
+      if (!lane || lane->kind != TYPE_PRIM || !lane->prim) {
+        SirDiagSaved saved = sir_diag_push(p, "type", t->id, "vec");
+        err_codef(p, "sircc.type.vec.lane.bad", "sircc: type.vec lane must reference a primitive lane type");
+        sir_diag_pop(p, saved);
+        return false;
+      }
+      const char* lp = lane->prim;
+      bool ok = (strcmp(lp, "i8") == 0 || strcmp(lp, "i16") == 0 || strcmp(lp, "i32") == 0 || strcmp(lp, "i64") == 0 ||
+                 strcmp(lp, "f32") == 0 || strcmp(lp, "f64") == 0 || strcmp(lp, "bool") == 0 || strcmp(lp, "i1") == 0);
+      if (!ok) {
+        SirDiagSaved saved = sir_diag_push(p, "type", t->id, "vec");
+        err_codef(p, "sircc.type.vec.lane.unsupported", "sircc: type.vec lane must be one of i8/i16/i32/i64/f32/f64/bool");
+        sir_diag_pop(p, saved);
+        return false;
+      }
+      if (t->lanes <= 0) {
+        SirDiagSaved saved = sir_diag_push(p, "type", t->id, "vec");
+        err_codef(p, "sircc.type.vec.lanes.bad", "sircc: type.vec lanes must be > 0");
+        sir_diag_pop(p, saved);
+        return false;
+      }
+    }
   }
 
   for (size_t i = 0; i < p->nodes_cap; i++) {
     NodeRec* n = p->nodes[i];
     if (!n) continue;
+    if ((strncmp(n->tag, "vec.", 4) == 0 || strcmp(n->tag, "load.vec") == 0 || strcmp(n->tag, "store.vec") == 0) && !p->feat_simd_v1) {
+      SirDiagSaved saved = sir_diag_push_node(p, n);
+      err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature simd:v1 (enable via meta.ext.features)", n->tag);
+      sir_diag_pop(p, saved);
+      return false;
+    }
     if ((strcmp(n->tag, "call.fun") == 0 || strncmp(n->tag, "fun.", 4) == 0) && !p->feat_fun_v1) {
       SirDiagSaved saved = sir_diag_push_node(p, n);
       err_codef(p, "sircc.feature.gate", "sircc: mnemonic '%s' requires feature fun:v1 (enable via meta.ext.features)", n->tag);

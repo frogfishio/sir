@@ -593,7 +593,7 @@ static bool parse_dir_record(SirProgram* p, JsonValue* obj) {
 
 static bool parse_type_record(SirProgram* p, JsonValue* obj) {
   static const char* const keys[] = {"ir",   "k",      "id",     "kind",   "name",   "prim",  "of",      "len",
-                                     "params", "ret",    "varargs", "fields", "variants", "sig", "callSig", "env", "attrs", "src_ref", "loc"};
+                                     "lane", "lanes",  "params", "ret",    "varargs", "fields", "variants", "sig", "callSig", "env", "attrs", "src_ref", "loc"};
   if (!require_only_keys(p, obj, keys, sizeof(keys) / sizeof(keys[0]), "type record")) return false;
 
   int64_t id = 0;
@@ -619,6 +619,8 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
   tr->varargs = false;
   tr->fields = NULL;
   tr->field_len = 0;
+  tr->lane_ty = 0;
+  tr->lanes = 0;
   tr->sig = 0;
   tr->call_sig = 0;
   tr->env_ty = 0;
@@ -693,6 +695,14 @@ static bool parse_type_record(SirProgram* p, JsonValue* obj) {
     tr->kind = TYPE_CLOSURE;
     if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "callSig"), &tr->call_sig, "type.callSig")) return false;
     if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "env"), &tr->env_ty, "type.env")) return false;
+  } else if (strcmp(kind, "vec") == 0) {
+    tr->kind = TYPE_VEC;
+    if (!sir_intern_id(p, SIR_ID_TYPE, json_obj_get(obj, "lane"), &tr->lane_ty, "type.lane")) return false;
+    if (!must_i64(p, json_obj_get(obj, "lanes"), &tr->lanes, "type.lanes")) return false;
+    if (tr->lanes <= 0) {
+      err_codef(p, "sircc.type.vec.lanes.bad", "sircc: type.vec lanes must be > 0");
+      return false;
+    }
   } else if (strcmp(kind, "sum") == 0) {
     tr->kind = TYPE_SUM;
     JsonValue* vars = json_obj_get(obj, "variants");

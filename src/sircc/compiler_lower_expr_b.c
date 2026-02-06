@@ -65,6 +65,11 @@ bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef
   if (!f || !n || !outp) return false;
   LLVMValueRef out = NULL;
 
+  if (strncmp(n->tag, "vec.", 4) == 0 || strcmp(n->tag, "load.vec") == 0) {
+    if (!lower_expr_simd(f, node_id, n, &out)) goto done;
+    goto done;
+  }
+
   if (strncmp(n->tag, "fun.", 4) == 0) {
     const char* op = n->tag + 4;
 

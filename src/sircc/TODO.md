@@ -202,9 +202,59 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
 - [ ] Implement atomic load/store/RMW/CAS as specified
 
 ### 4.2 SIMD (simd:v1) — 13
-- [ ] Vector construction and lanes — 4
-- [ ] Lane-wise arithmetic/logic — 5
-- [ ] Vector memory access — 4
+- [x] **Phase 0: contracts + representation (must be explicit)**
+  - [x] Add `type.kind:"vec"` (feature-gated) with `{lane:<type-ref>, lanes:<pos-int>}`
+    - [x] Validate lane type is one of: `i8/i16/i32/i64/f32/f64/bool`
+    - [x] Validate `lanes > 0`
+  - [x] Decide + document the **bool lane ABI** (recommendation for determinism + memory semantics):
+    - [x] `vec(bool,N)` is represented as lanes of bytes in memory (0/1), with vector ops treating nonzero as true
+    - [x] In LLVM lowering, represent `vec(bool,N)` as `<N x i8>` and normalize results to 0/1
+  - [x] Deterministic traps: `vec.extract` / `vec.replace` MUST trap on out-of-range lane indices
+  - [ ] Deterministic memory order: lane 0 at lowest address; lane bytes follow `meta.ext.target.endian`
+
+- [x] **Phase 1: type lowering + size/align**
+  - [x] Extend type parsing/validation to accept `kind:"vec"` only when `meta.ext.features` includes `simd:v1`
+  - [x] Lower `vec(laneTy,lanes)` to LLVM fixed vector type (lane lowered per scalar rules; bool lane uses the chosen ABI)
+  - [x] Implement size/align for `vec` in `ptr.sizeof/alignof/offset` (packed lanes; align = lane align)
+
+- [ ] **Phase 2: vector construction and lane ops (4)**
+  - [x] `vec.splat` (broadcast scalar into all lanes)
+  - [x] `vec.extract` (runtime bounds-check `idx:i32`; trap if `idx<0 || idx>=lanes`)
+  - [x] `vec.replace` (bounds-check + insert; trap on OOB)
+  - [ ] `vec.shuffle` (validate `flags.idx` length == lanes; trap if any `idx` not in `[0,2*lanes)`; then lower to LLVM shuffle)
+
+- [ ] **Phase 3: lane-wise arithmetic/logic (5)**
+  - [ ] `vec.add/sub/mul` (int + float lanes)
+    - [ ] Float results must be NaN-canonicalized per lane (match scalar rules)
+  - [ ] `vec.and/or/xor` (int lanes; for bool lanes operate on 0/1 and keep result normalized)
+  - [ ] `vec.not` (int lanes; for bool lanes implement logical-not producing 0/1)
+  - [ ] `vec.cmp.{eq,ne,lt,le,gt,ge}` (int + float lanes) → `vec(bool,lanes)`
+    - [ ] Float comparisons follow scalar ordered rules (NaN compares false for ordered predicates)
+  - [ ] `vec.select` (mask: `vec(bool,lanes)`; lower to LLVM select using `mask != 0` as the i1 lane mask)
+
+- [x] **Phase 4: vector memory access + bitcast (4)**
+  - [x] `load.vec` (vector load; explicit `align/vol`; misaligned trap when `align>1`; default align=1)
+  - [x] `store.vec` (vector store; same `align/vol` rules)
+  - [x] `vec.bitcast` (equal-size reinterpret cast between vectors; validate byte-size equality)
+  - [ ] Add a small `vec` “ABI sanity” doc section + examples (load/store order, bool lane rules)
+
+- [ ] **Phase 5: tests + dist integration**
+  - [ ] Add positive fixtures:
+    - [x] `vec_splat_extract` (added: `examples/simd_splat_extract.sir.jsonl`)
+    - [ ] `vec_f32_mul_nan_canon`
+    - [ ] `vec_cmp_select_bool_mask`
+    - [ ] `vec_shuffle_two_inputs`
+    - [ ] `vec_load_store_roundtrip`
+  - [ ] Add negative fixtures:
+    - [ ] missing `ty` / wrong `ty` kind
+    - [ ] lane type not allowed / lanes == 0
+    - [ ] `vec.shuffle` wrong idx length
+  - [ ] Add runtime-trap fixtures (expected nonzero exit):
+    - [ ] `vec.extract` OOB index
+    - [ ] `vec.replace` OOB index
+    - [ ] `vec.shuffle` OOB idx element
+  - [ ] Wire fixtures into `sircc --check`
+  - [ ] Ensure all SIMD errors use `err_codef` with stable `sircc.vec.*` codes and include node context in JSON diagnostics
 
 ### 4.3 ADT sums (adt:v1) — 4 (+ notes)
 - [ ] Sum construction: `adt.make`

@@ -52,3 +52,7 @@ bool lower_term_cfg(FunctionCtx* f, int64_t node_id);
 
 // Internal helper: second half of lower_expr dispatch.
 bool lower_expr_part_b(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef* out);
+
+// SIMD (simd:v1)
+bool lower_expr_simd(FunctionCtx* f, int64_t node_id, NodeRec* n, LLVMValueRef* out);
+bool lower_stmt_simd(FunctionCtx* f, int64_t node_id, NodeRec* n);

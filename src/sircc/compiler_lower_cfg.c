@@ -37,6 +37,10 @@ bool lower_stmt(FunctionCtx* f, int64_t node_id) {
     return true;
   }
 
+  if (strcmp(n->tag, "store.vec") == 0) {
+    return lower_stmt_simd(f, node_id, n);
+  }
+
   if (strncmp(n->tag, "store.", 6) == 0) {
     const char* tname = n->tag + 6;
     if (!n->fields) {

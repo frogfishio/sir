@@ -22,6 +22,7 @@ typedef enum TypeKind {
   TYPE_ARRAY,
   TYPE_FN,
   TYPE_STRUCT,
+  TYPE_VEC,
   TYPE_FUN,
   TYPE_CLOSURE,
   TYPE_SUM,
@@ -78,6 +79,10 @@ typedef struct TypeRec {
 
   TypeFieldRec* fields;
   size_t field_len;
+
+  // TYPE_VEC
+  int64_t lane_ty; // references a TYPE_PRIM (i8/i16/i32/i64/f32/f64/bool)
+  int64_t lanes;   // positive lane count
 
   // TYPE_FUN
   int64_t sig; // references a TYPE_FN type id

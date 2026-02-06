@@ -100,6 +100,29 @@ bool type_size_align_rec(SirProgram* p, int64_t type_id, unsigned char* visiting
       align = el_align;
       break;
     }
+    case TYPE_VEC: {
+      int64_t lane_size = 0;
+      int64_t lane_align = 0;
+      if (!type_size_align_rec(p, tr->lane_ty, visiting, &lane_size, &lane_align)) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      if (lane_size < 0 || lane_align <= 0) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      if (tr->lanes <= 0) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      if (lane_size != 0 && tr->lanes > INT64_MAX / lane_size) {
+        if (visiting) visiting[type_id] = 0;
+        return false;
+      }
+      size = lane_size * tr->lanes;
+      align = lane_align;
+      break;
+    }
     case TYPE_STRUCT: {
       int64_t off = 0;
       int64_t max_align = 1;
@@ -291,6 +314,19 @@ LLVMTypeRef lower_type(SirProgram* p, LLVMContextRef ctx, int64_t id) {
     case TYPE_ARRAY: {
       LLVMTypeRef of = lower_type(p, ctx, tr->of);
       if (of && tr->len >= 0 && tr->len <= (int64_t)UINT_MAX) out = LLVMArrayType(of, (unsigned)tr->len);
+      break;
+    }
+    case TYPE_VEC: {
+      TypeRec* lane = get_type(p, tr->lane_ty);
+      if (!lane || lane->kind != TYPE_PRIM || !lane->prim) break;
+      LLVMTypeRef el = lower_type_prim(ctx, lane->prim);
+      if (!el) break;
+      // Deterministic bool vector ABI: represent vec(bool,N) as <N x i8> (0/1) rather than <N x i1>.
+      if (strcmp(lane->prim, "bool") == 0 || strcmp(lane->prim, "i1") == 0) {
+        el = LLVMInt8TypeInContext(ctx);
+      }
+      if (tr->lanes <= 0 || tr->lanes > (int64_t)UINT_MAX) break;
+      out = LLVMVectorType(el, (unsigned)tr->lanes);
       break;
     }
     case TYPE_FN: {

@@ -10,6 +10,7 @@ add_executable(sircc
   compiler_lower_cfg.c
   compiler_lower_expr_a.c
   compiler_lower_expr_b.c
+  compiler_lower_simd.c
   compiler_lower_util.c
   compiler_parse.c
   compiler_tables.c
@@ -354,6 +355,11 @@ add_test(
 )
 
 add_test(
+  NAME sircc_verify_simd_splat_extract
+  COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/simd_splat_extract.sir.jsonl
+)
+
+add_test(
   NAME sircc_run_global_i32_ptrsym
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -561,6 +567,16 @@ add_test(
     -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/hello_world_puts.sir.jsonl
     -DEXE=${CMAKE_CURRENT_BINARY_DIR}/hello_world_puts.exe
     -DEXPECT=0
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
+)
+
+add_test(
+  NAME sircc_run_simd_splat_extract
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/simd_splat_extract.sir.jsonl
+    -DEXE=${CMAKE_CURRENT_BINARY_DIR}/simd_splat_extract.exe
+    -DEXPECT=7
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_and_expect_exit.cmake
 )
 
