@@ -94,6 +94,7 @@ static void sem_print_support(FILE* out, bool json) {
       "ptr.sub",
       "ptr.cmp.eq",
       "ptr.cmp.ne",
+      "select",
 
       // memory (MVP)
       "alloca.i8",

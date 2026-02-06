@@ -385,6 +385,16 @@ bool sir_mb_emit_const_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_
   return emit_inst(b, f, i);
 }
 
+bool sir_mb_emit_const_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, zi_ptr_t v) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_CONST_PTR;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.const_ptr.v = v;
+  i.u.const_ptr.dst = dst;
+  return emit_inst(b, f, i);
+}
+
 bool sir_mb_emit_const_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint8_t v) {
   sir_inst_t i = {0};
   i.k = SIR_INST_CONST_I8;
@@ -506,6 +516,18 @@ bool sir_mb_emit_ptr_cmp_ne(sir_module_builder_t* b, sir_func_id_t f, sir_val_id
   i.u.ptr_cmp.a = a;
   i.u.ptr_cmp.b = b_;
   i.u.ptr_cmp.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_select(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t cond, sir_val_id_t a, sir_val_id_t b_) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_SELECT;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.select.cond = cond;
+  i.u.select.a = a;
+  i.u.select.b = b_;
+  i.u.select.dst = dst;
   return emit_inst(b, f, i);
 }
 
@@ -1047,6 +1069,12 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
             return false;
           }
           break;
+        case SIR_INST_CONST_PTR:
+          if (inst->u.const_ptr.dst >= vc) {
+            set_errf(err, err_cap, "const_ptr dst out of range (%u >= %u)", inst->u.const_ptr.dst, vc);
+            return false;
+          }
+          break;
         case SIR_INST_CONST_PTR_NULL:
           if (inst->u.const_null.dst >= vc) {
             set_errf(err, err_cap, "const_null dst out of range (%u >= %u)", inst->u.const_null.dst, vc);
@@ -1111,6 +1139,12 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_PTR_CMP_NE:
           if (inst->u.ptr_cmp.dst >= vc || inst->u.ptr_cmp.a >= vc || inst->u.ptr_cmp.b >= vc) {
             set_err(err, err_cap, "ptr_cmp operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_SELECT:
+          if (inst->u.select.dst >= vc || inst->u.select.cond >= vc || inst->u.select.a >= vc || inst->u.select.b >= vc) {
+            set_err(err, err_cap, "select operand out of range");
             return false;
           }
           break;
@@ -1584,6 +1618,14 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         vals[i->u.const_i64.dst] = (sir_value_t){.kind = SIR_VAL_I64, .u.i64 = i->u.const_i64.v};
         ip++;
         break;
+      case SIR_INST_CONST_PTR:
+        if (i->u.const_ptr.dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        vals[i->u.const_ptr.dst] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = i->u.const_ptr.v};
+        ip++;
+        break;
       case SIR_INST_CONST_PTR_NULL:
         if (i->u.const_null.dst >= f->value_count) {
           free(vals);
@@ -1767,6 +1809,24 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         const bool eq = (av.u.ptr == bv.u.ptr);
         const uint8_t r = (i->k == SIR_INST_PTR_CMP_EQ) ? (uint8_t)eq : (uint8_t)(!eq);
         vals[dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = r};
+        ip++;
+        break;
+      }
+      case SIR_INST_SELECT: {
+        const sir_val_id_t cond = i->u.select.cond;
+        const sir_val_id_t a = i->u.select.a;
+        const sir_val_id_t b = i->u.select.b;
+        const sir_val_id_t dst = i->u.select.dst;
+        if (cond >= f->value_count || a >= f->value_count || b >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t cv = vals[cond];
+        if (cv.kind != SIR_VAL_BOOL) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[dst] = cv.u.b ? vals[a] : vals[b];
         ip++;
         break;
       }

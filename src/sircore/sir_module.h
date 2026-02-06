@@ -88,6 +88,7 @@ typedef enum sir_inst_kind {
   SIR_INST_CONST_I8,
   SIR_INST_CONST_I32,
   SIR_INST_CONST_I64,
+  SIR_INST_CONST_PTR,
   SIR_INST_CONST_PTR_NULL,
   SIR_INST_CONST_BYTES, // yields {ptr, i64 len}
   SIR_INST_I32_ADD,
@@ -98,6 +99,7 @@ typedef enum sir_inst_kind {
   SIR_INST_PTR_SUB,     // yields ptr = base - off (bytes)
   SIR_INST_PTR_CMP_EQ,  // yields bool
   SIR_INST_PTR_CMP_NE,  // yields bool
+  SIR_INST_SELECT,      // yields value: cond ? a : b
   SIR_INST_BR,
   SIR_INST_CBR,
   SIR_INST_SWITCH,
@@ -138,6 +140,10 @@ typedef struct sir_inst {
       int64_t v;
       sir_val_id_t dst;
     } const_i64;
+    struct {
+      zi_ptr_t v;
+      sir_val_id_t dst;
+    } const_ptr;
     struct {
       sir_val_id_t dst;
     } const_null;
@@ -182,6 +188,12 @@ typedef struct sir_inst {
       sir_val_id_t b;
       sir_val_id_t dst;
     } ptr_cmp;
+    struct {
+      sir_val_id_t cond;
+      sir_val_id_t a;
+      sir_val_id_t b;
+      sir_val_id_t dst;
+    } select;
     struct {
       uint32_t target_ip;
       const sir_val_id_t* src_slots; // module-owned; len=arg_count
@@ -295,6 +307,7 @@ bool sir_mb_func_set_sig(sir_module_builder_t* b, sir_func_id_t f, sir_sig_t sig
 bool sir_mb_emit_const_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, int32_t v);
 bool sir_mb_emit_const_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, int64_t v);
 bool sir_mb_emit_const_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint8_t v);
+bool sir_mb_emit_const_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, zi_ptr_t v);
 bool sir_mb_emit_const_null_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst);
 bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst_ptr, sir_val_id_t dst_len, const uint8_t* bytes,
                              uint32_t len);
@@ -306,6 +319,7 @@ bool sir_mb_emit_ptr_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t 
 bool sir_mb_emit_ptr_sub(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t base, sir_val_id_t off);
 bool sir_mb_emit_ptr_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_ptr_cmp_ne(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_select(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t cond, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_br_args(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, const sir_val_id_t* src_slots, const sir_val_id_t* dst_slots,
                          uint32_t arg_count, uint32_t* out_ip);
 bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip);

@@ -347,3 +347,19 @@ target_link_libraries(sem_unit_run_sem_ptr_cmp_ne PRIVATE sircore_hosted_zabi si
 target_compile_options(sem_unit_run_sem_ptr_cmp_ne PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sem_run_sem_ptr_cmp_ne COMMAND sem_unit_run_sem_ptr_cmp_ne)
+
+add_executable(sem_unit_run_ptr_cmp
+  tests/test_run_ptr_cmp.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_ptr_cmp PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_ptr_cmp PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_ptr_cmp PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_ptr_cmp PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_ptr_cmp PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_ptr_cmp COMMAND sem_unit_run_ptr_cmp)

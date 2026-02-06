@@ -56,7 +56,7 @@ Scope notes:
 - [ ] `i8.or / i16.or / i32.or / i64.or`
 - [ ] `bool.and / bool.or / bool.xor`
 - [ ] `bool.not`
-- [ ] `select` (SSA-ish conditional value select)
+- [x] `select` (SSA-ish conditional value select)
 - [ ] Minimal compare set beyond `i32.cmp.eq` (at least `ne`, signed `< > <= >=` as needed by MIR)
 
 ### Pointers + memory (beyond stack slots)
