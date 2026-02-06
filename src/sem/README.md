@@ -94,6 +94,7 @@ The current `--run` MVP supports (growing over time):
 - value-level: `select`
 - booleans: `const.bool`, `bool.not`, `bool.and`, `bool.or`, `bool.xor`
 - compares: `i32.cmp.*` (eq/ne, signed + unsigned)
+- integers: `i32.sub`, `i32.mul`, `i32.and`, `i32.or`, `i32.xor`, `i32.not`, `i32.neg`, `i32.shl`, `i32.shr.s`, `i32.shr.u`, `i32.div.*.sat`, `i32.rem.*.sat`, `i32.trunc.i64`
 - layout queries: `ptr.sizeof`, `ptr.alignof`
 - casts: `ptr.to_i64`, `ptr.from_i64`
 - control flow: `term.br` (including `fields.args` passing block params), `term.cbr` / `term.condbr`, `term.switch` (i32 scrut)

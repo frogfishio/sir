@@ -452,6 +452,70 @@ bool sir_mb_emit_i32_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t 
   return emit_inst(b, f, i);
 }
 
+static bool emit_i32_bin(sir_module_builder_t* b, sir_func_id_t f, sir_inst_kind_t k, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  sir_inst_t i = {0};
+  i.k = k;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i32_add.a = a;
+  i.u.i32_add.b = b_;
+  i.u.i32_add.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+static bool emit_i32_un(sir_module_builder_t* b, sir_func_id_t f, sir_inst_kind_t k, sir_val_id_t dst, sir_val_id_t x) {
+  sir_inst_t i = {0};
+  i.k = k;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i32_un.x = x;
+  i.u.i32_un.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_i32_sub(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_SUB, dst, a, b_);
+}
+bool sir_mb_emit_i32_mul(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_MUL, dst, a, b_);
+}
+bool sir_mb_emit_i32_and(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_AND, dst, a, b_);
+}
+bool sir_mb_emit_i32_or(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_OR, dst, a, b_);
+}
+bool sir_mb_emit_i32_xor(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_XOR, dst, a, b_);
+}
+bool sir_mb_emit_i32_not(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
+  return emit_i32_un(b, f, SIR_INST_I32_NOT, dst, x);
+}
+bool sir_mb_emit_i32_neg(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
+  return emit_i32_un(b, f, SIR_INST_I32_NEG, dst, x);
+}
+bool sir_mb_emit_i32_shl(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x, sir_val_id_t shift) {
+  return emit_i32_bin(b, f, SIR_INST_I32_SHL, dst, x, shift);
+}
+bool sir_mb_emit_i32_shr_s(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x, sir_val_id_t shift) {
+  return emit_i32_bin(b, f, SIR_INST_I32_SHR_S, dst, x, shift);
+}
+bool sir_mb_emit_i32_shr_u(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x, sir_val_id_t shift) {
+  return emit_i32_bin(b, f, SIR_INST_I32_SHR_U, dst, x, shift);
+}
+bool sir_mb_emit_i32_div_s_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_DIV_S_SAT, dst, a, b_);
+}
+bool sir_mb_emit_i32_div_u_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_DIV_U_SAT, dst, a, b_);
+}
+bool sir_mb_emit_i32_rem_s_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_REM_S_SAT, dst, a, b_);
+}
+bool sir_mb_emit_i32_rem_u_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_REM_U_SAT, dst, a, b_);
+}
+
 bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
   sir_inst_t i = {0};
   i.k = SIR_INST_I32_CMP_EQ;
@@ -500,6 +564,16 @@ bool sir_mb_emit_i32_cmp_ugt(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
 }
 bool sir_mb_emit_i32_cmp_uge(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
   return emit_i32_cmp(b, f, SIR_INST_I32_CMP_UGE, dst, a, b_);
+}
+
+bool sir_mb_emit_i32_trunc_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_I32_TRUNC_I64;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i32_trunc_i64.x = x;
+  i.u.i32_trunc_i64.dst = dst;
+  return emit_inst(b, f, i);
 }
 
 bool sir_mb_emit_global_addr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_global_id_t gid) {
@@ -1207,6 +1281,30 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
             return false;
           }
           break;
+        case SIR_INST_I32_SUB:
+        case SIR_INST_I32_MUL:
+        case SIR_INST_I32_AND:
+        case SIR_INST_I32_OR:
+        case SIR_INST_I32_XOR:
+        case SIR_INST_I32_SHL:
+        case SIR_INST_I32_SHR_S:
+        case SIR_INST_I32_SHR_U:
+        case SIR_INST_I32_DIV_S_SAT:
+        case SIR_INST_I32_DIV_U_SAT:
+        case SIR_INST_I32_REM_S_SAT:
+        case SIR_INST_I32_REM_U_SAT:
+          if (inst->u.i32_add.dst >= vc || inst->u.i32_add.a >= vc || inst->u.i32_add.b >= vc) {
+            set_err(err, err_cap, "i32_bin operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_I32_NOT:
+        case SIR_INST_I32_NEG:
+          if (inst->u.i32_un.dst >= vc || inst->u.i32_un.x >= vc) {
+            set_err(err, err_cap, "i32_un operand out of range");
+            return false;
+          }
+          break;
         case SIR_INST_I32_CMP_EQ:
           if (inst->u.i32_cmp_eq.dst >= vc || inst->u.i32_cmp_eq.a >= vc || inst->u.i32_cmp_eq.b >= vc) {
             set_err(err, err_cap, "i32_cmp_eq operand out of range");
@@ -1289,6 +1387,12 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_BOOL_XOR:
           if (inst->u.bool_bin.dst >= vc || inst->u.bool_bin.a >= vc || inst->u.bool_bin.b >= vc) {
             set_err(err, err_cap, "bool_bin operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_I32_TRUNC_I64:
+          if (inst->u.i32_trunc_i64.dst >= vc || inst->u.i32_trunc_i64.x >= vc) {
+            set_err(err, err_cap, "i32_trunc_i64 operand out of range");
             return false;
           }
           break;
@@ -1841,6 +1945,118 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         ip++;
         break;
       }
+      case SIR_INST_I32_SUB:
+      case SIR_INST_I32_MUL:
+      case SIR_INST_I32_AND:
+      case SIR_INST_I32_OR:
+      case SIR_INST_I32_XOR:
+      case SIR_INST_I32_NOT:
+      case SIR_INST_I32_NEG:
+      case SIR_INST_I32_SHL:
+      case SIR_INST_I32_SHR_S:
+      case SIR_INST_I32_SHR_U:
+      case SIR_INST_I32_DIV_S_SAT:
+      case SIR_INST_I32_DIV_U_SAT:
+      case SIR_INST_I32_REM_S_SAT:
+      case SIR_INST_I32_REM_U_SAT: {
+        sir_val_id_t dst = 0;
+        int32_t x = 0;
+        int32_t y = 0;
+        if (i->k == SIR_INST_I32_NOT || i->k == SIR_INST_I32_NEG) {
+          const sir_val_id_t xv = i->u.i32_un.x;
+          dst = i->u.i32_un.dst;
+          if (xv >= f->value_count || dst >= f->value_count) {
+            free(vals);
+            return ZI_E_BOUNDS;
+          }
+          const sir_value_t av = vals[xv];
+          if (av.kind != SIR_VAL_I32) {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+          x = av.u.i32;
+          y = 0;
+        } else {
+          const sir_val_id_t a = i->u.i32_add.a;
+          const sir_val_id_t b = i->u.i32_add.b;
+          dst = i->u.i32_add.dst;
+          if (a >= f->value_count || b >= f->value_count || dst >= f->value_count) {
+            free(vals);
+            return ZI_E_BOUNDS;
+          }
+          const sir_value_t av = vals[a];
+          const sir_value_t bv = vals[b];
+          if (av.kind != SIR_VAL_I32 || bv.kind != SIR_VAL_I32) {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+          x = av.u.i32;
+          y = bv.u.i32;
+        }
+        int32_t r = 0;
+        switch (i->k) {
+          case SIR_INST_I32_SUB:
+            r = (int32_t)(x - y);
+            break;
+          case SIR_INST_I32_MUL:
+            r = (int32_t)((int64_t)x * (int64_t)y);
+            break;
+          case SIR_INST_I32_AND:
+            r = (int32_t)((uint32_t)x & (uint32_t)y);
+            break;
+          case SIR_INST_I32_OR:
+            r = (int32_t)((uint32_t)x | (uint32_t)y);
+            break;
+          case SIR_INST_I32_XOR:
+            r = (int32_t)((uint32_t)x ^ (uint32_t)y);
+            break;
+          case SIR_INST_I32_NOT:
+            r = (int32_t)(~(uint32_t)x);
+            break;
+          case SIR_INST_I32_NEG:
+            r = (int32_t)(0 - x);
+            break;
+          case SIR_INST_I32_SHL: {
+            const uint32_t sh = ((uint32_t)y) & 31u;
+            r = (int32_t)((uint32_t)x << sh);
+            break;
+          }
+          case SIR_INST_I32_SHR_S: {
+            const uint32_t sh = ((uint32_t)y) & 31u;
+            r = (int32_t)(x >> sh);
+            break;
+          }
+          case SIR_INST_I32_SHR_U: {
+            const uint32_t sh = ((uint32_t)y) & 31u;
+            r = (int32_t)((uint32_t)x >> sh);
+            break;
+          }
+          case SIR_INST_I32_DIV_S_SAT:
+            if (y == 0) r = 0;
+            else if (x == INT32_MIN && y == -1) r = INT32_MIN;
+            else r = (int32_t)(x / y);
+            break;
+          case SIR_INST_I32_DIV_U_SAT:
+            if (y == 0) r = 0;
+            else r = (int32_t)((uint32_t)x / (uint32_t)y);
+            break;
+          case SIR_INST_I32_REM_S_SAT:
+            if (y == 0) r = 0;
+            else if (x == INT32_MIN && y == -1) r = 0;
+            else r = (int32_t)(x % y);
+            break;
+          case SIR_INST_I32_REM_U_SAT:
+            if (y == 0) r = 0;
+            else r = (int32_t)((uint32_t)x % (uint32_t)y);
+            break;
+          default:
+            free(vals);
+            return ZI_E_INTERNAL;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = r};
+        ip++;
+        break;
+      }
       case SIR_INST_I32_CMP_EQ: {
         const sir_val_id_t a = i->u.i32_cmp_eq.a;
         const sir_val_id_t b = i->u.i32_cmp_eq.b;
@@ -2109,6 +2325,22 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         else if (i->k == SIR_INST_BOOL_OR) r = (uint8_t)(ax | bx);
         else r = (uint8_t)(ax ^ bx);
         vals[dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = r};
+        ip++;
+        break;
+      }
+      case SIR_INST_I32_TRUNC_I64: {
+        const sir_val_id_t x = i->u.i32_trunc_i64.x;
+        const sir_val_id_t dst = i->u.i32_trunc_i64.dst;
+        if (x >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t xv = vals[x];
+        if (xv.kind != SIR_VAL_I64) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = (int32_t)(uint32_t)xv.u.i64};
         ip++;
         break;
       }

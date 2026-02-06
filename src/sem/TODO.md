@@ -53,7 +53,11 @@ Scope notes:
 
 ### Integer / boolean ops (broad coverage before floats/vectors)
 - [x] `i32.add` (plus `binop.add` alias)
-- [ ] `i8.or / i16.or / i32.or / i64.or`
+- [x] `i32.sub / i32.mul / i32.and / i32.or / i32.xor / i32.not / i32.neg`
+- [x] `i32.shl / i32.shr.s / i32.shr.u` (masked shift counts)
+- [x] `i32.div.*.sat / i32.rem.*.sat` (total, non-trapping)
+- [x] `i32.trunc.i64`
+- [ ] i8/i16/i64 integer ops (later)
 - [x] `bool.and / bool.or / bool.xor`
 - [x] `bool.not`
 - [x] `select` (SSA-ish conditional value select)

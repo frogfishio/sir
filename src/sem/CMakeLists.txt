@@ -443,3 +443,51 @@ target_link_libraries(sem_unit_run_sem_ptr_alignof_array PRIVATE sircore_hosted_
 target_compile_options(sem_unit_run_sem_ptr_alignof_array PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sem_run_sem_ptr_alignof_array COMMAND sem_unit_run_sem_ptr_alignof_array)
+
+add_executable(sem_unit_run_sem_i32_bitops
+  tests/test_run_sem_i32_bitops.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_i32_bitops PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_i32_bitops PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_i32_bitops PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_i32_bitops PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_i32_bitops PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_i32_bitops COMMAND sem_unit_run_sem_i32_bitops)
+
+add_executable(sem_unit_run_sem_i32_shift_divrem_sat
+  tests/test_run_sem_i32_shift_divrem_sat.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_i32_shift_divrem_sat PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_i32_shift_divrem_sat PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_i32_shift_divrem_sat PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_i32_shift_divrem_sat PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_i32_shift_divrem_sat PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_i32_shift_divrem_sat COMMAND sem_unit_run_sem_i32_shift_divrem_sat)
+
+add_executable(sem_unit_run_sem_i32_trunc_i64
+  tests/test_run_sem_i32_trunc_i64.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_i32_trunc_i64 PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_i32_trunc_i64 PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_i32_trunc_i64 PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_i32_trunc_i64 PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_i32_trunc_i64 PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_i32_trunc_i64 COMMAND sem_unit_run_sem_i32_trunc_i64)
