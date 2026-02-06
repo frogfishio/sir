@@ -54,3 +54,13 @@ target_link_libraries(sircore_unit_module_hello PRIVATE sircore_module sircore_h
 target_compile_options(sircore_unit_module_hello PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sircore_module_hello COMMAND sircore_unit_module_hello)
+
+add_executable(sircore_unit_module_negative
+  tests/test_module_negative.c
+)
+
+target_include_directories(sircore_unit_module_negative PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(sircore_unit_module_negative PRIVATE sircore_module)
+target_compile_options(sircore_unit_module_negative PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sircore_module_negative COMMAND sircore_unit_module_negative)

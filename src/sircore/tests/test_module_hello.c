@@ -105,11 +105,12 @@ int main(void) {
   }
 
   const sir_type_id_t zi_write_params[] = {ty_i32, ty_ptr, ty_i64};
+  const sir_type_id_t zi_write_results[] = {ty_i32};
   sir_sig_t zi_write_sig = {
       .params = zi_write_params,
       .param_count = (uint32_t)(sizeof(zi_write_params) / sizeof(zi_write_params[0])),
-      .results = NULL,
-      .result_count = 0,
+      .results = zi_write_results,
+      .result_count = (uint32_t)(sizeof(zi_write_results) / sizeof(zi_write_results[0])),
   };
   const sir_sym_id_t sym_zi_write = sir_mb_sym_extern_fn(b, "zi_write", zi_write_sig);
   if (!sym_zi_write) {
@@ -147,17 +148,19 @@ int main(void) {
   }
 
   const sir_val_id_t args[] = {0, 1, 2};
-  if (!sir_mb_emit_call_extern(b, f, sym_zi_write, args, (uint32_t)(sizeof(args) / sizeof(args[0])))) {
+  const sir_val_id_t results[] = {3};
+  if (!sir_mb_emit_call_extern_res(b, f, sym_zi_write, args, (uint32_t)(sizeof(args) / sizeof(args[0])), results,
+                                   (uint8_t)(sizeof(results) / sizeof(results[0])))) {
     sir_mb_free(b);
     sir_hosted_zabi_dispose(&hz);
     sem_guest_mem_dispose(&mem);
     return fail("sir_mb_emit_call_extern failed");
   }
-  if (!sir_mb_emit_exit(b, f, 0)) {
+  if (!sir_mb_emit_exit_val(b, f, 3)) {
     sir_mb_free(b);
     sir_hosted_zabi_dispose(&hz);
     sem_guest_mem_dispose(&mem);
-    return fail("sir_mb_emit_exit failed");
+    return fail("sir_mb_emit_exit_val failed");
   }
 
   sir_module_t* m = sir_mb_finalize(b);
@@ -169,11 +172,11 @@ int main(void) {
   }
 
   const int32_t rc = sir_module_run(m, &mem, host);
-  if (rc != 0) {
+  if (rc != (int32_t)(sizeof(msg) - 1)) {
     sir_module_free(m);
     sir_hosted_zabi_dispose(&hz);
     sem_guest_mem_dispose(&mem);
-    return fail("sir_module_run returned non-zero");
+    return fail("sir_module_run returned unexpected exit code");
   }
 
   if (sink.len != (uint32_t)(sizeof(msg) - 1)) {
@@ -194,4 +197,3 @@ int main(void) {
   sem_guest_mem_dispose(&mem);
   return 0;
 }
-

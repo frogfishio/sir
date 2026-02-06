@@ -34,6 +34,7 @@ Wire framing and op registry: `src/sircore/zi_ctl.md`.
 - types, symbols, nodes, and optional source mapping
 - resolved references (dense indices), validated invariants
 - frozen, immutable execution graph
+- validated invariants (structural + basic semantic checks)
 
 Frontends handle:
 

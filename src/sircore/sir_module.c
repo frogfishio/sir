@@ -1,5 +1,6 @@
 #include "sir_module.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -320,13 +321,22 @@ bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
 }
 
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count) {
+  return sir_mb_emit_call_extern_res(b, f, callee, args, arg_count, NULL, 0);
+}
+
+bool sir_mb_emit_call_extern_res(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count,
+                                 const sir_val_id_t* results, uint8_t result_count) {
   if (!b) return false;
+  if (result_count > 2) return false;
   const uint32_t args_bytes = arg_count * (uint32_t)sizeof(sir_val_id_t);
   const uint8_t* ap = pool_copy_bytes(b, (const uint8_t*)args, args_bytes);
   if (arg_count && !ap) return false;
   sir_inst_t i = {0};
   i.k = SIR_INST_CALL_EXTERN;
-  i.result_count = 0;
+  i.result_count = result_count;
+  if (result_count > 0 && results) {
+    for (uint8_t ri = 0; ri < result_count; ri++) i.results[ri] = results[ri];
+  }
   i.u.call_extern.callee = callee;
   i.u.call_extern.args = (const sir_val_id_t*)ap;
   i.u.call_extern.arg_count = arg_count;
@@ -338,6 +348,14 @@ bool sir_mb_emit_exit(sir_module_builder_t* b, sir_func_id_t f, int32_t code) {
   i.k = SIR_INST_EXIT;
   i.result_count = 0;
   i.u.exit_.code = code;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_exit_val(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t code) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_EXIT_VAL;
+  i.result_count = 0;
+  i.u.exit_val.code = code;
   return emit_inst(b, f, i);
 }
 
@@ -472,6 +490,175 @@ void sir_module_free(sir_module_t* m) {
   free(impl);
 }
 
+static bool set_err(char* err, size_t cap, const char* msg) {
+  if (!err || cap == 0) return false;
+  (void)snprintf(err, cap, "%s", msg ? msg : "invalid");
+  return true;
+}
+
+static bool set_errf(char* err, size_t cap, const char* fmt, uint32_t a, uint32_t b) {
+  if (!err || cap == 0) return false;
+  (void)snprintf(err, cap, fmt, (unsigned)a, (unsigned)b);
+  return true;
+}
+
+bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
+  if (!m) {
+    set_err(err, err_cap, "module is null");
+    return false;
+  }
+  if (m->func_count == 0 || !m->funcs) {
+    set_err(err, err_cap, "module has no funcs");
+    return false;
+  }
+  if (m->entry == 0 || m->entry > m->func_count) {
+    set_errf(err, err_cap, "entry out of range (%u > %u)", m->entry, m->func_count);
+    return false;
+  }
+
+  if (m->type_count && !m->types) {
+    set_err(err, err_cap, "type_count set but types is null");
+    return false;
+  }
+  for (uint32_t ti = 0; ti < m->type_count; ti++) {
+    if (m->types[ti].prim == SIR_PRIM_INVALID) {
+      set_errf(err, err_cap, "invalid prim type at index %u of %u", ti + 1, m->type_count);
+      return false;
+    }
+  }
+
+  if (m->sym_count && !m->syms) {
+    set_err(err, err_cap, "sym_count set but syms is null");
+    return false;
+  }
+  for (uint32_t si = 0; si < m->sym_count; si++) {
+    const sir_sym_t* s = &m->syms[si];
+    if (s->kind != SIR_SYM_EXTERN_FN) {
+      set_errf(err, err_cap, "invalid sym kind at index %u of %u", si + 1, m->sym_count);
+      return false;
+    }
+    if (!s->name || s->name[0] == '\0') {
+      set_errf(err, err_cap, "sym name missing at index %u of %u", si + 1, m->sym_count);
+      return false;
+    }
+    if (s->sig.param_count && !s->sig.params) {
+      set_errf(err, err_cap, "sym params missing at index %u of %u", si + 1, m->sym_count);
+      return false;
+    }
+    if (s->sig.result_count && !s->sig.results) {
+      set_errf(err, err_cap, "sym results missing at index %u of %u", si + 1, m->sym_count);
+      return false;
+    }
+    for (uint32_t pi = 0; pi < s->sig.param_count; pi++) {
+      const sir_type_id_t tid = s->sig.params[pi];
+      if (tid == 0 || tid > m->type_count) {
+        set_errf(err, err_cap, "sym param type out of range (%u > %u)", (uint32_t)tid, m->type_count);
+        return false;
+      }
+    }
+    for (uint32_t ri = 0; ri < s->sig.result_count; ri++) {
+      const sir_type_id_t tid = s->sig.results[ri];
+      if (tid == 0 || tid > m->type_count) {
+        set_errf(err, err_cap, "sym result type out of range (%u > %u)", (uint32_t)tid, m->type_count);
+        return false;
+      }
+    }
+  }
+
+  for (uint32_t fi = 0; fi < m->func_count; fi++) {
+    const sir_func_t* f = &m->funcs[fi];
+    if (!f->name || f->name[0] == '\0') {
+      set_errf(err, err_cap, "func name missing at index %u of %u", fi + 1, m->func_count);
+      return false;
+    }
+    if (f->inst_count && !f->insts) {
+      set_errf(err, err_cap, "func insts missing at index %u of %u", fi + 1, m->func_count);
+      return false;
+    }
+    const uint32_t vc = f->value_count;
+    for (uint32_t ii = 0; ii < f->inst_count; ii++) {
+      const sir_inst_t* inst = &f->insts[ii];
+      switch (inst->k) {
+        case SIR_INST_CONST_I32:
+          if (inst->u.const_i32.dst >= vc) {
+            set_errf(err, err_cap, "const_i32 dst out of range (%u >= %u)", inst->u.const_i32.dst, vc);
+            return false;
+          }
+          break;
+        case SIR_INST_CONST_I64:
+          if (inst->u.const_i64.dst >= vc) {
+            set_errf(err, err_cap, "const_i64 dst out of range (%u >= %u)", inst->u.const_i64.dst, vc);
+            return false;
+          }
+          break;
+        case SIR_INST_CONST_PTR_NULL:
+          if (inst->u.const_null.dst >= vc) {
+            set_errf(err, err_cap, "const_null dst out of range (%u >= %u)", inst->u.const_null.dst, vc);
+            return false;
+          }
+          break;
+        case SIR_INST_CONST_BYTES:
+          if (inst->u.const_bytes.dst_ptr >= vc || inst->u.const_bytes.dst_len >= vc) {
+            set_err(err, err_cap, "const_bytes dst out of range");
+            return false;
+          }
+          if (inst->u.const_bytes.len && !inst->u.const_bytes.bytes) {
+            set_err(err, err_cap, "const_bytes has len but no bytes");
+            return false;
+          }
+          break;
+        case SIR_INST_CALL_EXTERN: {
+          const sir_sym_id_t callee = inst->u.call_extern.callee;
+          if (callee == 0 || callee > m->sym_count) {
+            set_err(err, err_cap, "call_extern callee out of range");
+            return false;
+          }
+          const sir_sym_t* s = &m->syms[callee - 1];
+          if (inst->u.call_extern.arg_count && !inst->u.call_extern.args) {
+            set_err(err, err_cap, "call_extern arg_count set but args is null");
+            return false;
+          }
+          if (inst->u.call_extern.arg_count != s->sig.param_count) {
+            set_err(err, err_cap, "call_extern arg_count does not match signature");
+            return false;
+          }
+          if (inst->result_count != s->sig.result_count) {
+            set_err(err, err_cap, "call_extern result_count does not match signature");
+            return false;
+          }
+          for (uint32_t ai = 0; ai < inst->u.call_extern.arg_count; ai++) {
+            if (inst->u.call_extern.args[ai] >= vc) {
+              set_err(err, err_cap, "call_extern arg out of range");
+              return false;
+            }
+          }
+          for (uint8_t ri = 0; ri < inst->result_count; ri++) {
+            if (inst->results[ri] >= vc) {
+              set_err(err, err_cap, "call_extern result out of range");
+              return false;
+            }
+          }
+          break;
+        }
+        case SIR_INST_EXIT:
+          break;
+        case SIR_INST_EXIT_VAL:
+          if (inst->u.exit_val.code >= vc) {
+            set_err(err, err_cap, "exit_val code out of range");
+            return false;
+          }
+          break;
+        default:
+          set_err(err, err_cap, "unknown instruction kind");
+          return false;
+      }
+    }
+  }
+
+  if (err && err_cap) err[0] = '\0';
+  return true;
+}
+
 static const sir_sym_t* sym_at(const sir_module_t* m, sir_sym_id_t id) {
   if (!m) return NULL;
   if (id == 0 || id > m->sym_count) return NULL;
@@ -490,6 +677,12 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
   const sir_val_id_t* args = inst->u.call_extern.args;
   const uint32_t n = inst->u.call_extern.arg_count;
 
+  sir_val_id_t r0 = 0;
+  if (inst->result_count > 0) {
+    r0 = inst->results[0];
+    if (r0 >= val_count) return ZI_E_BOUNDS;
+  }
+
   if (strcmp(nm, "zi_write") == 0) {
     if (!host.v.zi_write) return ZI_E_NOSYS;
     if (n != 3) return ZI_E_INVALID;
@@ -502,7 +695,12 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     if (p.kind != SIR_VAL_PTR) return ZI_E_INVALID;
     if (l.kind != SIR_VAL_I64) return ZI_E_INVALID;
     if (l.u.i64 < 0 || l.u.i64 > 0x7FFFFFFFll) return ZI_E_INVALID;
-    return host.v.zi_write(host.user, (zi_handle_t)h.u.i32, p.u.ptr, (zi_size32_t)l.u.i64);
+    const int32_t rc = host.v.zi_write(host.user, (zi_handle_t)h.u.i32, p.u.ptr, (zi_size32_t)l.u.i64);
+    if (rc < 0) return rc;
+    if (inst->result_count == 1) {
+      vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
+    }
+    return 0;
   }
 
   if (strcmp(nm, "zi_end") == 0) {
@@ -512,7 +710,32 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     if (a0 >= val_count) return ZI_E_BOUNDS;
     const sir_value_t h = vals[a0];
     if (h.kind != SIR_VAL_I32) return ZI_E_INVALID;
-    return host.v.zi_end(host.user, (zi_handle_t)h.u.i32);
+    const int32_t rc = host.v.zi_end(host.user, (zi_handle_t)h.u.i32);
+    if (rc < 0) return rc;
+    if (inst->result_count == 1) {
+      vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
+    }
+    return 0;
+  }
+
+  if (strcmp(nm, "zi_read") == 0) {
+    if (!host.v.zi_read) return ZI_E_NOSYS;
+    if (n != 3) return ZI_E_INVALID;
+    const sir_val_id_t a0 = args[0], a1 = args[1], a2 = args[2];
+    if (a0 >= val_count || a1 >= val_count || a2 >= val_count) return ZI_E_BOUNDS;
+    const sir_value_t h = vals[a0];
+    const sir_value_t p = vals[a1];
+    const sir_value_t l = vals[a2];
+    if (h.kind != SIR_VAL_I32) return ZI_E_INVALID;
+    if (p.kind != SIR_VAL_PTR) return ZI_E_INVALID;
+    if (l.kind != SIR_VAL_I64) return ZI_E_INVALID;
+    if (l.u.i64 < 0 || l.u.i64 > 0x7FFFFFFFll) return ZI_E_INVALID;
+    const int32_t rc = host.v.zi_read(host.user, (zi_handle_t)h.u.i32, p.u.ptr, (zi_size32_t)l.u.i64);
+    if (rc < 0) return rc;
+    if (inst->result_count == 1) {
+      vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
+    }
+    return 0;
   }
 
   if (strcmp(nm, "zi_alloc") == 0) {
@@ -523,7 +746,11 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     const sir_value_t sz = vals[a0];
     if (sz.kind != SIR_VAL_I32) return ZI_E_INVALID;
     const zi_ptr_t p = host.v.zi_alloc(host.user, (zi_size32_t)sz.u.i32);
-    return p ? 0 : ZI_E_OOM;
+    if (!p && sz.u.i32 != 0) return ZI_E_OOM;
+    if (inst->result_count == 1) {
+      vals[r0] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = p};
+    }
+    return 0;
   }
 
   if (strcmp(nm, "zi_free") == 0) {
@@ -533,7 +760,12 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     if (a0 >= val_count) return ZI_E_BOUNDS;
     const sir_value_t p = vals[a0];
     if (p.kind != SIR_VAL_PTR) return ZI_E_INVALID;
-    return host.v.zi_free(host.user, p.u.ptr);
+    const int32_t rc = host.v.zi_free(host.user, p.u.ptr);
+    if (rc < 0) return rc;
+    if (inst->result_count == 1) {
+      vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
+    }
+    return 0;
   }
 
   if (strcmp(nm, "zi_telemetry") == 0) {
@@ -547,7 +779,12 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     const sir_value_t ml = vals[a3];
     if (tp.kind != SIR_VAL_PTR || mp.kind != SIR_VAL_PTR) return ZI_E_INVALID;
     if (tl.kind != SIR_VAL_I32 || ml.kind != SIR_VAL_I32) return ZI_E_INVALID;
-    return host.v.zi_telemetry(host.user, tp.u.ptr, (zi_size32_t)tl.u.i32, mp.u.ptr, (zi_size32_t)ml.u.i32);
+    const int32_t rc = host.v.zi_telemetry(host.user, tp.u.ptr, (zi_size32_t)tl.u.i32, mp.u.ptr, (zi_size32_t)ml.u.i32);
+    if (rc < 0) return rc;
+    if (inst->result_count == 1) {
+      vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
+    }
+    return 0;
   }
 
   return ZI_E_NOSYS;
@@ -555,6 +792,8 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
 
 int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host) {
   if (!m || !mem) return ZI_E_INTERNAL;
+  char err[160];
+  if (!sir_module_validate(m, err, sizeof(err))) return ZI_E_INVALID;
   if (m->entry == 0 || m->entry > m->func_count) return ZI_E_INVALID;
   const sir_func_t* f = &m->funcs[m->entry - 1];
 
@@ -628,6 +867,21 @@ int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t h
         exit_code = i->u.exit_.code;
         free(vals);
         return exit_code;
+      case SIR_INST_EXIT_VAL: {
+        const sir_val_id_t cv = i->u.exit_val.code;
+        if (cv >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t v = vals[cv];
+        if (v.kind != SIR_VAL_I32) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        exit_code = v.u.i32;
+        free(vals);
+        return exit_code;
+      }
       default:
         free(vals);
         return ZI_E_INVALID;

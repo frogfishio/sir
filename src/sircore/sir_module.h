@@ -79,6 +79,7 @@ typedef enum sir_inst_kind {
   SIR_INST_CONST_BYTES, // yields {ptr, i64 len}
   SIR_INST_CALL_EXTERN, // currently supports zi_write/zi_end/zi_alloc/zi_free/zi_telemetry
   SIR_INST_EXIT,
+  SIR_INST_EXIT_VAL, // exits with i32 value in slot
 } sir_inst_kind_t;
 
 typedef struct sir_inst {
@@ -112,6 +113,9 @@ typedef struct sir_inst {
     struct {
       int32_t code;
     } exit_;
+    struct {
+      sir_val_id_t code;
+    } exit_val;
   } u;
 } sir_inst_t;
 
@@ -154,7 +158,10 @@ bool sir_mb_emit_const_null_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_va
 bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst_ptr, sir_val_id_t dst_len, const uint8_t* bytes,
                              uint32_t len);
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count);
+bool sir_mb_emit_call_extern_res(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count,
+                                 const sir_val_id_t* results, uint8_t result_count);
 bool sir_mb_emit_exit(sir_module_builder_t* b, sir_func_id_t f, int32_t code);
+bool sir_mb_emit_exit_val(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t code);
 
 // Finalize: produces an immutable module. The module owns all memory.
 // Returns NULL on OOM or malformed builder state.
@@ -162,6 +169,10 @@ sir_module_t* sir_mb_finalize(sir_module_builder_t* b);
 
 // Free a finalized module (returned by sir_mb_finalize). Safe to pass NULL.
 void sir_module_free(sir_module_t* m);
+
+// Validate a module for basic semantic/structural invariants.
+// Returns true if valid; on failure, writes a short message into `err` when provided.
+bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap);
 
 // Execution: run module entry function.
 // Returns exit code (>=0) or negative ZI_E_*.
