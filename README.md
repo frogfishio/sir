@@ -91,6 +91,11 @@ If you installed LLVM with Homebrew:
 - `cmake --build build`
 - Build the copy-pasteable bundle in `./dist/`: `cmake --build build --target dist`
 
+### Versioning
+
+- Project version lives in `./VERSION` and is embedded into `sircc --version` / `sirc --version`.
+- Convenience wrapper: `make bump` (increments patch version) and `make dist` (builds the bundle).
+
 ### Run
 
 - Emit an executable: `./build/src/sircc/sircc src/sircc/examples/add.sir.jsonl -o add`

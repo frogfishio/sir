@@ -3,5 +3,8 @@
 
 #pragma once
 
-#define SIRCC_VERSION "0.1.0-dev"
+#ifndef SIR_VERSION
+#define SIR_VERSION "0.0.0"
+#endif
 
+#define SIRCC_VERSION SIR_VERSION

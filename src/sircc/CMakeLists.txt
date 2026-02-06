@@ -36,6 +36,8 @@ add_executable(sircc
   json.c
 )
 
+target_compile_definitions(sircc PRIVATE SIR_VERSION="${SIR_VERSION}")
+
 target_include_directories(sircc PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
 find_package(LLVM REQUIRED CONFIG)

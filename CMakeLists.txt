@@ -8,6 +8,14 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 enable_testing()
 
+# Project version (used by shipped binaries + dist bundle).
+set(SIR_VERSION "0.0.0")
+if(EXISTS ${CMAKE_SOURCE_DIR}/VERSION)
+  file(READ ${CMAKE_SOURCE_DIR}/VERSION SIR_VERSION_RAW)
+  string(STRIP "${SIR_VERSION_RAW}" SIR_VERSION)
+endif()
+set(SIR_VERSION "${SIR_VERSION}" CACHE STRING "Project version (from ./VERSION)")
+
 add_subdirectory(src/sircc)
 
 option(SIR_ENABLE_SIRC "Build the experimental .sir text parser (flex/bison)" OFF)
@@ -44,6 +52,7 @@ add_custom_target(dist_sircc
 
   # binaries
   COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:sircc> ${SIR_DIST_BIN_OS}/sircc
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/VERSION ${SIR_DIST_ROOT}/VERSION
 
   # docs
   COMMAND ${CMAKE_COMMAND} -E rm -f ${SIR_DIST_DOC}/src.md

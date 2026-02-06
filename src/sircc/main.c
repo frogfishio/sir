@@ -15,6 +15,8 @@
 
 static void usage(FILE* out) {
   fprintf(out,
+          "sircc — SIR JSONL compiler\n"
+          "\n"
           "Usage:\n"
           "  sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj|--emit-zasm] [--clang <path>] [--target-triple <triple>]\n"
           "  sircc <input.sir.jsonl> -o <output.zasm.jsonl> --emit-zasm [--emit-zasm-map <map.jsonl>]\n"
@@ -28,7 +30,10 @@ static void usage(FILE* out) {
           "  sircc --deterministic ...\n"
           "  sircc --require-pinned-triple ...\n"
           "  sircc --require-target-contract ...\n"
-          "  sircc --version\n");
+          "  sircc --version\n"
+          "\n"
+          "License: GPLv3+\n"
+          "© 2026 Frogfish — Author: Alexander Croft\n");
 }
 
 static bool streq(const char* a, const char* b) { return a && b && strcmp(a, b) == 0; }
@@ -80,7 +85,10 @@ int main(int argc, char** argv) {
       unsigned maj = 0, min = 0, pat = 0;
       LLVMGetVersion(&maj, &min, &pat);
       char* triple = LLVMGetDefaultTargetTriple();
-      printf("sircc %s (LLVM %u.%u.%u, default-triple=%s)\n", SIRCC_VERSION, maj, min, pat, triple ? triple : "(null)");
+      printf("sircc %s\n", SIRCC_VERSION);
+      printf("LLVM %u.%u.%u (default-triple=%s)\n", maj, min, pat, triple ? triple : "(null)");
+      printf("License: GPLv3+\n");
+      printf("© 2026 Frogfish — Author: Alexander Croft\n");
       if (triple) LLVMDisposeMessage(triple);
       return 0;
     }

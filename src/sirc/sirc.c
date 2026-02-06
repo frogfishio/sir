@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "sirc_emit.h"
+#include "version.h"
 
 // Flex/Bison
 extern FILE* yyin;
@@ -1595,6 +1596,22 @@ static char* default_out_path(const char* in_path) {
   return out;
 }
 
+static void usage(FILE* out) {
+  fprintf(out,
+          "sirc — SIR sugar translator (.sir → .sir.jsonl)\n"
+          "\n"
+          "Usage:\n"
+          "  sirc <input.sir> [-o <output.sir.jsonl>]\n"
+          "\n"
+          "Options:\n"
+          "  --help, -h    Show this help message\n"
+          "  --version     Show version information\n"
+          "  -o <path>     Write output JSONL to a file\n"
+          "\n"
+          "License: GPLv3+\n"
+          "© 2026 Frogfish — Author: Alexander Croft\n");
+}
+
 int main(int argc, char** argv) {
   const char* in_path = NULL;
   const char* out_path = NULL;
@@ -1603,7 +1620,13 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; i++) {
     const char* a = argv[i];
     if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
-      fprintf(stderr, "Usage: sirc <input.sir> [-o <output.sir.jsonl>]\n");
+      usage(stdout);
+      return 0;
+    }
+    if (strcmp(a, "--version") == 0) {
+      printf("sirc %s\n", SIRC_VERSION);
+      printf("License: GPLv3+\n");
+      printf("© 2026 Frogfish — Author: Alexander Croft\n");
       return 0;
     }
     if (strcmp(a, "-o") == 0) {

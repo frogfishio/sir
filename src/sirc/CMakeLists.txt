@@ -10,6 +10,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include(CTest)
 endif()
 
+if(NOT DEFINED SIR_VERSION OR SIR_VERSION STREQUAL "")
+  set(SIR_VERSION "0.0.0")
+endif()
+
 # Prefer Homebrew bison/flex on macOS (Apple's system bison is often very old).
 find_program(SIRC_BISON
   NAMES bison
@@ -55,6 +59,8 @@ add_executable(sirc
   ${SIRC_BISON_C}
   ${SIRC_FLEX_C}
 )
+
+target_compile_definitions(sirc PRIVATE SIR_VERSION="${SIR_VERSION}")
 
 set_source_files_properties(
   ${SIRC_BISON_C}
