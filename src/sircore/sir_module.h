@@ -86,6 +86,8 @@ typedef enum sir_inst_kind {
   SIR_INST_BR,
   SIR_INST_CBR,
   SIR_INST_SWITCH,
+  SIR_INST_MEM_COPY,
+  SIR_INST_MEM_FILL,
   SIR_INST_ALLOCA,
   SIR_INST_STORE_I8,
   SIR_INST_STORE_I32,
@@ -156,6 +158,17 @@ typedef struct sir_inst {
       uint32_t case_count;
       uint32_t default_ip;
     } sw;
+    struct {
+      sir_val_id_t dst;
+      sir_val_id_t src;
+      sir_val_id_t len;
+      uint8_t overlap_allow;
+    } mem_copy;
+    struct {
+      sir_val_id_t dst;
+      sir_val_id_t byte;
+      sir_val_id_t len;
+    } mem_fill;
     struct {
       uint32_t size;
       uint32_t align;
@@ -246,6 +259,8 @@ bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip
 bool sir_mb_emit_cbr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t cond, uint32_t then_ip, uint32_t else_ip, uint32_t* out_ip);
 bool sir_mb_emit_switch(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t scrut, const int32_t* case_lits, const uint32_t* case_target,
                         uint32_t case_count, uint32_t default_ip, uint32_t* out_ip);
+bool sir_mb_emit_mem_copy(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t src, sir_val_id_t len, bool overlap_allow);
+bool sir_mb_emit_mem_fill(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t byte, sir_val_id_t len);
 bool sir_mb_emit_alloca(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint32_t size, uint32_t align);
 bool sir_mb_emit_store_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_store_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);

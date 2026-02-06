@@ -99,6 +99,8 @@ static void sem_print_support(FILE* out, bool json) {
       "store.i8",
       "store.i32",
       "store.i64",
+      "mem.copy",
+      "mem.fill",
 
       // calls
       "decl.fn (extern import)",

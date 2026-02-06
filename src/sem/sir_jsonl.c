@@ -546,6 +546,77 @@ static bool eval_store_mnemonic(sirj_ctx_t* c, const node_info_t* n, sir_inst_ki
   return false;
 }
 
+static bool eval_mem_copy_stmt(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n) {
+  if (!c || !n) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 3) {
+    sirj_diag_setf(c, "sem.parse.mem.copy.args", c->cur_path, n->loc_line, node_id, n->tag, "mem.copy args must be [dst, src, len]");
+    return false;
+  }
+
+  uint32_t dst_id = 0, src_id = 0, len_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &dst_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &src_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[2], &len_id)) return false;
+
+  sir_val_id_t dst_slot = 0, src_slot = 0, len_slot = 0;
+  val_kind_t dk = VK_INVALID, sk = VK_INVALID, lk = VK_INVALID;
+  if (!eval_node(c, dst_id, &dst_slot, &dk)) return false;
+  if (!eval_node(c, src_id, &src_slot, &sk)) return false;
+  if (!eval_node(c, len_id, &len_slot, &lk)) return false;
+  if (dk != VK_PTR || sk != VK_PTR) return false;
+  if (lk != VK_I64 && lk != VK_I32) return false;
+
+  bool overlap_allow = false;
+  const JsonValue* fv = json_obj_get(n->fields_obj, "flags");
+  if (fv) {
+    if (!json_is_object(fv)) return false;
+    const char* ov = json_get_string(json_obj_get(fv, "overlap"));
+    if (ov) {
+      if (strcmp(ov, "allow") == 0) overlap_allow = true;
+      else if (strcmp(ov, "disallow") == 0) overlap_allow = false;
+      else {
+        sirj_diag_setf(c, "sem.parse.mem.copy.overlap", c->cur_path, n->loc_line, node_id, n->tag,
+                       "mem.copy flags.overlap must be \"allow\" or \"disallow\"");
+        return false;
+      }
+    }
+  }
+
+  return sir_mb_emit_mem_copy(c->mb, c->fn, dst_slot, src_slot, len_slot, overlap_allow);
+}
+
+static bool eval_mem_fill_stmt(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n) {
+  if (!c || !n) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 3) {
+    sirj_diag_setf(c, "sem.parse.mem.fill.args", c->cur_path, n->loc_line, node_id, n->tag, "mem.fill args must be [dst, byte, len]");
+    return false;
+  }
+
+  uint32_t dst_id = 0, byte_id = 0, len_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &dst_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &byte_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[2], &len_id)) return false;
+
+  sir_val_id_t dst_slot = 0, byte_slot = 0, len_slot = 0;
+  val_kind_t dk = VK_INVALID, bk = VK_INVALID, lk = VK_INVALID;
+  if (!eval_node(c, dst_id, &dst_slot, &dk)) return false;
+  if (!eval_node(c, byte_id, &byte_slot, &bk)) return false;
+  if (!eval_node(c, len_id, &len_slot, &lk)) return false;
+  if (dk != VK_PTR) return false;
+  if (bk != VK_I8 && bk != VK_I32) return false;
+  if (lk != VK_I64 && lk != VK_I32) return false;
+
+  // ignore flags for now (alignDst/vol)
+  const JsonValue* fv = json_obj_get(n->fields_obj, "flags");
+  if (fv && !json_is_object(fv)) return false;
+
+  return sir_mb_emit_mem_fill(c->mb, c->fn, dst_slot, byte_slot, len_slot);
+}
+
 static bool eval_load_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_inst_kind_t k, val_kind_t outk, sir_val_id_t* out_slot,
                                val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
@@ -846,6 +917,8 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
   if (strcmp(n->tag, "store.i8") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_I8);
   if (strcmp(n->tag, "store.i32") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_I32);
   if (strcmp(n->tag, "store.i64") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_I64);
+  if (strcmp(n->tag, "mem.copy") == 0) return eval_mem_copy_stmt(c, stmt_id, n);
+  if (strcmp(n->tag, "mem.fill") == 0) return eval_mem_fill_stmt(c, stmt_id, n);
 
   if (strcmp(n->tag, "term.ret") == 0 || strcmp(n->tag, "return") == 0) {
     // MVP: return a previously computed value (or default 0).

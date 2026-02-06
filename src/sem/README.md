@@ -92,3 +92,4 @@ The current `--run` MVP supports (growing over time):
 - traps: `term.trap`, `term.unreachable` (SEM exits with code 255/254)
 - block params: `block.fields.params` with `bparam` nodes
 - memory: `alloca.i8/i32/i64`, `store.i8/i32/i64`, `load.i8/i32/i64`
+- bulk memory: `mem.copy`, `mem.fill` (MVP; overlap disallow traps)

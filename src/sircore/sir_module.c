@@ -483,6 +483,27 @@ bool sir_mb_emit_switch(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t s
   return true;
 }
 
+bool sir_mb_emit_mem_copy(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t src, sir_val_id_t len, bool overlap_allow) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_MEM_COPY;
+  i.result_count = 0;
+  i.u.mem_copy.dst = dst;
+  i.u.mem_copy.src = src;
+  i.u.mem_copy.len = len;
+  i.u.mem_copy.overlap_allow = overlap_allow ? 1 : 0;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_mem_fill(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t byte, sir_val_id_t len) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_MEM_FILL;
+  i.result_count = 0;
+  i.u.mem_fill.dst = dst;
+  i.u.mem_fill.byte = byte;
+  i.u.mem_fill.len = len;
+  return emit_inst(b, f, i);
+}
+
 bool sir_mb_emit_alloca(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint32_t size, uint32_t align) {
   sir_inst_t i = {0};
   i.k = SIR_INST_ALLOCA;
@@ -944,6 +965,18 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
           }
           if (inst->u.sw.default_ip >= f->inst_count) {
             set_err(err, err_cap, "switch default_ip out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_MEM_COPY:
+          if (inst->u.mem_copy.dst >= vc || inst->u.mem_copy.src >= vc || inst->u.mem_copy.len >= vc) {
+            set_err(err, err_cap, "mem.copy operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_MEM_FILL:
+          if (inst->u.mem_fill.dst >= vc || inst->u.mem_fill.byte >= vc || inst->u.mem_fill.len >= vc) {
+            set_err(err, err_cap, "mem.fill operand out of range");
             return false;
           }
           break;
@@ -1504,6 +1537,112 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           }
         }
         ip = next_ip;
+        break;
+      }
+      case SIR_INST_MEM_COPY: {
+        const sir_val_id_t dst_id = i->u.mem_copy.dst;
+        const sir_val_id_t src_id = i->u.mem_copy.src;
+        const sir_val_id_t len_id = i->u.mem_copy.len;
+        if (dst_id >= f->value_count || src_id >= f->value_count || len_id >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t dv = vals[dst_id];
+        const sir_value_t sv = vals[src_id];
+        const sir_value_t lv = vals[len_id];
+        if (dv.kind != SIR_VAL_PTR || sv.kind != SIR_VAL_PTR) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        int64_t ll = 0;
+        if (lv.kind == SIR_VAL_I64) ll = lv.u.i64;
+        else if (lv.kind == SIR_VAL_I32) ll = lv.u.i32;
+        else {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        if (ll < 0 || ll > 0x7FFFFFFFll) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const uint32_t n = (uint32_t)ll;
+        if (n == 0) {
+          ip++;
+          break;
+        }
+
+        if (!i->u.mem_copy.overlap_allow) {
+          const zi_ptr_t da = dv.u.ptr;
+          const zi_ptr_t sa = sv.u.ptr;
+          const zi_ptr_t da_end = (zi_ptr_t)(da + (zi_ptr_t)n);
+          const zi_ptr_t sa_end = (zi_ptr_t)(sa + (zi_ptr_t)n);
+          const bool overlap = (da < sa_end) && (sa < da_end);
+          if (overlap) {
+            free(vals);
+            // deterministic trap (align with term.trap in SEM: exit code 255)
+            return 256;
+          }
+        }
+
+        const uint8_t* r = NULL;
+        uint8_t* w = NULL;
+        if (!sem_guest_mem_map_ro(mem, sv.u.ptr, (zi_size32_t)n, &r) || !r) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        if (!sem_guest_mem_map_rw(mem, dv.u.ptr, (zi_size32_t)n, &w) || !w) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        memmove(w, r, n);
+        ip++;
+        break;
+      }
+      case SIR_INST_MEM_FILL: {
+        const sir_val_id_t dst_id = i->u.mem_fill.dst;
+        const sir_val_id_t byte_id = i->u.mem_fill.byte;
+        const sir_val_id_t len_id = i->u.mem_fill.len;
+        if (dst_id >= f->value_count || byte_id >= f->value_count || len_id >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t dv = vals[dst_id];
+        const sir_value_t bv = vals[byte_id];
+        const sir_value_t lv = vals[len_id];
+        if (dv.kind != SIR_VAL_PTR) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        uint8_t byte = 0;
+        if (bv.kind == SIR_VAL_I8) byte = bv.u.u8;
+        else if (bv.kind == SIR_VAL_I32) byte = (uint8_t)bv.u.i32;
+        else {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        int64_t ll = 0;
+        if (lv.kind == SIR_VAL_I64) ll = lv.u.i64;
+        else if (lv.kind == SIR_VAL_I32) ll = lv.u.i32;
+        else {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        if (ll < 0 || ll > 0x7FFFFFFFll) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const uint32_t n = (uint32_t)ll;
+        if (n == 0) {
+          ip++;
+          break;
+        }
+        uint8_t* w = NULL;
+        if (!sem_guest_mem_map_rw(mem, dv.u.ptr, (zi_size32_t)n, &w) || !w) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        memset(w, (int)byte, n);
+        ip++;
         break;
       }
       case SIR_INST_ALLOCA: {

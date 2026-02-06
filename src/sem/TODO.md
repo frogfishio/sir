@@ -66,8 +66,8 @@ Scope notes:
 - [ ] `ptr.to_i64 / ptr.from_i64` (currently only `ptr.to_i64` passthrough in SEM)
 - [ ] `ptr.cmp.eq / ptr.cmp.ne`
 - [ ] `ptr.sizeof` / `ptr.alignof` (at least for prims; later for structs)
-- [ ] `mem.copy`
-- [ ] `mem.fill`
+- [x] `mem.copy` (overlap: disallow/allow; disallow traps on overlap)
+- [x] `mem.fill`
 
 ## P2 (data): globals + structured constants (enables “real programs”)
 
