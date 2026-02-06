@@ -247,15 +247,15 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
     - [x] `vec_shuffle_two_inputs` (added: `examples/simd_shuffle_two_inputs.sir.jsonl`)
     - [x] `vec_load_store_roundtrip` (covered by `examples/simd_splat_extract.sir.jsonl`)
   - [ ] Add negative fixtures:
-    - [ ] missing `ty` / wrong `ty` kind
+    - [x] missing `ty` / wrong `ty` kind (added: `examples/bad_simd_splat_missing_type_ref.sir.jsonl`, `examples/bad_simd_splat_wrong_type_ref.sir.jsonl`)
     - [x] lane type not allowed / lanes == 0 (added: `examples/bad_simd_vec_lane_unsupported.sir.jsonl`, `examples/bad_simd_vec_lanes_zero.sir.jsonl`)
     - [x] `vec.shuffle` wrong idx length (added: `examples/bad_simd_shuffle_idx_len.sir.jsonl`)
   - [ ] Add runtime-trap fixtures (expected nonzero exit):
-    - [ ] `vec.extract` OOB index
-    - [ ] `vec.replace` OOB index
-    - [ ] `vec.shuffle` OOB idx element
+    - [x] `vec.extract` OOB index (added: `examples/simd_extract_oob_traps.sir.jsonl`)
+    - [x] `vec.replace` OOB index (added: `examples/simd_replace_oob_traps.sir.jsonl`)
+    - [x] `vec.shuffle` OOB idx element (added: `examples/simd_shuffle_oob_traps.sir.jsonl`)
   - [x] Wire fixtures into `sircc --check`
-  - [ ] Ensure all SIMD errors use `err_codef` with stable `sircc.vec.*` codes and include node context in JSON diagnostics
+  - [x] Ensure all SIMD errors use `err_codef` with stable codes and include node context in JSON diagnostics (added targeted `sircc.vec.*` codes + `SIRCC_ERR_NODE` paths)
 
 ### 4.3 ADT sums (adt:v1) — 4 (+ notes)
 - [ ] Sum construction: `adt.make`

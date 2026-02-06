@@ -235,6 +235,24 @@ add_test(
 )
 
 add_test(
+  NAME sircc_diag_bad_simd_splat_missing_type_ref
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_simd_splat_missing_type_ref.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_simd_splat_missing_type_ref.ll\\;--emit-llvm
+    "-DEXPECT=\\\"code\\\":\\\"sircc.vec.splat.missing_type\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_simd_splat_wrong_type_ref
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_simd_splat_wrong_type_ref.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/bad_simd_splat_wrong_type_ref.ll\\;--emit-llvm
+    "-DEXPECT=\\\"code\\\":\\\"sircc.vec.splat.type.bad\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_diag_bad_ptr_add_fun
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -732,6 +750,36 @@ add_test(
     -DSIRCC=$<TARGET_FILE:sircc>
     -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/adt_make_variant_oob_traps.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/adt_make_variant_oob_traps.ll\\;--emit-llvm
     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/adt_make_variant_oob_traps.ll
+    "-DEXPECT=llvm.trap"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_output_file_contains.cmake
+)
+
+add_test(
+  NAME sircc_emit_llvm_simd_extract_oob_traps_has_trap
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/simd_extract_oob_traps.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/simd_extract_oob_traps.ll\\;--emit-llvm
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/simd_extract_oob_traps.ll
+    "-DEXPECT=llvm.trap"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_output_file_contains.cmake
+)
+
+add_test(
+  NAME sircc_emit_llvm_simd_replace_oob_traps_has_trap
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/simd_replace_oob_traps.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/simd_replace_oob_traps.ll\\;--emit-llvm
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/simd_replace_oob_traps.ll
+    "-DEXPECT=llvm.trap"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_output_file_contains.cmake
+)
+
+add_test(
+  NAME sircc_emit_llvm_simd_shuffle_oob_traps_has_trap
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=${CMAKE_CURRENT_LIST_DIR}/examples/simd_shuffle_oob_traps.sir.jsonl\\;-o\\;${CMAKE_CURRENT_BINARY_DIR}/simd_shuffle_oob_traps.ll\\;--emit-llvm
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/simd_shuffle_oob_traps.ll
     "-DEXPECT=llvm.trap"
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_output_file_contains.cmake
 )
