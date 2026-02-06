@@ -22,6 +22,7 @@ typedef uint32_t sir_type_id_t;
 typedef uint32_t sir_sym_id_t;
 typedef uint32_t sir_func_id_t;
 typedef uint32_t sir_val_id_t;
+typedef uint32_t sir_global_id_t;
 
 typedef enum sir_prim_type {
   SIR_PRIM_INVALID = 0,
@@ -54,6 +55,14 @@ typedef struct sir_sym {
   sir_sig_t sig;    // points into module-owned arrays
 } sir_sym_t;
 
+typedef struct sir_global {
+  const char* name;          // owned by module
+  uint32_t size;             // bytes
+  uint32_t align;            // bytes (power-of-two preferred)
+  const uint8_t* init_bytes; // module-owned; may be NULL when init_len==0
+  uint32_t init_len;         // 0 for zero-init / bss
+} sir_global_t;
+
 typedef enum sir_val_kind {
   SIR_VAL_INVALID = 0,
   SIR_VAL_I8,
@@ -83,6 +92,8 @@ typedef enum sir_inst_kind {
   SIR_INST_CONST_BYTES, // yields {ptr, i64 len}
   SIR_INST_I32_ADD,
   SIR_INST_I32_CMP_EQ,
+  SIR_INST_GLOBAL_ADDR, // yields ptr to module global
+  SIR_INST_PTR_OFFSET,  // yields ptr = base + index*scale
   SIR_INST_BR,
   SIR_INST_CBR,
   SIR_INST_SWITCH,
@@ -92,9 +103,11 @@ typedef enum sir_inst_kind {
   SIR_INST_STORE_I8,
   SIR_INST_STORE_I32,
   SIR_INST_STORE_I64,
+  SIR_INST_STORE_PTR,
   SIR_INST_LOAD_I8,
   SIR_INST_LOAD_I32,
   SIR_INST_LOAD_I64,
+  SIR_INST_LOAD_PTR,
   SIR_INST_CALL_EXTERN, // currently supports zi_write/zi_end/zi_alloc/zi_free/zi_telemetry
   SIR_INST_CALL_FUNC,
   SIR_INST_RET,
@@ -140,6 +153,16 @@ typedef struct sir_inst {
       sir_val_id_t b;
       sir_val_id_t dst;
     } i32_cmp_eq;
+    struct {
+      sir_global_id_t gid;
+      sir_val_id_t dst;
+    } global_addr;
+    struct {
+      sir_val_id_t base;
+      sir_val_id_t index;
+      uint32_t scale;
+      sir_val_id_t dst;
+    } ptr_offset;
     struct {
       uint32_t target_ip;
       const sir_val_id_t* src_slots; // module-owned; len=arg_count
@@ -225,6 +248,9 @@ typedef struct sir_module {
   const sir_sym_t* syms;
   uint32_t sym_count;
 
+  const sir_global_t* globals;
+  uint32_t global_count;
+
   const sir_func_t* funcs;
   uint32_t func_count;
 
@@ -239,6 +265,8 @@ void sir_mb_free(sir_module_builder_t* b);
 
 sir_type_id_t sir_mb_type_prim(sir_module_builder_t* b, sir_prim_type_t prim);
 sir_sym_id_t sir_mb_sym_extern_fn(sir_module_builder_t* b, const char* name, sir_sig_t sig);
+sir_global_id_t sir_mb_global(sir_module_builder_t* b, const char* name, uint32_t size, uint32_t align, const uint8_t* init_bytes,
+                              uint32_t init_len);
 
 sir_func_id_t sir_mb_func_begin(sir_module_builder_t* b, const char* name);
 bool sir_mb_func_set_entry(sir_module_builder_t* b, sir_func_id_t f);
@@ -253,6 +281,8 @@ bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
                              uint32_t len);
 bool sir_mb_emit_i32_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_global_addr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_global_id_t gid);
+bool sir_mb_emit_ptr_offset(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t base, sir_val_id_t index, uint32_t scale);
 bool sir_mb_emit_br_args(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, const sir_val_id_t* src_slots, const sir_val_id_t* dst_slots,
                          uint32_t arg_count, uint32_t* out_ip);
 bool sir_mb_emit_br(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, uint32_t* out_ip);
@@ -265,9 +295,11 @@ bool sir_mb_emit_alloca(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t d
 bool sir_mb_emit_store_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_store_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_store_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
+bool sir_mb_emit_store_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_load_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_load_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_load_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
+bool sir_mb_emit_load_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count);
 bool sir_mb_emit_call_extern_res(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count,
                                  const sir_val_id_t* results, uint8_t result_count);

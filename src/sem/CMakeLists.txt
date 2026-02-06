@@ -267,3 +267,51 @@ target_link_libraries(sem_unit_run_mem_copy_overlap_trap PRIVATE sircore_hosted_
 target_compile_options(sem_unit_run_mem_copy_overlap_trap PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sem_run_mem_copy_overlap_trap COMMAND sem_unit_run_mem_copy_overlap_trap)
+
+add_executable(sem_unit_run_global_i32_ptrsym
+  tests/test_run_global_i32_ptrsym.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_global_i32_ptrsym PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_global_i32_ptrsym PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_global_i32_ptrsym PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_global_i32_ptrsym PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_global_i32_ptrsym PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_global_i32_ptrsym COMMAND sem_unit_run_global_i32_ptrsym)
+
+add_executable(sem_unit_run_global_array_const
+  tests/test_run_global_array_const.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_global_array_const PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_global_array_const PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_global_array_const PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_global_array_const PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_global_array_const PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_global_array_const COMMAND sem_unit_run_global_array_const)
+
+add_executable(sem_unit_run_global_array_repeat
+  tests/test_run_global_array_repeat.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_global_array_repeat PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_global_array_repeat PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_global_array_repeat PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_global_array_repeat PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_global_array_repeat PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_global_array_repeat COMMAND sem_unit_run_global_array_repeat)

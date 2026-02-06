@@ -17,12 +17,33 @@
 typedef struct type_info {
   bool present;
   bool is_fn;
+  bool is_array;
   sir_prim_type_t prim; // for prim
   uint32_t* params;     // for fn, arena-owned
   uint32_t param_count;
   uint32_t ret; // SIR type id
+  uint32_t array_of;
+  uint32_t array_len;
   uint32_t loc_line;
 } type_info_t;
+
+typedef enum sym_init_kind {
+  SYM_INIT_NONE = 0,
+  SYM_INIT_NUM,
+  SYM_INIT_NODE,
+} sym_init_kind_t;
+
+typedef struct sym_info {
+  bool present;
+  const char* name; // arena-owned
+  const char* kind; // arena-owned (var/const/...)
+  uint32_t type_ref;
+  sym_init_kind_t init_kind;
+  int64_t init_num;
+  uint32_t init_node;
+  sir_global_id_t gid; // sircore global id (1-based) once created
+  uint32_t loc_line;
+} sym_info_t;
 
 typedef struct node_info {
   bool present;
@@ -49,6 +70,9 @@ typedef struct sirj_ctx {
 
   node_info_t* nodes; // indexed by node id
   uint32_t node_cap;
+
+  sym_info_t* syms; // indexed by sym id
+  uint32_t symrec_cap;
 
   // Lowering maps
   sir_sym_id_t* sym_by_node; // indexed by node id; 0 means unset
@@ -218,6 +242,7 @@ static void ctx_dispose(sirj_ctx_t* c) {
   }
   free(c->types);
   free(c->nodes);
+  free(c->syms);
   free(c->sym_by_node);
   free(c->val_by_node);
   free(c->kind_by_node);
@@ -250,6 +275,10 @@ static bool ensure_node_cap(sirj_ctx_t* c, uint32_t node_id) {
   if (!grow_u32((void**)&c->kind_by_node, &c->kind_cap, node_id + 1u, sizeof(val_kind_t))) return false;
   if (!grow_u32((void**)&c->func_by_node, &c->func_by_node_cap, node_id + 1u, sizeof(sir_func_id_t))) return false;
   return true;
+}
+
+static bool ensure_symrec_cap(sirj_ctx_t* c, uint32_t sym_id) {
+  return grow_u32((void**)&c->syms, &c->symrec_cap, sym_id + 1u, sizeof(sym_info_t));
 }
 
 static bool json_get_u32(const JsonValue* v, uint32_t* out) {
@@ -447,6 +476,174 @@ static bool val_kind_for_type_ref(const sirj_ctx_t* c, uint32_t type_ref, val_ki
   }
 }
 
+static bool type_layout(const sirj_ctx_t* c, uint32_t type_ref, uint32_t* out_size, uint32_t* out_align) {
+  if (!c || !out_size || !out_align) return false;
+  if (type_ref == 0 || type_ref >= c->type_cap) return false;
+  if (!c->types[type_ref].present) return false;
+  const type_info_t* t = &c->types[type_ref];
+  if (t->is_fn) return false;
+
+  if (t->is_array) {
+    if (t->array_of == 0) return false;
+    uint32_t es = 0, ea = 0;
+    if (!type_layout(c, t->array_of, &es, &ea)) return false;
+    if (t->array_len == 0) return false;
+    const uint64_t size64 = (uint64_t)es * (uint64_t)t->array_len;
+    if (size64 > 0x7FFFFFFFull) return false;
+    *out_size = (uint32_t)size64;
+    *out_align = ea ? ea : 1;
+    return true;
+  }
+
+  uint32_t size = 0, align = 1;
+  switch (t->prim) {
+    case SIR_PRIM_I8:
+      size = 1;
+      align = 1;
+      break;
+    case SIR_PRIM_I32:
+      size = 4;
+      align = 4;
+      break;
+    case SIR_PRIM_I64:
+      size = 8;
+      align = 8;
+      break;
+    case SIR_PRIM_PTR:
+      size = 8;
+      align = 8;
+      break;
+    case SIR_PRIM_BOOL:
+      size = 1;
+      align = 1;
+      break;
+    default:
+      return false;
+  }
+  *out_size = size;
+  *out_align = align;
+  return true;
+}
+
+static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref, uint8_t** out_bytes, uint32_t* out_len) {
+  if (!c || !out_bytes || !out_len) return false;
+  *out_bytes = NULL;
+  *out_len = 0;
+  if (node_id >= c->node_cap || !c->nodes[node_id].present) return false;
+  const node_info_t* n = &c->nodes[node_id];
+  if (!n->tag) return false;
+
+  uint32_t size = 0, align = 1;
+  if (!type_layout(c, type_ref, &size, &align)) return false;
+  (void)align;
+
+  if (strcmp(n->tag, "const.i8") == 0) {
+    if (size != 1) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 1);
+    if (!b) return false;
+    int64_t v = 0;
+    if (!json_get_i64(json_obj_get(n->fields_obj, "value"), &v)) return false;
+    if (v < 0 || v > 255) return false;
+    b[0] = (uint8_t)v;
+    *out_bytes = b;
+    *out_len = 1;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.i32") == 0) {
+    if (size != 4) return false;
+    int64_t v = 0;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    if (!json_get_i64(json_obj_get(n->fields_obj, "value"), &v)) return false;
+    if (v < INT32_MIN || v > INT32_MAX) return false;
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 4);
+    if (!b) return false;
+    const int32_t x = (int32_t)v;
+    memcpy(b, &x, 4);
+    *out_bytes = b;
+    *out_len = 4;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.i64") == 0) {
+    if (size != 8) return false;
+    int64_t v = 0;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    if (!json_get_i64(json_obj_get(n->fields_obj, "value"), &v)) return false;
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 8);
+    if (!b) return false;
+    memcpy(b, &v, 8);
+    *out_bytes = b;
+    *out_len = 8;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.array") == 0) {
+    if (n->type_ref != type_ref) return false;
+    const type_info_t* t = &c->types[type_ref];
+    if (!t->present || !t->is_array) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    const JsonValue* ev = json_obj_get(n->fields_obj, "elems");
+    if (!json_is_array(ev)) return false;
+    if (ev->v.arr.len != t->array_len) return false;
+
+    uint32_t es = 0, ea = 0;
+    if (!type_layout(c, t->array_of, &es, &ea)) return false;
+    (void)ea;
+
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, size);
+    if (!b) return false;
+    uint32_t off = 0;
+    for (uint32_t i = 0; i < t->array_len; i++) {
+      uint32_t rid = 0;
+      if (!parse_ref_id(ev->v.arr.items[i], &rid)) return false;
+      uint8_t* eb = NULL;
+      uint32_t elen = 0;
+      if (!build_const_bytes(c, rid, t->array_of, &eb, &elen)) return false;
+      if (elen != es) return false;
+      memcpy(b + off, eb, es);
+      off += es;
+    }
+    if (off != size) return false;
+    *out_bytes = b;
+    *out_len = size;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.repeat") == 0) {
+    if (n->type_ref != type_ref) return false;
+    const type_info_t* t = &c->types[type_ref];
+    if (!t->present || !t->is_array) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    uint32_t count = 0;
+    if (!json_get_u32(json_obj_get(n->fields_obj, "count"), &count)) return false;
+    if (count != t->array_len) return false;
+    uint32_t elem_id = 0;
+    if (!parse_ref_id(json_obj_get(n->fields_obj, "elem"), &elem_id)) return false;
+
+    uint32_t es = 0, ea = 0;
+    if (!type_layout(c, t->array_of, &es, &ea)) return false;
+    (void)ea;
+
+    uint8_t* eb = NULL;
+    uint32_t elen = 0;
+    if (!build_const_bytes(c, elem_id, t->array_of, &eb, &elen)) return false;
+    if (elen != es) return false;
+
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, size);
+    if (!b) return false;
+    for (uint32_t i = 0; i < count; i++) {
+      memcpy(b + (size_t)i * es, eb, es);
+    }
+    *out_bytes = b;
+    *out_len = size;
+    return true;
+  }
+
+  return false;
+}
+
 static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, val_kind_t* out_kind);
 
 static bool eval_bparam(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
@@ -543,6 +740,7 @@ static bool eval_store_mnemonic(sirj_ctx_t* c, const node_info_t* n, sir_inst_ki
   if (k == SIR_INST_STORE_I8) return sir_mb_emit_store_i8(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_I32) return sir_mb_emit_store_i32(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_I64) return sir_mb_emit_store_i64(c->mb, c->fn, addr_slot, val_slot, align);
+  if (k == SIR_INST_STORE_PTR) return sir_mb_emit_store_ptr(c->mb, c->fn, addr_slot, val_slot, align);
   return false;
 }
 
@@ -634,6 +832,7 @@ static bool eval_load_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_
   if (k == SIR_INST_LOAD_I8) ok = sir_mb_emit_load_i8(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_I32) ok = sir_mb_emit_load_i32(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_I64) ok = sir_mb_emit_load_i64(c->mb, c->fn, dst, addr_slot, align);
+  else if (k == SIR_INST_LOAD_PTR) ok = sir_mb_emit_load_ptr(c->mb, c->fn, dst, addr_slot, align);
   if (!ok) return false;
   if (!set_node_val(c, node_id, dst, outk)) return false;
   *out_slot = dst;
@@ -748,6 +947,67 @@ static bool eval_ptr_to_i64_passthrough(sirj_ctx_t* c, uint32_t node_id, const n
   if (!parse_ref_id(av->v.arr.items[0], &arg_id)) return false;
   // MVP: treat ptr.to_i64 as passthrough for host calls.
   return eval_node(c, arg_id, out_slot, out_kind);
+}
+
+static bool find_global_gid_by_name(const sirj_ctx_t* c, const char* name, sir_global_id_t* out_gid) {
+  if (!c || !name || !out_gid) return false;
+  for (uint32_t i = 0; i < c->symrec_cap; i++) {
+    if (!c->syms || !c->syms[i].present) continue;
+    if (!c->syms[i].name) continue;
+    if (strcmp(c->syms[i].name, name) == 0) {
+      if (c->syms[i].gid) {
+        *out_gid = c->syms[i].gid;
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+static bool eval_ptr_sym(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const char* nm = json_get_string(json_obj_get(n->fields_obj, "name"));
+  if (!nm) return false;
+  sir_global_id_t gid = 0;
+  if (!find_global_gid_by_name(c, nm, &gid)) {
+    sirj_diag_setf(c, "sem.global.unknown", c->cur_path, n->loc_line, node_id, n->tag, "unknown global symbol: %s", nm);
+    return false;
+  }
+  const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+  if (!sir_mb_emit_global_addr(c->mb, c->fn, dst, gid)) return false;
+  if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
+  *out_slot = dst;
+  *out_kind = VK_PTR;
+  return true;
+}
+
+static bool eval_ptr_offset(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  uint32_t ty_id = 0;
+  if (!parse_ref_id(json_obj_get(n->fields_obj, "ty"), &ty_id)) return false;
+  uint32_t scale = 0, align = 0;
+  if (!type_layout(c, ty_id, &scale, &align)) return false;
+  (void)align;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 2) return false;
+  uint32_t base_id = 0, idx_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &base_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &idx_id)) return false;
+  sir_val_id_t base_slot = 0, idx_slot = 0;
+  val_kind_t bk = VK_INVALID, ik = VK_INVALID;
+  if (!eval_node(c, base_id, &base_slot, &bk)) return false;
+  if (!eval_node(c, idx_id, &idx_slot, &ik)) return false;
+  if (bk != VK_PTR) return false;
+  if (ik != VK_I64 && ik != VK_I32) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+  if (!sir_mb_emit_ptr_offset(c->mb, c->fn, dst, base_slot, idx_slot, scale)) return false;
+  if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
+  *out_slot = dst;
+  *out_kind = VK_PTR;
+  return true;
 }
 
 static bool resolve_internal_func_by_name(const sirj_ctx_t* c, const char* nm, sir_func_id_t* out) {
@@ -877,6 +1137,8 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "const.i64") == 0) return eval_const_i64(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "cstr") == 0) return eval_cstr(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "name") == 0) return eval_name(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "ptr.sym") == 0) return eval_ptr_sym(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "ptr.offset") == 0) return eval_ptr_offset(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "ptr.to_i64") == 0) return eval_ptr_to_i64_passthrough(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.add") == 0) return eval_i32_add_mnemonic(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.eq") == 0) return eval_i32_cmp_eq(c, node_id, n, out_slot, out_kind);
@@ -887,6 +1149,7 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "load.i8") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I8, VK_I8, out_slot, out_kind);
   if (strcmp(n->tag, "load.i32") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I32, VK_I32, out_slot, out_kind);
   if (strcmp(n->tag, "load.i64") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I64, VK_I64, out_slot, out_kind);
+  if (strcmp(n->tag, "load.ptr") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_PTR, VK_PTR, out_slot, out_kind);
   if (strcmp(n->tag, "call.indirect") == 0) return eval_call_indirect(c, node_id, n, out_slot, out_kind);
 
   sirj_diag_setf(c, "sem.unsupported.node", c->cur_path, n->loc_line, node_id, n->tag, "unsupported node tag: %s", n->tag);
@@ -917,6 +1180,7 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
   if (strcmp(n->tag, "store.i8") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_I8);
   if (strcmp(n->tag, "store.i32") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_I32);
   if (strcmp(n->tag, "store.i64") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_I64);
+  if (strcmp(n->tag, "store.ptr") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_PTR);
   if (strcmp(n->tag, "mem.copy") == 0) return eval_mem_copy_stmt(c, stmt_id, n);
   if (strcmp(n->tag, "mem.fill") == 0) return eval_mem_fill_stmt(c, stmt_id, n);
 
@@ -1529,6 +1793,20 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
             fclose(f);
             return false;
           }
+        } else if (strcmp(kind, "array") == 0) {
+          ti.is_array = true;
+          if (!json_get_u32(json_obj_get(root, "of"), &ti.array_of)) {
+            sirj_diag_setf(c, "sem.parse.type.array.of", diag_path, loc_line, 0, NULL, "bad array.of");
+            free(line);
+            fclose(f);
+            return false;
+          }
+          if (!json_get_u32(json_obj_get(root, "len"), &ti.array_len)) {
+            sirj_diag_setf(c, "sem.parse.type.array.len", diag_path, loc_line, 0, NULL, "bad array.len");
+            free(line);
+            fclose(f);
+            return false;
+          }
         } else {
           // ignore other kinds for now
           memset(&ti, 0, sizeof(ti));
@@ -1536,6 +1814,57 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
           ti.loc_line = loc_line;
         }
         c->types[id] = ti;
+      } else if (strcmp(k, "sym") == 0) {
+        const uint32_t loc_line = loc_line_from_root(root, rec_no);
+        uint32_t id = 0;
+        if (!json_get_u32(json_obj_get(root, "id"), &id)) {
+          sirj_diag_setf(c, "sem.parse.sym.id", diag_path, loc_line, 0, NULL, "sym.id missing/invalid");
+          free(line);
+          fclose(f);
+          return false;
+        }
+        if (!ensure_symrec_cap(c, id)) {
+          sirj_diag_setf(c, "sem.oom", diag_path, loc_line, id, NULL, "out of memory");
+          free(line);
+          fclose(f);
+          return false;
+        }
+
+        sym_info_t si = {0};
+        si.present = true;
+        si.loc_line = loc_line;
+        si.name = json_get_string(json_obj_get(root, "name"));
+        si.kind = json_get_string(json_obj_get(root, "kind"));
+        (void)json_get_u32(json_obj_get(root, "type_ref"), &si.type_ref);
+        si.init_kind = SYM_INIT_NONE;
+
+        const JsonValue* vv = json_obj_get(root, "value");
+        if (vv && vv->type == JSON_OBJECT) {
+          const char* t = json_get_string(json_obj_get(vv, "t"));
+          if (t && strcmp(t, "num") == 0) {
+            int64_t v = 0;
+            if (!json_get_i64(json_obj_get(vv, "v"), &v)) {
+              sirj_diag_setf(c, "sem.parse.sym.value", diag_path, loc_line, id, "sym", "sym.value num missing/invalid");
+              free(line);
+              fclose(f);
+              return false;
+            }
+            si.init_kind = SYM_INIT_NUM;
+            si.init_num = v;
+          } else if (t && strcmp(t, "ref") == 0) {
+            uint32_t rid = 0;
+            if (!parse_ref_id(vv, &rid)) {
+              sirj_diag_setf(c, "sem.parse.sym.value", diag_path, loc_line, id, "sym", "sym.value ref missing/invalid");
+              free(line);
+              fclose(f);
+              return false;
+            }
+            si.init_kind = SYM_INIT_NODE;
+            si.init_node = rid;
+          }
+        }
+
+        c->syms[id] = si;
       } else if (strcmp(k, "node") == 0) {
         const uint32_t loc_line = loc_line_from_root(root, rec_no);
         uint32_t id = 0;
@@ -1691,6 +2020,79 @@ static bool init_params_for_fn(sirj_ctx_t* c, uint32_t fn_node_id, uint32_t fn_t
   return true;
 }
 
+static bool lower_globals(sirj_ctx_t* c) {
+  if (!c || !c->mb) return false;
+  if (!c->syms || c->symrec_cap == 0) return true;
+
+  for (uint32_t i = 0; i < c->symrec_cap; i++) {
+    sym_info_t* s = &c->syms[i];
+    if (!s->present) continue;
+    if (!s->name || s->name[0] == '\0') continue;
+    if (!s->kind) continue;
+    if (strcmp(s->kind, "var") != 0 && strcmp(s->kind, "const") != 0) continue;
+    if (s->type_ref == 0) {
+      sirj_diag_setf(c, "sem.global.missing_type", c->cur_path, s->loc_line, i, "sym", "global sym %s missing type_ref", s->name);
+      return false;
+    }
+
+    uint32_t size = 0, align = 1;
+    if (!type_layout(c, s->type_ref, &size, &align)) {
+      sirj_diag_setf(c, "sem.global.bad_type", c->cur_path, s->loc_line, i, "sym", "unsupported global type_ref=%u for %s",
+                     (unsigned)s->type_ref, s->name);
+      return false;
+    }
+
+    uint8_t* init_bytes = NULL;
+    uint32_t init_len = 0;
+    if (s->init_kind == SYM_INIT_NUM) {
+      // Only support numeric init for primitive globals in MVP.
+      if (s->type_ref >= c->type_cap || !c->types[s->type_ref].present || c->types[s->type_ref].is_fn || c->types[s->type_ref].is_array) {
+        sirj_diag_setf(c, "sem.global.init_num_type", c->cur_path, s->loc_line, i, "sym", "numeric init only supported for primitive globals");
+        return false;
+      }
+      init_bytes = (uint8_t*)arena_alloc(&c->arena, size);
+      if (!init_bytes) return false;
+      memset(init_bytes, 0, size);
+      const sir_prim_type_t p = c->types[s->type_ref].prim;
+      if (p == SIR_PRIM_I8) {
+        init_bytes[0] = (uint8_t)s->init_num;
+      } else if (p == SIR_PRIM_I32) {
+        const int32_t x = (int32_t)s->init_num;
+        memcpy(init_bytes, &x, 4);
+      } else if (p == SIR_PRIM_I64) {
+        const int64_t x = (int64_t)s->init_num;
+        memcpy(init_bytes, &x, 8);
+      } else if (p == SIR_PRIM_PTR) {
+        const zi_ptr_t x = (zi_ptr_t)s->init_num;
+        memcpy(init_bytes, &x, sizeof(x));
+      } else if (p == SIR_PRIM_BOOL) {
+        init_bytes[0] = (s->init_num != 0) ? 1 : 0;
+      } else {
+        return false;
+      }
+      init_len = size;
+    } else if (s->init_kind == SYM_INIT_NODE) {
+      if (!build_const_bytes(c, s->init_node, s->type_ref, &init_bytes, &init_len)) {
+        sirj_diag_setf(c, "sem.global.init_const", c->cur_path, s->loc_line, i, "sym", "unsupported global initializer for %s", s->name);
+        return false;
+      }
+    } else {
+      // zero-init
+      init_bytes = NULL;
+      init_len = 0;
+    }
+
+    const sir_global_id_t gid = sir_mb_global(c->mb, s->name, size, align, init_bytes, init_len);
+    if (!gid) {
+      sirj_diag_setf(c, "sem.oom", c->cur_path, s->loc_line, i, "sym", "out of memory");
+      return false;
+    }
+    s->gid = gid;
+  }
+
+  return true;
+}
+
 int sem_run_sir_jsonl(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root) {
   return sem_run_sir_jsonl_ex(path, caps, cap_count, fs_root, SEM_DIAG_TEXT, false);
 }
@@ -1730,6 +2132,13 @@ int sem_run_sir_jsonl_ex(const char* path, const sem_cap_t* caps, uint32_t cap_c
   }
   if (!ensure_prim_types(&c)) {
     sirj_diag_setf(&c, "sem.oom", path, 0, 0, NULL, "out of memory");
+    sem_print_diag(&c);
+    ctx_dispose(&c);
+    return 1;
+  }
+
+  if (!lower_globals(&c)) {
+    if (!c.diag.set) sirj_diag_setf(&c, "sem.global", path, 0, 0, NULL, "failed to lower globals");
     sem_print_diag(&c);
     ctx_dispose(&c);
     return 1;

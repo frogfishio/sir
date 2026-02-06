@@ -35,6 +35,12 @@ typedef struct sir_dyn_syms {
   uint32_t cap;
 } sir_dyn_syms_t;
 
+typedef struct sir_dyn_globals {
+  sir_global_t* p;
+  uint32_t n;
+  uint32_t cap;
+} sir_dyn_globals_t;
+
 typedef struct sir_dyn_funcs {
   sir_func_t* p;
   uint32_t n;
@@ -50,6 +56,7 @@ typedef struct sir_dyn_insts {
 struct sir_module_builder {
   sir_dyn_types_t types;
   sir_dyn_syms_t syms;
+  sir_dyn_globals_t globals;
   sir_dyn_funcs_t funcs;
 
   // Per-func instruction buffers (same order as funcs).
@@ -147,6 +154,21 @@ static bool grow_syms(sir_dyn_syms_t* d, uint32_t add) {
   return true;
 }
 
+static bool grow_globals(sir_dyn_globals_t* d, uint32_t add) {
+  if (!d) return false;
+  const uint64_t need64 = (uint64_t)d->n + (uint64_t)add;
+  if (need64 > 0xFFFFFFFFull) return false;
+  uint32_t need = (uint32_t)need64;
+  if (need <= d->cap) return true;
+  uint32_t cap = d->cap ? d->cap : 16;
+  while (cap < need) cap *= 2;
+  sir_global_t* np = (sir_global_t*)realloc(d->p, cap * sizeof(sir_global_t));
+  if (!np) return false;
+  d->p = np;
+  d->cap = cap;
+  return true;
+}
+
 static bool grow_funcs(sir_dyn_funcs_t* d, uint32_t add) {
   if (!d) return false;
   const uint64_t need64 = (uint64_t)d->n + (uint64_t)add;
@@ -212,6 +234,7 @@ void sir_mb_free(sir_module_builder_t* b) {
   free(b->func_insts);
   free(b->types.p);
   free(b->syms.p);
+  free(b->globals.p);
   free(b->funcs.p);
   sir_pool_block_t* pb = (sir_pool_block_t*)b->pool.head;
   while (pb) {
@@ -257,6 +280,25 @@ sir_sym_id_t sir_mb_sym_extern_fn(sir_module_builder_t* b, const char* name, sir
 
   b->syms.p[b->syms.n++] = s;
   return b->syms.n;
+}
+
+sir_global_id_t sir_mb_global(sir_module_builder_t* b, const char* name, uint32_t size, uint32_t align, const uint8_t* init_bytes,
+                              uint32_t init_len) {
+  if (!b || !name) return 0;
+  if (size == 0) return 0;
+  if (align == 0) align = 1;
+  if (init_len > size) return 0;
+  if (!grow_globals(&b->globals, 1)) return 0;
+  const char* nm = pool_copy_cstr(b, name);
+  if (!nm) return 0;
+  const uint8_t* ib = NULL;
+  if (init_len) {
+    ib = pool_copy_bytes(b, init_bytes, init_len);
+    if (!ib) return 0;
+  }
+  b->globals.p[b->globals.n++] =
+      (sir_global_t){.name = nm, .size = size, .align = align, .init_bytes = ib, .init_len = init_len};
+  return b->globals.n;
 }
 
 sir_func_id_t sir_mb_func_begin(sir_module_builder_t* b, const char* name) {
@@ -398,6 +440,28 @@ bool sir_mb_emit_i32_cmp_eq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id
   i.u.i32_cmp_eq.a = a;
   i.u.i32_cmp_eq.b = b_;
   i.u.i32_cmp_eq.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_global_addr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_global_id_t gid) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_GLOBAL_ADDR;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.global_addr.gid = gid;
+  i.u.global_addr.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_ptr_offset(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t base, sir_val_id_t index, uint32_t scale) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_PTR_OFFSET;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.ptr_offset.base = base;
+  i.u.ptr_offset.index = index;
+  i.u.ptr_offset.scale = scale;
+  i.u.ptr_offset.dst = dst;
   return emit_inst(b, f, i);
 }
 
@@ -545,6 +609,9 @@ bool sir_mb_emit_store_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_
 bool sir_mb_emit_store_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
   return emit_store(b, f, SIR_INST_STORE_I64, addr, value, align);
 }
+bool sir_mb_emit_store_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
+  return emit_store(b, f, SIR_INST_STORE_PTR, addr, value, align);
+}
 bool sir_mb_emit_load_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
   return emit_load(b, f, SIR_INST_LOAD_I8, dst, addr, align);
 }
@@ -553,6 +620,9 @@ bool sir_mb_emit_load_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t
 }
 bool sir_mb_emit_load_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
   return emit_load(b, f, SIR_INST_LOAD_I64, dst, addr, align);
+}
+bool sir_mb_emit_load_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
+  return emit_load(b, f, SIR_INST_LOAD_PTR, dst, addr, align);
 }
 
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count) {
@@ -730,10 +800,22 @@ sir_module_t* sir_mb_finalize(sir_module_builder_t* b) {
       return NULL;
     }
   }
+  sir_global_t* globals = NULL;
+  if (b->globals.n) {
+    globals = (sir_global_t*)dup_mem(b->globals.p, (size_t)b->globals.n * sizeof(sir_global_t));
+    if (!globals) {
+      free(syms);
+      free(types);
+      for (uint32_t fi = 0; fi < b->funcs.n; fi++) free((void*)funcs[fi].insts);
+      free(funcs);
+      return NULL;
+    }
+  }
 
   // Package module.
   sir_module_impl_t* impl = (sir_module_impl_t*)calloc(1, sizeof(*impl));
   if (!impl) {
+    free(globals);
     free(syms);
     free(types);
     for (uint32_t fi = 0; fi < b->funcs.n; fi++) free((void*)funcs[fi].insts);
@@ -751,6 +833,8 @@ sir_module_t* sir_mb_finalize(sir_module_builder_t* b) {
       .type_count = b->types.n,
       .syms = syms,
       .sym_count = b->syms.n,
+      .globals = globals,
+      .global_count = b->globals.n,
       .funcs = funcs,
       .func_count = b->funcs.n,
       .entry = b->entry,
@@ -772,6 +856,7 @@ void sir_module_free(sir_module_t* m) {
     }
   }
   free((void*)pub->funcs);
+  free((void*)pub->globals);
   free((void*)pub->syms);
   free((void*)pub->types);
   sir_pool_block_t* pb = (sir_pool_block_t*)impl->pool_head;
@@ -858,6 +943,34 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
     }
   }
 
+  if (m->global_count && !m->globals) {
+    set_err(err, err_cap, "global_count set but globals is null");
+    return false;
+  }
+  for (uint32_t gi = 0; gi < m->global_count; gi++) {
+    const sir_global_t* g = &m->globals[gi];
+    if (!g->name || g->name[0] == '\0') {
+      set_errf(err, err_cap, "global name missing at index %u of %u", gi + 1, m->global_count);
+      return false;
+    }
+    if (g->size == 0) {
+      set_errf(err, err_cap, "global size must be >0 at index %u of %u", gi + 1, m->global_count);
+      return false;
+    }
+    if (g->align == 0) {
+      set_errf(err, err_cap, "global align must be >0 at index %u of %u", gi + 1, m->global_count);
+      return false;
+    }
+    if (g->init_len > g->size) {
+      set_errf(err, err_cap, "global init_len out of range at index %u of %u", gi + 1, m->global_count);
+      return false;
+    }
+    if (g->init_len && !g->init_bytes) {
+      set_errf(err, err_cap, "global init_bytes missing at index %u of %u", gi + 1, m->global_count);
+      return false;
+    }
+  }
+
   for (uint32_t fi = 0; fi < m->func_count; fi++) {
     const sir_func_t* f = &m->funcs[fi];
     if (!f->name || f->name[0] == '\0') {
@@ -915,6 +1028,26 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_I32_CMP_EQ:
           if (inst->u.i32_cmp_eq.dst >= vc || inst->u.i32_cmp_eq.a >= vc || inst->u.i32_cmp_eq.b >= vc) {
             set_err(err, err_cap, "i32_cmp_eq operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_GLOBAL_ADDR:
+          if (inst->u.global_addr.dst >= vc) {
+            set_err(err, err_cap, "global_addr dst out of range");
+            return false;
+          }
+          if (inst->u.global_addr.gid == 0 || inst->u.global_addr.gid > m->global_count) {
+            set_err(err, err_cap, "global_addr gid out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_PTR_OFFSET:
+          if (inst->u.ptr_offset.dst >= vc || inst->u.ptr_offset.base >= vc || inst->u.ptr_offset.index >= vc) {
+            set_err(err, err_cap, "ptr_offset operand out of range");
+            return false;
+          }
+          if (inst->u.ptr_offset.scale == 0) {
+            set_err(err, err_cap, "ptr_offset scale must be >0");
             return false;
           }
           break;
@@ -993,6 +1126,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_STORE_I8:
         case SIR_INST_STORE_I32:
         case SIR_INST_STORE_I64:
+        case SIR_INST_STORE_PTR:
           if (inst->u.store.addr >= vc || inst->u.store.value >= vc) {
             set_err(err, err_cap, "store operand out of range");
             return false;
@@ -1001,6 +1135,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_LOAD_I8:
         case SIR_INST_LOAD_I32:
         case SIR_INST_LOAD_I64:
+        case SIR_INST_LOAD_PTR:
           if (inst->u.load.addr >= vc || inst->u.load.dst >= vc) {
             set_err(err, err_cap, "load operand out of range");
             return false;
@@ -1242,11 +1377,12 @@ typedef struct sir_frame {
   sir_value_t* vals;
 } sir_frame_t;
 
-static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, sir_func_id_t fid, const sir_value_t* args,
-                         uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count, uint32_t depth);
+static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
+                         sir_func_id_t fid, const sir_value_t* args, uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count,
+                         uint32_t depth);
 
-static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const sir_inst_t* inst, sir_value_t* vals,
-                              uint32_t val_count, uint32_t depth) {
+static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
+                              const sir_inst_t* inst, sir_value_t* vals, uint32_t val_count, uint32_t depth) {
   if (!m || !inst || !vals) return ZI_E_INTERNAL;
   const sir_func_id_t fid = inst->u.call_func.callee;
   if (fid == 0 || fid > m->func_count) return ZI_E_NOENT;
@@ -1265,7 +1401,8 @@ static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_h
 
   sir_value_t resv[2];
   memset(resv, 0, sizeof(resv));
-  const int32_t rc = exec_func(m, mem, host, fid, argv, inst->u.call_func.arg_count, resv, inst->result_count, depth + 1);
+  const int32_t rc =
+      exec_func(m, mem, host, globals, global_count, fid, argv, inst->u.call_func.arg_count, resv, inst->result_count, depth + 1);
   // Propagate errors and process-exit requests.
   if (rc != 0) return rc;
   for (uint8_t ri = 0; ri < inst->result_count; ri++) {
@@ -1276,8 +1413,9 @@ static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_h
   return 0;
 }
 
-static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, sir_func_id_t fid, const sir_value_t* args,
-                         uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count, uint32_t depth) {
+static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
+                         sir_func_id_t fid, const sir_value_t* args, uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count,
+                         uint32_t depth) {
   if (!m) return ZI_E_INTERNAL;
   if (depth > 1024) return ZI_E_INTERNAL;
   if (fid == 0 || fid > m->func_count) return ZI_E_NOENT;
@@ -1451,6 +1589,48 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_INVALID;
         }
         vals[dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = (uint8_t)(av.u.i32 == bv.u.i32)};
+        ip++;
+        break;
+      }
+      case SIR_INST_GLOBAL_ADDR: {
+        const sir_global_id_t gid = i->u.global_addr.gid;
+        const sir_val_id_t dst = i->u.global_addr.dst;
+        if (dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        if (!globals || gid == 0 || gid > global_count) {
+          free(vals);
+          return ZI_E_NOENT;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = globals[gid - 1]};
+        ip++;
+        break;
+      }
+      case SIR_INST_PTR_OFFSET: {
+        const sir_val_id_t base_id = i->u.ptr_offset.base;
+        const sir_val_id_t index_id = i->u.ptr_offset.index;
+        const sir_val_id_t dst = i->u.ptr_offset.dst;
+        if (base_id >= f->value_count || index_id >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t bv = vals[base_id];
+        const sir_value_t iv = vals[index_id];
+        if (bv.kind != SIR_VAL_PTR) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        int64_t idx = 0;
+        if (iv.kind == SIR_VAL_I64) idx = iv.u.i64;
+        else if (iv.kind == SIR_VAL_I32) idx = iv.u.i32;
+        else {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const uint64_t base = (uint64_t)bv.u.ptr;
+        const uint64_t off = (uint64_t)idx * (uint64_t)i->u.ptr_offset.scale;
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = (zi_ptr_t)(base + off)};
         ip++;
         break;
       }
@@ -1662,7 +1842,8 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
       }
       case SIR_INST_STORE_I8:
       case SIR_INST_STORE_I32:
-      case SIR_INST_STORE_I64: {
+      case SIR_INST_STORE_I64:
+      case SIR_INST_STORE_PTR: {
         const sir_val_id_t a = i->u.store.addr;
         const sir_val_id_t v = i->u.store.value;
         if (a >= f->value_count || v >= f->value_count) {
@@ -1677,7 +1858,8 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         uint32_t size = 0;
         if (i->k == SIR_INST_STORE_I8) size = 1;
         else if (i->k == SIR_INST_STORE_I32) size = 4;
-        else size = 8;
+        else if (i->k == SIR_INST_STORE_I64) size = 8;
+        else size = (uint32_t)sizeof(zi_ptr_t);
         uint8_t* w = NULL;
         if (!sem_guest_mem_map_rw(mem, av.u.ptr, (zi_size32_t)size, &w) || !w) {
           free(vals);
@@ -1698,20 +1880,28 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
             return ZI_E_INVALID;
           }
           memcpy(w, &vv.u.i32, 4);
-        } else {
+        } else if (i->k == SIR_INST_STORE_I64) {
           const sir_value_t vv = vals[v];
           if (vv.kind != SIR_VAL_I64) {
             free(vals);
             return ZI_E_INVALID;
           }
           memcpy(w, &vv.u.i64, 8);
+        } else {
+          const sir_value_t vv = vals[v];
+          if (vv.kind != SIR_VAL_PTR) {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+          memcpy(w, &vv.u.ptr, sizeof(vv.u.ptr));
         }
         ip++;
         break;
       }
       case SIR_INST_LOAD_I8:
       case SIR_INST_LOAD_I32:
-      case SIR_INST_LOAD_I64: {
+      case SIR_INST_LOAD_I64:
+      case SIR_INST_LOAD_PTR: {
         const sir_val_id_t a = i->u.load.addr;
         const sir_val_id_t dst = i->u.load.dst;
         if (a >= f->value_count || dst >= f->value_count) {
@@ -1726,7 +1916,8 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         uint32_t size = 0;
         if (i->k == SIR_INST_LOAD_I8) size = 1;
         else if (i->k == SIR_INST_LOAD_I32) size = 4;
-        else size = 8;
+        else if (i->k == SIR_INST_LOAD_I64) size = 8;
+        else size = (uint32_t)sizeof(zi_ptr_t);
         const uint8_t* r = NULL;
         if (!sem_guest_mem_map_ro(mem, av.u.ptr, (zi_size32_t)size, &r) || !r) {
           free(vals);
@@ -1740,10 +1931,14 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           int32_t x = 0;
           memcpy(&x, r, 4);
           vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = x};
-        } else {
+        } else if (i->k == SIR_INST_LOAD_I64) {
           int64_t x = 0;
           memcpy(&x, r, 8);
           vals[dst] = (sir_value_t){.kind = SIR_VAL_I64, .u.i64 = x};
+        } else {
+          zi_ptr_t x = 0;
+          memcpy(&x, r, sizeof(x));
+          vals[dst] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = x};
         }
         ip++;
         break;
@@ -1758,7 +1953,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         break;
       }
       case SIR_INST_CALL_FUNC: {
-        const int32_t r = exec_call_func(m, mem, host, i, vals, f->value_count, depth);
+        const int32_t r = exec_call_func(m, mem, host, globals, global_count, i, vals, f->value_count, depth);
         if (r < 0) {
           free(vals);
           return r;
@@ -1833,7 +2028,34 @@ int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t h
   if (!m || !mem) return ZI_E_INTERNAL;
   char err[160];
   if (!sir_module_validate(m, err, sizeof(err))) return ZI_E_INVALID;
-  const int32_t r = exec_func(m, mem, host, m->entry, NULL, 0, NULL, 0, 0);
+
+  zi_ptr_t* globals = NULL;
+  if (m->global_count) {
+    globals = (zi_ptr_t*)calloc(m->global_count, sizeof(*globals));
+    if (!globals) return ZI_E_OOM;
+    for (uint32_t i = 0; i < m->global_count; i++) {
+      const sir_global_t* g = &m->globals[i];
+      const zi_ptr_t p = sem_guest_alloc(mem, (zi_size32_t)g->size, (zi_size32_t)g->align);
+      if (!p) {
+        free(globals);
+        return ZI_E_OOM;
+      }
+      globals[i] = p;
+
+      uint8_t* w = NULL;
+      if (!sem_guest_mem_map_rw(mem, p, (zi_size32_t)g->size, &w) || !w) {
+        free(globals);
+        return ZI_E_BOUNDS;
+      }
+      memset(w, 0, g->size);
+      if (g->init_len) {
+        memcpy(w, g->init_bytes, g->init_len);
+      }
+    }
+  }
+
+  const int32_t r = exec_func(m, mem, host, globals, m->global_count, m->entry, NULL, 0, NULL, 0, 0);
+  free(globals);
   if (r > 0) return r - 1;
   return r;
 }

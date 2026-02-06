@@ -82,6 +82,8 @@ static void sem_print_support(FILE* out, bool json) {
       "const.i8",
       "const.i32",
       "const.i64",
+      "const.array (global init)",
+      "const.repeat (global init)",
       "cstr",
       "name",
       "i32.add",
@@ -99,12 +101,15 @@ static void sem_print_support(FILE* out, bool json) {
       "store.i8",
       "store.i32",
       "store.i64",
+      "load.ptr",
+      "store.ptr",
       "mem.copy",
       "mem.fill",
 
       // calls
       "decl.fn (extern import)",
-      "ptr.sym (in-module)",
+      "sym (globals)",
+      "ptr.sym (in-module fn by name, or global addr)",
       "call.indirect",
 
       // statements
@@ -761,14 +766,14 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  if (!want_caps && !cat_path && !sir_hello && !sir_module_hello && !run_path) {
-    sem_print_help(stdout);
+  if (want_support) {
+    sem_print_support(stdout, json);
     sem_free_caps(dyn_caps, dyn_n);
     return 0;
   }
 
-  if (want_support) {
-    sem_print_support(stdout, json);
+  if (!want_caps && !cat_path && !sir_hello && !sir_module_hello && !run_path) {
+    sem_print_help(stdout);
     sem_free_caps(dyn_caps, dyn_n);
     return 0;
   }

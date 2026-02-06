@@ -22,7 +22,7 @@ Scope notes:
 - [x] Structured diagnostics end-to-end (first-error, actionable)
   - [x] Record first diagnostic (code + message + line + node id when available)
   - [x] Emit via `sem --diagnostics text|json`
-  - [ ] Optional: collect and emit multiple diagnostics (`--all`)
+  - [x] Optional: collect and emit multiple diagnostics (`--all`) (best-effort)
 - [ ] Tighten validation (SEM-side) with clear messages
   - [ ] Wrong mnemonic payload shape (missing fields, wrong types)
   - [ ] Wrong arity/type for op arguments
@@ -60,9 +60,9 @@ Scope notes:
 - [ ] Minimal compare set beyond `i32.cmp.eq` (at least `ne`, signed `< > <= >=` as needed by MIR)
 
 ### Pointers + memory (beyond stack slots)
-- [ ] `load.ptr` / `store.ptr`
+- [x] `load.ptr` / `store.ptr`
 - [ ] `ptr.add / ptr.sub`
-- [ ] `ptr.offset`
+- [x] `ptr.offset`
 - [ ] `ptr.to_i64 / ptr.from_i64` (currently only `ptr.to_i64` passthrough in SEM)
 - [ ] `ptr.cmp.eq / ptr.cmp.ne`
 - [ ] `ptr.sizeof` / `ptr.alignof` (at least for prims; later for structs)
@@ -71,13 +71,13 @@ Scope notes:
 
 ## P2 (data): globals + structured constants (enables “real programs”)
 
-- [ ] `global` records (module-level data)
-  - [ ] Define execution-time memory model for globals in SEM (static region in guest mem)
-  - [ ] Relocations: `ptr.sym` to globals, address-taken semantics
+- [x] Globals via `sym` records (module-level data)
+  - [x] Define execution-time memory model for globals in SEM (deterministic alloc at module start)
+  - [x] `ptr.sym` to globals (address-of) for lowered globals
 - [ ] `const` records / structured constants (agg:v1 style)
   - [ ] `const.zero`
-  - [ ] `const.array`
-  - [ ] `const.repeat`
+  - [x] `const.array`
+  - [x] `const.repeat`
   - [ ] `const.struct`
 - [ ] `load.f32 / load.f64` and `store.f32 / store.f64` (needed once globals/constants include floats)
 
