@@ -8,16 +8,22 @@ At the center of Zeta is **SIR**: a versioned, verifier-enforced interchange for
 
 ## What you get
 
-- **A hard boundary you can target**  
+- **A hard boundary you can target**
   If you emit **SIR-Core**, `sircc` can verify it and compile it.
 
-- **Shared lowering for portable intent**  
+- **Shared lowering for portable intent**
   If you emit **SIR-HL** (currently: `sem:v1` intent), `sircc` can lower it deterministically into **SIR-Core**, so frontends don’t reinvent CFG construction, short-circuiting, switch lowering, or scoped defers.
 
-- **A capability-controlled execution harness**  
-  `sem` runs a supported SIR subset under explicit host capabilities, supports recording/replay (“tapes”), and provides a safe platform for testing, verification, and instrumentation.
+- **A verifier + execution harness (big deal)**
+  `sircc` verifies and compiles; `sem` verifies and runs a supported SIR subset under explicit host capabilities, supports recording/replay (“tapes”), and provides a safe platform for testing, verification, and instrumentation.
 
-- **An authoritative support surface**  
+- **A zero-trust interpreter core (library)**
+  `sircore` is the in-tree execution core: deterministic interpretation of an in-memory module with *all* host interaction via a pure message ABI (`zi_ctl`).
+
+- **IR portability beyond LLVM**
+  `sircc` can compile to native via LLVM *and* emit `zasm-v1.1` JSONL (`sircc --emit-zasm`) as a backend-neutral lowering target (useful for emulator-driven workflows and alternate codegen pipelines).
+
+- **An authoritative support surface**
   `sircc --print-support` reports exactly what’s implemented vs missing (also bundled as `dist/doc/support.html` and `dist/doc/support.json` in the `dist/` package).
 
 ---
@@ -59,6 +65,7 @@ At the center of Zeta is **SIR**: a versioned, verifier-enforced interchange for
 - Capability injection (`--cap ...` / `--cap-file-fs` / etc)
 - Sandboxed FS (`--fs-root`)
 - Record/replay tapes (`--tape-out`, `--tape-in`)
+- Built on `sircore` (library)
 
 ---
 
@@ -88,6 +95,25 @@ Or open the bundled docs:
 - `dist/doc/sircc.md`
 - `dist/doc/compiler_kit_cheatsheet.md`
 - `dist/doc/support.html`
+
+---
+
+## “Platform in a box” (how the pieces fit)
+
+Zeta is intentionally usable in multiple modes:
+
+1) **Verify + compile to native** (LLVM):
+- `sircc --verify-only your.sir.jsonl`
+- `sircc your.sir.jsonl -o your_exe`
+
+2) **Verify + run under explicit capabilities** (emulation / harness):
+- `sem --verify your.sir.jsonl`
+- `sem --run your.sir.jsonl --cap ... [--tape-out run.tape]`
+
+3) **Lower to a backend-neutral IR** (for alternate backends / emulator-driven workflows):
+- `sircc your.sir.jsonl --emit-zasm -o out.zasm.jsonl`
+
+These aren’t different products: they’re different *lenses* over the same contract.
 
 ---
 
@@ -155,7 +181,7 @@ Emit **SIR-Core** only:
 Emit **SIR-HL** with feature gates:
 
 - Include: `{"k":"meta", "ext":{"features":["sem:v1", ...]}}`
-- Debug lowering:  
+- Debug lowering:
   `sircc --lower-hl --lower-strict --emit-sir-core out.core.sir.jsonl in.sir.jsonl`
 
 ---
