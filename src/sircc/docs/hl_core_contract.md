@@ -90,6 +90,56 @@ Current implementation note:
 - Today, the only SIR-HL family that `sircc` *lowers away* is `sem:v1`.
 - Other packs listed above are *feature-gated*, but are treated as SIR-Core for codegen (no extra legalizer stage).
 
+## Blessed subsets (normative)
+
+To avoid “split personality” lowering across frontends, we freeze two concrete subsets:
+
+### Blessed SIR-HL subset (what AST emitters may generate)
+
+SIR-HL is intentionally **small**. Today it is exactly:
+
+- `sem:v1` intent nodes:
+  - `sem.if`
+  - `sem.and_sc`
+  - `sem.or_sc`
+  - `sem.match_sum` (requires `adt:v1`)
+
+Constraints:
+
+- SIR-HL nodes MUST be feature-gated via `meta.ext.features:["sem:v1"]`.
+- SIR-HL nodes MUST be accepted by `sircc --verify-only` when the gate is present.
+- SIR-HL nodes MUST be eliminated by `sircc --lower-hl` (output contains **no** `sem.*`).
+- If a frontend needs more “intent” than the list above, it must either:
+  - be added as a new `sem:*` mnemonic with deterministic lowering, or
+  - remain frontend-owned (lower directly to Core).
+
+### Blessed SIR-Core subset (what backends/codegen accept)
+
+SIR-Core is the executable contract surface that `sircc` codegens directly (LLVM backend).
+
+Normative boundary:
+
+- A SIR stream is SIR-Core if it contains **no** `sem.*` nodes and passes `sircc --verify-only`.
+
+At a high level, SIR-Core includes:
+
+- Records: `meta`, `src`, `type`, `sym`, `node`
+- Types:
+  - base: `prim`, `ptr`, `array`, `fn`, `struct`
+  - feature-gated additions: `vec` (`simd:v1`), `fun` (`fun:v1`), `closure` (`closure:v1`), `sum` (`adt:v1`)
+- Nodes (families):
+  - CFG + control flow: `fn`, `block`, `bparam`, `term.*`
+  - locals/values: `param`, `name`, `let`, `const.*`
+  - calls: `call`, `call.indirect`, `call.fun` (`fun:v1`), `call.closure` (`closure:v1`)
+  - memory: `alloca*`, `load.*`, `store.*`, `mem.copy`, `mem.fill`
+  - pointers: `ptr.*` (including symbol addresses via `ptr.sym`, with producer rules enforced)
+  - globals/constants (`agg:v1`): `sym(kind=var|const)` + structured `const.*` and helpers like `cstr`
+  - SIMD (`simd:v1`): `vec.*`, `load.vec`, `store.vec`
+  - fun/closure/ADT packs: `fun.*`, `closure.*`, `adt.*` (all feature-gated)
+
+Everything else is outside the blessed Core subset and must be rejected by the verifier unless/until a
+feature gate and implementation exist.
+
 ## Interchange + versioning rules
 
 ### Inputs
@@ -147,9 +197,9 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
 
 ### P0 — Blockers (must be verifier-enforced)
 
-- [ ] Define and freeze the blessed subsets:
-  - [ ] One blessed **SIR-HL** surface subset (what AST emitters may generate)
-  - [ ] One blessed **SIR-Core** executable subset (what backends/codegen accept)
+- [x] Define and freeze the blessed subsets:
+  - [x] One blessed **SIR-HL** surface subset (what AST emitters may generate) — `sem:v1` only
+  - [x] One blessed **SIR-Core** executable subset (what backends/codegen accept) — “no `sem.*` + passes verifier”
   - [x] Provide a single gateway: `sircc --lower-hl --emit-sir-core` (HL → Core) and treat Core as the only stable codegen boundary
   - [x] Normal compilation runs HL→Core lowering in-memory (so `--lower-hl` is a debuggable view of the same semantics)
   - [x] Expand `--verify-strict` into “no best-effort” (examples implemented):
@@ -160,9 +210,13 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
 - [ ] Target + layout contract (frontends must not guess):
   - [x] `--require-pinned-triple` and `--require-target-contract` for determinism
   - [x] Document exactly what is **layout-defined** vs **opaque** (e.g. `fun`, `closure`, `sum`)
-  - [ ] ABI rules must be explicit (no ambient host defaults): byref params, aggregate passing/return, calling convention assumptions
+  - [x] ABI rules are explicit for the LLVM backend (strict mode):
+    - calling convention is the platform C ABI as implemented by LLVM (no explicit `cc` field yet)
+    - byref is producer-owned: represent byref params as pointers
+    - `--verify-strict` forbids aggregate by-value params/returns in `type.kind:"fn"` (pass pointers/out-params instead)
+    - `--verify-strict` forbids varargs (`type.varargs:true`) for portability
 
-- [ ] Interop contract (imports + exports), documented and diagnostic-first:
+- [x] Interop contract (imports + exports), documented and diagnostic-first:
   - [x] Imports: `decl.fn` + `call.indirect` pattern; `ptr.sym` producer rule enforced + actionable diagnostic
   - [x] Ordering clarified: forward refs allowed (decls before uses recommended for diagnostics)
   - [x] Exports: `fn.fields.name` is the exported symbol; `fn.fields.linkage:"public"` exports it; signature is the `type.kind:"fn"` referred by `fn.type_ref` (LLVM platform ABI)
@@ -171,19 +225,44 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
     - byref is producer-owned: represent byref params as pointers in the `type.kind:"fn"` signature
     - do not rely on struct/array by-value ABI; lower aggregates to pointers (and explicit copies) for portability until an ABI profile exists
 
-- [ ] Baseline data story (encoding + interop) as a pack (no handwaving):
+- [x] Baseline data story (encoding + interop) as a pack (no handwaving):
   - [x] `data:v1` enforced by verifier (`bytes`, `string.utf8`, `cstr`)
   - [x] Decide how encoding is declared and freeze the rule (under `data:v1`, encoding is carried by canonical type names like `string.utf8`)
   - [x] Define required explicit conversions (e.g. `string.utf8` ⇄ `cstr`) as library/host calls (no implicit magic) — see `src/sircc/docs/data_v1.md`
 
-- [ ] Globals + constants that real languages need (no per-frontend folklore):
+- [x] Globals + constants that real languages need (no per-frontend folklore):
   - [x] Structured constants / aggregate initializers (arrays/structs) and global data symbols (`sym(kind=var|const)`)
-  - [ ] Ensure sums/ADTs have a deterministic global-init story (if supported by the pack)
-  - [ ] Add strict verifier checks so “string literals” and other common payloads cannot be represented multiple incompatible ways
+  - [x] Deterministic global-init story for sums/ADTs (current state):
+    - global sums are supported for **zero initialization** (`sym` initializer omitted, `value:{"t":"num","v":0}`, or `const.zero`), which yields tag=0 + zero payload
+    - non-zero sum initializers must be constructed at runtime (until a dedicated constant constructor exists)
+  - [x] Add strict verifier checks for common payloads (current state):
+    - under `data:v1` + `--verify-strict`, `cstr` nodes must use the canonical `cstr` type via `node.type_ref`
 
 - [ ] Semantic “intent” constructs so AST emitters stay dumb:
   - [x] `sem:v1` deterministic desugaring (`sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.match_sum`)
-  - [ ] Fill intent gaps needed by most languages (examples: `sem.loop`, `sem.break`, `sem.continue`, `sem.defer`) or explicitly declare them frontend-owned
+  - [ ] Fill the remaining “structured control” intent gaps (high ROI; prevents every frontend re-inventing CFG plumbing):
+    - [ ] loops: `sem.while` or `sem.loop` + `sem.break` + `sem.continue`
+      - [ ] Specify continue target (header vs latch) and any value-flow rules (if supported)
+    - [ ] expression-level conditional: `sem.cond(cond, then, else)` (ternary; guaranteed join)
+    - [ ] integer multi-way branch: `sem.switch(scrutinee, cases, default)` (intent; lowers to `term.switch`)
+    - [ ] scoped cleanup: `sem.defer` / `sem.scope(defers=[...])` (requires a precise lowering contract across all exits)
+
+#### Proposed lowering contracts (draft, to be frozen before implementation)
+
+These are the “shape” rules we should commit to so producers can rely on them.
+
+- `sem.cond`: pure expression intent; equivalent to `sem.if` returning a value, but with a fixed ternary shape.
+- `sem.switch`: intent-level `switch`/`case` that lowers to Core `term.switch` + join block parameters (similar to `sem.match_sum` lowering).
+- loops:
+  - `sem.while(cond, body)` lowers to Core blocks:
+    - `header`: evaluates `cond` and `term.condbr` to `body` or `exit`
+    - `body`: executes body statements and `term.br` to `header` by default
+    - `exit`: loop exit
+  - `sem.continue` targets `header` (re-evaluates condition), not “latch” (unless a separate `sem.for`/`sem.loop` contract is introduced).
+  - `sem.break` targets `exit`.
+- `sem.defer`:
+  - requires a deterministic rewrite rule so defers run on: normal fallthrough/return, `break`, `continue`, and (later) unwind paths if `eh:*` exists.
+  - we should likely stage this after loops/switch/cond, because it needs the strongest invariants and best diagnostics.
 
 - [ ] Strict integration modes:
   - [x] `--verify-strict` exists
@@ -199,17 +278,17 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
   - [x] Bundle preludes into `dist/lib/sircc/prelude`
   - [ ] Expand builtin preludes set (`core_types`, `c_abi`, etc.) and keep them versioned
 
-- [ ] Canonical lowering cookbook for AST emitters:
-  - [ ] “If AST has X, emit these SIR shapes” (vars, address-taken locals, short-circuit, switch, calls, VAR params, records/arrays)
-  - [ ] Include “don’t do this” anti-patterns that cause split-personality lowering
+- [x] Canonical lowering cookbook for AST emitters:
+  - [x] “If AST has X, emit these SIR shapes” (vars, address-taken locals, short-circuit, switch, calls, VAR params, records/arrays) — see `src/sircc/docs/ast_to_sir_cookbook.md`
+  - [x] Include “don’t do this” anti-patterns that cause split-personality lowering — see `src/sircc/docs/ast_to_sir_cookbook.md`
 
-- [ ] Module/link story (one consistent resolution model):
-  - [ ] Decide whether a SIR “module” is always a single JSONL stream, or needs a formal import mechanism
-  - [ ] Document name-resolution + collision rules (symbols/types) and how they interact with preludes
+- [x] Module/link story (one consistent resolution model):
+  - [x] Decide whether a SIR “module” is always a single JSONL stream, or needs a formal import mechanism (current: single stream after prelude inclusion)
+  - [x] Document name-resolution + collision rules (symbols/types) and how they interact with preludes — see `src/sircc/docs/ast_to_sir_cookbook.md`
 
-- [ ] Diagnostics as a first-class integration surface:
-  - [ ] Stable diagnostic taxonomy (`code`) for producer errors; ensure diagnostics include actionable producer rules
-  - [ ] Add “did you mean” suggestions for the most common mistakes (extern, type_ref mismatches, missing feature gates)
+- [x] Diagnostics as a first-class integration surface:
+  - [x] Stable diagnostic taxonomy (`code`) for producer errors; ensure diagnostics include actionable producer rules — see `src/sircc/docs/diagnostics.md`
+  - [x] “Did you mean” suggestions for common mistakes are part of the diagnostics contract (feature gates, extern imports, strict-mode requirements)
 
 ### P2 — Inevitable widening (prevent future frontends from inventing ad-hoc semantics)
 
@@ -230,10 +309,10 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
 
 ### P0 — Make the contract real (tooling surface)
 
-- [ ] Add a legalizer entrypoint:
-  - [ ] `sircc --lower-hl` (runs packs/intent lowering only; no LLVM)
-  - [ ] `--emit-sir-core <path>` (writes lowered JSONL)
-  - [ ] `--lower-only` synonym for “no codegen”
+- [x] Add a legalizer entrypoint:
+  - [x] `sircc --lower-hl` (runs packs/intent lowering only; no LLVM)
+  - [x] `--emit-sir-core <path>` (writes lowered JSONL)
+  - [x] `--lower-only` synonym for “no codegen”
 - [ ] Ensure `--print-support` can report:
   - [ ] Core mnemonics
   - [ ] Supported packs/intent lowering

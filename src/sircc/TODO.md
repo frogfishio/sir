@@ -265,19 +265,19 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
   - [x] Ensure all SIMD errors use `err_codef` with stable codes and include node context in JSON diagnostics (added targeted `sircc.vec.*` codes + `SIRCC_ERR_NODE` paths)
 
 ### 4.3 ADT sums (adt:v1) — 4 (+ notes)
-- [ ] Sum construction: `adt.make`
-- [ ] Tag inspection: `adt.tag`
-- [ ] Payload extraction: `adt.get`
-- [ ] Nullary/empty payload cases + layout rules
-- [ ] Follow the spec’s matching-lowering note: stable case ordering, `term.switch` over tag
+- [x] Sum construction: `adt.make`
+- [x] Tag inspection: `adt.tag`
+- [x] Payload extraction: `adt.get`
+- [x] Nullary/empty payload cases + layout rules
+- [x] Follow the spec’s matching-lowering note: stable case ordering, `term.switch` over tag
 
 ### 4.4 Function values (fun:v1) — 4
-- [ ] First-class function pointers, `fun.sym`, indirect calls, signature checking
+- [x] First-class function pointers, `fun.sym`, indirect calls, signature checking
 
 ### 4.5 Closures (closure:v1) — 7
-- [ ] Environment layout/type strategy (explicit first parameter rule)
-- [ ] `closure.make`, `closure.call`, `closure.sym`, etc.
-- [ ] Capture-by-value vs capture-by-ref semantics (as specified)
+- [x] Environment layout/type strategy (explicit first parameter rule)
+- [x] `closure.make`, `closure.call`, `closure.sym`, etc.
+- [x] Capture-by-value vs capture-by-ref semantics (as specified)
 
 ### 4.6 Coroutines (coro:v1) — 5
 - [ ] Define runtime ABI for coroutine frames (explicit, documented)
@@ -300,9 +300,15 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
 - [ ] Validator: missing required barriers is invalid when the model says they’re required
 
 ### 4.10 Declarative semantics (sem:v1) — 4 (requires adt:v1 for sum matching)
-- [ ] `sem.if` (non-strict conditional: branches as values/thunks)
-- [ ] `sem.and_sc` / `sem.or_sc` (short-circuit with explicit evaluation order)
-- [ ] `sem.match_sum` (pattern match over sums)
+- [x] `sem.if` (non-strict conditional: branches as values/thunks)
+- [x] `sem.and_sc` / `sem.or_sc` (short-circuit with explicit evaluation order)
+- [x] `sem.match_sum` (pattern match over sums)
+
+### 4.11 Structured control intent (sem:v1) — roadmap
+- [ ] loops: `sem.while` / `sem.loop` + `sem.break` + `sem.continue` (define continue target + value flow rules)
+- [ ] expression-level conditional: `sem.cond` (ternary)
+- [ ] multi-way branch: `sem.switch` (integer switch intent; lowers to `term.switch`)
+- [ ] scoped cleanup: `sem.defer` / `sem.scope` (requires precise lowering across all exits)
 
 ## Milestone 5 — Completeness: docs + conformance + examples
 

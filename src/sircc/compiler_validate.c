@@ -80,6 +80,12 @@ static bool is_fn_type_id(SirProgram* p, int64_t type_id, TypeRec** out_fn) {
   return true;
 }
 
+static bool is_abi_aggregate_kind(TypeKind k) {
+  // These are by-value aggregates with target ABI implications. In strict mode we
+  // require producers to pass them by pointer (byref) for portability.
+  return (k == TYPE_ARRAY || k == TYPE_STRUCT || k == TYPE_SUM || k == TYPE_CLOSURE);
+}
+
 static bool fn_sig_eq_derived(TypeRec* have_sig, int64_t want_env_ty, TypeRec* want_call_sig) {
   if (!have_sig || have_sig->kind != TYPE_FN) return false;
   if (!want_call_sig || want_call_sig->kind != TYPE_FN) return false;
@@ -92,6 +98,8 @@ static bool fn_sig_eq_derived(TypeRec* have_sig, int64_t want_env_ty, TypeRec* w
   }
   return true;
 }
+
+static bool validate_cstr_node(SirProgram* p, NodeRec* n);
 
 static bool validate_fun_node(SirProgram* p, NodeRec* n) {
   if (!p || !n) return false;
@@ -324,8 +332,9 @@ static bool validate_call_indirect_node(SirProgram* p, NodeRec* n) {
     // Producer rule for extern imports: decl.fn carries a fn signature. Ensure it matches fields.sig.
     if (strcmp(callee_n->tag, "decl.fn") == 0 && callee_n->type_ref != sig_id) {
       err_codef(p, "sircc.call.indirect.decl.sig_mismatch",
-                "sircc: call.indirect node %lld callee decl.fn signature mismatch (decl=%lld, call.sig=%lld)", (long long)n->id,
-                (long long)callee_n->type_ref, (long long)sig_id);
+                "sircc: call.indirect node %lld callee decl.fn signature mismatch (decl=%lld, call.sig=%lld) "
+                "(did you mean: set call.indirect fields.sig to the decl.fn type_ref, or fix the decl.fn signature?)",
+                (long long)n->id, (long long)callee_n->type_ref, (long long)sig_id);
       goto bad;
     }
   }
@@ -1493,6 +1502,39 @@ bool validate_program(SirProgram* p) {
         return false;
       }
     }
+
+    // ABI rules (strict mode): forbid signatures that rely on target-specific aggregate calling convention.
+    if (p->opt && p->opt->verify_strict && t->kind == TYPE_FN) {
+      if (t->varargs) {
+        SirDiagSaved saved = sir_diag_push(p, "type", t->id, "fn");
+        err_codef(p, "sircc.abi.fn.varargs.disallowed_strict",
+                  "sircc: strict mode forbids varargs fn types (lower varargs at the producer level, or avoid varargs for portability)");
+        sir_diag_pop(p, saved);
+        return false;
+      }
+
+      TypeRec* ret = get_type(p, t->ret);
+      if (ret && is_abi_aggregate_kind(ret->kind)) {
+        SirDiagSaved saved = sir_diag_push(p, "type", t->id, "fn");
+        err_codef(p, "sircc.abi.fn.ret_aggregate_by_value.disallowed_strict",
+                  "sircc: strict mode forbids returning aggregates by value (ret type kind '%d'); return by pointer/out-param instead",
+                  (int)ret->kind);
+        sir_diag_pop(p, saved);
+        return false;
+      }
+
+      for (size_t pi = 0; pi < t->param_len; pi++) {
+        TypeRec* pt = get_type(p, t->params[pi]);
+        if (pt && is_abi_aggregate_kind(pt->kind)) {
+          SirDiagSaved saved = sir_diag_push(p, "type", t->id, "fn");
+          err_codef(p, "sircc.abi.fn.param_aggregate_by_value.disallowed_strict",
+                    "sircc: strict mode forbids passing aggregates by value (param[%zu] type kind '%d'); pass a ptr instead", pi,
+                    (int)pt->kind);
+          sir_diag_pop(p, saved);
+          return false;
+        }
+      }
+    }
   }
 
   if (p->feat_data_v1) {
@@ -1556,6 +1598,7 @@ bool validate_program(SirProgram* p) {
     if (!validate_ptr_sym_node(p, n)) return false;
     if (!validate_ptr_cast_node(p, n)) return false;
     if (!validate_call_indirect_node(p, n)) return false;
+    if (!validate_cstr_node(p, n)) return false;
   }
 
   // fun/closure/adt/sem semantic checks (close the "verify-only vs lowering" delta).
@@ -1613,6 +1656,43 @@ static bool is_ptr_to_prim(SirProgram* p, int64_t type_id, const char* prim) {
   TypeRec* t = get_type(p, type_id);
   if (!t || t->kind != TYPE_PTR) return false;
   return is_prim(p, t->of, prim);
+}
+
+static bool validate_cstr_node(SirProgram* p, NodeRec* n) {
+  if (!p || !n || !n->tag) return false;
+  if (strcmp(n->tag, "cstr") != 0) return true;
+
+  // `cstr` is a convenience literal node. Under data:v1 + strict mode, require that its
+  // type_ref is explicitly the canonical `cstr` type so producers don't accidentally use
+  // it as some other pointer-typed payload.
+  if (!(p->opt && p->opt->verify_strict && p->feat_data_v1)) return true;
+
+  TypeRec* cstr = find_type_by_name_kind(p, "cstr", TYPE_PTR);
+  if (!cstr || cstr == (TypeRec*)(uintptr_t)1) {
+    // data:v1 validation should catch this first, but keep diagnostics crisp.
+    SirDiagSaved saved = sir_diag_push_node(p, n);
+    err_codef(p, "sircc.cstr.data_v1.missing",
+              "sircc: cstr node requires data:v1 canonical type 'cstr' to exist (use --prelude-builtin data_v1)");
+    sir_diag_pop(p, saved);
+    return false;
+  }
+
+  SirDiagSaved saved = sir_diag_push_node(p, n);
+  if (n->type_ref == 0) {
+    err_codef(p, "sircc.cstr.type_ref.missing",
+              "sircc: strict mode requires cstr node %lld to have type_ref of the canonical 'cstr' type", (long long)n->id);
+    sir_diag_pop(p, saved);
+    return false;
+  }
+  if (n->type_ref != cstr->id) {
+    err_codef(p, "sircc.cstr.type_ref.mismatch",
+              "sircc: cstr node %lld type_ref mismatch (got=%lld, want=%lld named 'cstr')", (long long)n->id, (long long)n->type_ref,
+              (long long)cstr->id);
+    sir_diag_pop(p, saved);
+    return false;
+  }
+  sir_diag_pop(p, saved);
+  return true;
 }
 
 static bool validate_data_bytes_like(SirProgram* p, const TypeRec* t, const char* name) {

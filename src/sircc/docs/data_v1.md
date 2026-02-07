@@ -57,10 +57,14 @@ A C string pointer (NUL-terminated bytes).
 For *literal* C strings, use the dedicated `cstr` node:
 
 ```json
-{"ir":"sir-v1.0","k":"node","id":"lit","tag":"cstr","fields":{"value":"hello\\n"}}
+{"ir":"sir-v1.0","k":"node","id":"lit","tag":"cstr","type_ref":"p:cstr","fields":{"value":"hello\\n"}}
 ```
 
 This yields a `ptr(i8)` suitable for passing to C ABIs like `puts`.
+
+Strict mode note:
+
+- Under `data:v1` + `--verify-strict`, `cstr` nodes must set `type_ref` to the canonical `cstr` type.
 
 ### UTF-8 slices → `cstr` (owned)
 

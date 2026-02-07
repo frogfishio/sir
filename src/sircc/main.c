@@ -135,8 +135,9 @@ static void usage(FILE* out) {
           "\n"
           "Lowering:\n"
           "  --lower-hl         Lower supported SIR-HL into Core SIR (no codegen)\n"
+          "  --lower-only       Alias for --lower-hl\n"
           "  --lower-strict     Tighten lowering/verification rules (implies --verify-strict)\n"
-          "  --emit-sir-core P  Write lowered Core SIR JSONL to P (requires --lower-hl)\n"
+          "  --emit-sir-core P  Write lowered Core SIR JSONL to P (requires --lower-hl/--lower-only)\n"
           "\n"
           "License: GPLv3+\n"
           "© 2026 Frogfish — Author: Alexander Croft\n");
@@ -253,6 +254,10 @@ int main(int argc, char** argv) {
       continue;
     }
     if (strcmp(a, "--lower-hl") == 0) {
+      opt.lower_hl = true;
+      continue;
+    }
+    if (strcmp(a, "--lower-only") == 0) {
       opt.lower_hl = true;
       continue;
     }
