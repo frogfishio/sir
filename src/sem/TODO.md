@@ -111,6 +111,7 @@ Work items:
   - [x] `--list`/`--check` warn+skip non-`.sir.jsonl` file inputs
 - [ ] Instrumentation hooks (using `sircore` events)
   - [ ] coverage (step coverage / node coverage)
+  - [x] basic trace JSONL (`sem --run --trace-jsonl-out PATH`)
   - [ ] trace filters (by fn / node / op)
   - [ ] replayable crash minimization hooks (longer-term)
 

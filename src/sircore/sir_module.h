@@ -360,6 +360,24 @@ typedef struct sir_module {
   sir_func_id_t entry; // 1-based id into funcs (0 is invalid)
 } sir_module_t;
 
+// Execution events (optional).
+// Used by frontends (sem/instrument) to build trace/coverage/profiling without forking the VM.
+typedef enum sir_mem_event_kind {
+  SIR_MEM_READ = 0,
+  SIR_MEM_WRITE = 1,
+} sir_mem_event_kind_t;
+
+typedef struct sir_exec_event_sink {
+  void* user;
+  void (*on_step)(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k);
+  void (*on_mem)(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_mem_event_kind_t k, zi_ptr_t addr, uint32_t size);
+  void (*on_hostcall)(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, const char* callee, int32_t rc);
+} sir_exec_event_sink_t;
+
+// Returns a stable short name for an instruction kind (for trace output).
+// Never returns NULL; unknown kinds return "unknown".
+const char* sir_inst_kind_name(sir_inst_kind_t k);
+
 // Builder
 typedef struct sir_module_builder sir_module_builder_t;
 
@@ -474,3 +492,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap);
 // Execution: run module entry function.
 // Returns exit code (>=0) or negative ZI_E_*.
 int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host);
+
+// Execution with an optional event sink.
+// The sink callbacks are best-effort and must not affect execution.
+int32_t sir_module_run_ex(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const sir_exec_event_sink_t* sink);

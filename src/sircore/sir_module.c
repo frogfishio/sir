@@ -1627,8 +1627,8 @@ static const sir_sym_t* sym_at(const sir_module_t* m, sir_sym_id_t id) {
   return &m->syms[id - 1];
 }
 
-static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const sir_inst_t* inst,
-                                sir_value_t* vals, uint32_t val_count) {
+static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, sir_func_id_t fid, uint32_t ip,
+                                const sir_exec_event_sink_t* sink, const sir_inst_t* inst, sir_value_t* vals, uint32_t val_count) {
   (void)mem;
   if (!m || !inst || !vals) return ZI_E_INTERNAL;
   const sir_sym_t* s = sym_at(m, inst->u.call_extern.callee);
@@ -1660,6 +1660,7 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     if (l.kind != SIR_VAL_I64 && l.kind != SIR_VAL_I32) return ZI_E_INVALID;
     if (ll < 0 || ll > 0x7FFFFFFFll) return ZI_E_INVALID;
     const int32_t rc = host.v.zi_write(host.user, (zi_handle_t)h.u.i32, pp, (zi_size32_t)ll);
+    if (sink && sink->on_hostcall) sink->on_hostcall(sink->user, m, fid, ip, nm, rc);
     if (rc < 0) return rc;
     if (inst->result_count == 1) {
       vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
@@ -1675,6 +1676,7 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     const sir_value_t h = vals[a0];
     if (h.kind != SIR_VAL_I32) return ZI_E_INVALID;
     const int32_t rc = host.v.zi_end(host.user, (zi_handle_t)h.u.i32);
+    if (sink && sink->on_hostcall) sink->on_hostcall(sink->user, m, fid, ip, nm, rc);
     if (rc < 0) return rc;
     if (inst->result_count == 1) {
       vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
@@ -1697,6 +1699,7 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     if (l.kind != SIR_VAL_I64 && l.kind != SIR_VAL_I32) return ZI_E_INVALID;
     if (ll < 0 || ll > 0x7FFFFFFFll) return ZI_E_INVALID;
     const int32_t rc = host.v.zi_read(host.user, (zi_handle_t)h.u.i32, pp, (zi_size32_t)ll);
+    if (sink && sink->on_hostcall) sink->on_hostcall(sink->user, m, fid, ip, nm, rc);
     if (rc < 0) return rc;
     if (inst->result_count == 1) {
       vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
@@ -1712,6 +1715,7 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     const sir_value_t sz = vals[a0];
     if (sz.kind != SIR_VAL_I32) return ZI_E_INVALID;
     const zi_ptr_t p = host.v.zi_alloc(host.user, (zi_size32_t)sz.u.i32);
+    if (sink && sink->on_hostcall) sink->on_hostcall(sink->user, m, fid, ip, nm, p ? 0 : ZI_E_OOM);
     if (!p && sz.u.i32 != 0) return ZI_E_OOM;
     if (inst->result_count == 1) {
       vals[r0] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = p};
@@ -1727,6 +1731,7 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     const sir_value_t p = vals[a0];
     if (p.kind != SIR_VAL_PTR) return ZI_E_INVALID;
     const int32_t rc = host.v.zi_free(host.user, p.u.ptr);
+    if (sink && sink->on_hostcall) sink->on_hostcall(sink->user, m, fid, ip, nm, rc);
     if (rc < 0) return rc;
     if (inst->result_count == 1) {
       vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
@@ -1749,6 +1754,7 @@ static int32_t exec_call_extern(const sir_module_t* m, sem_guest_mem_t* mem, sir
     if (mp.kind != SIR_VAL_PTR && mp.kind != SIR_VAL_I64) return ZI_E_INVALID;
     if (tl.kind != SIR_VAL_I32 || ml.kind != SIR_VAL_I32) return ZI_E_INVALID;
     const int32_t rc = host.v.zi_telemetry(host.user, tpp, (zi_size32_t)tl.u.i32, mpp, (zi_size32_t)ml.u.i32);
+    if (sink && sink->on_hostcall) sink->on_hostcall(sink->user, m, fid, ip, nm, rc);
     if (rc < 0) return rc;
     if (inst->result_count == 1) {
       vals[r0] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = rc};
@@ -1766,10 +1772,10 @@ typedef struct sir_frame {
 
 static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
                          sir_func_id_t fid, const sir_value_t* args, uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count,
-                         uint32_t depth);
+                         uint32_t depth, const sir_exec_event_sink_t* sink);
 
 static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
-                              const sir_inst_t* inst, sir_value_t* vals, uint32_t val_count, uint32_t depth) {
+                              const sir_inst_t* inst, sir_value_t* vals, uint32_t val_count, uint32_t depth, const sir_exec_event_sink_t* sink) {
   if (!m || !inst || !vals) return ZI_E_INTERNAL;
   const sir_func_id_t fid = inst->u.call_func.callee;
   if (fid == 0 || fid > m->func_count) return ZI_E_NOENT;
@@ -1789,7 +1795,7 @@ static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_h
   sir_value_t resv[2];
   memset(resv, 0, sizeof(resv));
   const int32_t rc =
-      exec_func(m, mem, host, globals, global_count, fid, argv, inst->u.call_func.arg_count, resv, inst->result_count, depth + 1);
+      exec_func(m, mem, host, globals, global_count, fid, argv, inst->u.call_func.arg_count, resv, inst->result_count, depth + 1, sink);
   // Propagate errors and process-exit requests.
   if (rc != 0) return rc;
   for (uint8_t ri = 0; ri < inst->result_count; ri++) {
@@ -1802,17 +1808,12 @@ static int32_t exec_call_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_h
 
 static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
                          sir_func_id_t fid, const sir_value_t* args, uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count,
-                         uint32_t depth) {
+                         uint32_t depth, const sir_exec_event_sink_t* sink) {
   if (!m) return ZI_E_INTERNAL;
   if (depth > 1024) return ZI_E_INTERNAL;
   if (fid == 0 || fid > m->func_count) return ZI_E_NOENT;
 
   const sir_func_t* f = &m->funcs[fid - 1];
-  const char* trace = getenv("SIRCORE_TRACE");
-  if (trace && trace[0]) {
-    fprintf(stderr, "sircore: trace: enter func=%s fid=%u args=%u results=%u depth=%u\n", f->name ? f->name : "?", (unsigned)fid,
-            (unsigned)arg_count, (unsigned)out_result_count, (unsigned)depth);
-  }
   if (!(args == NULL && arg_count == 0 && fid == m->entry) && arg_count != f->sig.param_count) return ZI_E_INVALID;
   if (out_result_count != f->sig.result_count) return ZI_E_INVALID;
 
@@ -1822,15 +1823,6 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
 
   if (args == NULL && arg_count == 0 && fid == m->entry) {
     // Default-initialize entry params to zero (DX convenience).
-    if (trace && trace[0]) {
-      fprintf(stderr, "sircore: trace: entry default-init params=%u sig_params=%s ptr=%p\n", (unsigned)f->sig.param_count,
-              f->sig.params ? "yes" : "no", (const void*)f->sig.params);
-      if (f->sig.params && f->sig.param_count) {
-        const uint8_t* bp = (const uint8_t*)f->sig.params;
-        fprintf(stderr, "sircore: trace: param0 bytes=%02x %02x %02x %02x\n", (unsigned)bp[0], (unsigned)bp[1], (unsigned)bp[2],
-                (unsigned)bp[3]);
-      }
-    }
     for (uint32_t i = 0; i < f->sig.param_count; i++) {
       if (i >= f->value_count) {
         free(vals);
@@ -1838,10 +1830,6 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
       }
       const sir_type_id_t tid = f->sig.params ? f->sig.params[i] : 0;
       if (tid == 0 || tid > m->type_count) {
-        if (trace && trace[0]) {
-          fprintf(stderr, "sircore: trace: bad param type id=%u at i=%u type_count=%u\n", (unsigned)tid, (unsigned)i,
-                  (unsigned)m->type_count);
-        }
         free(vals);
         return ZI_E_INVALID;
       }
@@ -1882,10 +1870,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
 
   for (uint32_t ip = 0; ip < f->inst_count;) {
     const sir_inst_t* i = &f->insts[ip];
-    if (trace && trace[0]) {
-      fprintf(stderr, "sircore: trace: func=%s fid=%u ip=%u k=%u\n", f->name ? f->name : "?", (unsigned)fid, (unsigned)ip,
-              (unsigned)i->k);
-    }
+    if (sink && sink->on_step) sink->on_step(sink->user, m, fid, ip, i->k);
     switch (i->k) {
       case SIR_INST_CONST_I8:
         if (i->u.const_i8.dst >= f->value_count) {
@@ -2672,6 +2657,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           free(vals);
           return ZI_E_BOUNDS;
         }
+        if (sink && sink->on_mem) sink->on_mem(sink->user, m, fid, ip, SIR_MEM_WRITE, av.u.ptr, size);
         if (i->k == SIR_INST_STORE_I8) {
           const sir_value_t vv = vals[v];
           const uint8_t b = (vv.kind == SIR_VAL_I8) ? vv.u.u8 : (vv.kind == SIR_VAL_I32) ? (uint8_t)vv.u.i32 : 0;
@@ -2730,6 +2716,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           free(vals);
           return ZI_E_BOUNDS;
         }
+        if (sink && sink->on_mem) sink->on_mem(sink->user, m, fid, ip, SIR_MEM_READ, av.u.ptr, size);
         if (i->k == SIR_INST_LOAD_I8) {
           uint8_t b = 0;
           memcpy(&b, r, 1);
@@ -2751,7 +2738,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         break;
       }
       case SIR_INST_CALL_EXTERN: {
-        const int32_t r = exec_call_extern(m, mem, host, i, vals, f->value_count);
+        const int32_t r = exec_call_extern(m, mem, host, fid, ip, sink, i, vals, f->value_count);
         if (r < 0) {
           free(vals);
           return r;
@@ -2760,7 +2747,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         break;
       }
       case SIR_INST_CALL_FUNC: {
-        const int32_t r = exec_call_func(m, mem, host, globals, global_count, i, vals, f->value_count, depth);
+        const int32_t r = exec_call_func(m, mem, host, globals, global_count, i, vals, f->value_count, depth, sink);
         if (r < 0) {
           free(vals);
           return r;
@@ -2831,7 +2818,158 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
   return 0;
 }
 
+const char* sir_inst_kind_name(sir_inst_kind_t k) {
+  switch (k) {
+    case SIR_INST_INVALID:
+      return "invalid";
+    case SIR_INST_CONST_I8:
+      return "const.i8";
+    case SIR_INST_CONST_I32:
+      return "const.i32";
+    case SIR_INST_CONST_I64:
+      return "const.i64";
+    case SIR_INST_CONST_BOOL:
+      return "const.bool";
+    case SIR_INST_CONST_PTR:
+      return "const.ptr";
+    case SIR_INST_CONST_PTR_NULL:
+      return "const.null";
+    case SIR_INST_CONST_BYTES:
+      return "const.bytes";
+    case SIR_INST_I32_ADD:
+      return "i32.add";
+    case SIR_INST_I32_SUB:
+      return "i32.sub";
+    case SIR_INST_I32_MUL:
+      return "i32.mul";
+    case SIR_INST_I32_AND:
+      return "i32.and";
+    case SIR_INST_I32_OR:
+      return "i32.or";
+    case SIR_INST_I32_XOR:
+      return "i32.xor";
+    case SIR_INST_I32_NOT:
+      return "i32.not";
+    case SIR_INST_I32_NEG:
+      return "i32.neg";
+    case SIR_INST_I32_SHL:
+      return "i32.shl";
+    case SIR_INST_I32_SHR_S:
+      return "i32.shr.s";
+    case SIR_INST_I32_SHR_U:
+      return "i32.shr.u";
+    case SIR_INST_I32_DIV_S_SAT:
+      return "i32.div.s.sat";
+    case SIR_INST_I32_DIV_S_TRAP:
+      return "i32.div.s.trap";
+    case SIR_INST_I32_DIV_U_SAT:
+      return "i32.div.u.sat";
+    case SIR_INST_I32_REM_S_SAT:
+      return "i32.rem.s.sat";
+    case SIR_INST_I32_REM_U_SAT:
+      return "i32.rem.u.sat";
+    case SIR_INST_I32_CMP_EQ:
+      return "i32.cmp.eq";
+    case SIR_INST_I32_CMP_NE:
+      return "i32.cmp.ne";
+    case SIR_INST_I32_CMP_SLT:
+      return "i32.cmp.slt";
+    case SIR_INST_I32_CMP_SLE:
+      return "i32.cmp.sle";
+    case SIR_INST_I32_CMP_SGT:
+      return "i32.cmp.sgt";
+    case SIR_INST_I32_CMP_SGE:
+      return "i32.cmp.sge";
+    case SIR_INST_I32_CMP_ULT:
+      return "i32.cmp.ult";
+    case SIR_INST_I32_CMP_ULE:
+      return "i32.cmp.ule";
+    case SIR_INST_I32_CMP_UGT:
+      return "i32.cmp.ugt";
+    case SIR_INST_I32_CMP_UGE:
+      return "i32.cmp.uge";
+    case SIR_INST_GLOBAL_ADDR:
+      return "global.addr";
+    case SIR_INST_PTR_OFFSET:
+      return "ptr.offset";
+    case SIR_INST_PTR_ADD:
+      return "ptr.add";
+    case SIR_INST_PTR_SUB:
+      return "ptr.sub";
+    case SIR_INST_PTR_CMP_EQ:
+      return "ptr.cmp.eq";
+    case SIR_INST_PTR_CMP_NE:
+      return "ptr.cmp.ne";
+    case SIR_INST_PTR_TO_I64:
+      return "ptr.to_i64";
+    case SIR_INST_PTR_FROM_I64:
+      return "ptr.from_i64";
+    case SIR_INST_BOOL_NOT:
+      return "bool.not";
+    case SIR_INST_BOOL_AND:
+      return "bool.and";
+    case SIR_INST_BOOL_OR:
+      return "bool.or";
+    case SIR_INST_BOOL_XOR:
+      return "bool.xor";
+    case SIR_INST_I32_ZEXT_I8:
+      return "i32.zext.i8";
+    case SIR_INST_I64_ZEXT_I32:
+      return "i64.zext.i32";
+    case SIR_INST_I32_TRUNC_I64:
+      return "i32.trunc.i64";
+    case SIR_INST_SELECT:
+      return "select";
+    case SIR_INST_BR:
+      return "term.br";
+    case SIR_INST_CBR:
+      return "term.cbr";
+    case SIR_INST_SWITCH:
+      return "term.switch";
+    case SIR_INST_MEM_COPY:
+      return "mem.copy";
+    case SIR_INST_MEM_FILL:
+      return "mem.fill";
+    case SIR_INST_ALLOCA:
+      return "alloca";
+    case SIR_INST_STORE_I8:
+      return "store.i8";
+    case SIR_INST_STORE_I32:
+      return "store.i32";
+    case SIR_INST_STORE_I64:
+      return "store.i64";
+    case SIR_INST_STORE_PTR:
+      return "store.ptr";
+    case SIR_INST_LOAD_I8:
+      return "load.i8";
+    case SIR_INST_LOAD_I32:
+      return "load.i32";
+    case SIR_INST_LOAD_I64:
+      return "load.i64";
+    case SIR_INST_LOAD_PTR:
+      return "load.ptr";
+    case SIR_INST_CALL_EXTERN:
+      return "call.extern";
+    case SIR_INST_CALL_FUNC:
+      return "call.func";
+    case SIR_INST_RET:
+      return "term.ret";
+    case SIR_INST_RET_VAL:
+      return "term.ret_val";
+    case SIR_INST_EXIT:
+      return "term.exit";
+    case SIR_INST_EXIT_VAL:
+      return "term.exit_val";
+    default:
+      return "unknown";
+  }
+}
+
 int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host) {
+  return sir_module_run_ex(m, mem, host, NULL);
+}
+
+int32_t sir_module_run_ex(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const sir_exec_event_sink_t* sink) {
   if (!m || !mem) return ZI_E_INTERNAL;
   char err[160];
   if (!sir_module_validate(m, err, sizeof(err))) return ZI_E_INVALID;
@@ -2861,7 +2999,7 @@ int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t h
     }
   }
 
-  const int32_t r = exec_func(m, mem, host, globals, m->global_count, m->entry, NULL, 0, NULL, 0, 0);
+  const int32_t r = exec_func(m, mem, host, globals, m->global_count, m->entry, NULL, 0, NULL, 0, 0, sink);
   free(globals);
   if (r > 0) return r - 1;
   return r;

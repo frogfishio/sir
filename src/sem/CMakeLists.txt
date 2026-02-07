@@ -620,6 +620,22 @@ target_compile_options(sem_unit_run_sem_i32_div_s_trap_zero PRIVATE -Wall -Wextr
 
 add_test(NAME sem_run_sem_i32_div_s_trap_zero COMMAND sem_unit_run_sem_i32_div_s_trap_zero)
 
+add_executable(sem_unit_trace_smoke
+  tests/test_trace_smoke.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_trace_smoke PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_trace_smoke PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_trace_smoke PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_trace_smoke PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_trace_smoke PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_trace_smoke COMMAND sem_unit_trace_smoke)
+
 add_test(
   NAME sem_check_smoke
   COMMAND $<TARGET_FILE:sem> --check
