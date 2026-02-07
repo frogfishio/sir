@@ -31,6 +31,8 @@ endif()
 set(SIR_DIST_ROOT ${CMAKE_SOURCE_DIR}/dist)
 set(SIR_DIST_BIN ${SIR_DIST_ROOT}/bin)
 set(SIR_DIST_DOC ${SIR_DIST_ROOT}/doc)
+set(SIR_DIST_LIB ${SIR_DIST_ROOT}/lib)
+set(SIR_DIST_PRELUDE ${SIR_DIST_LIB}/sircc/prelude)
 set(SIR_DIST_TEST ${SIR_DIST_ROOT}/test)
 set(SIR_DIST_TEST_EXAMPLES ${SIR_DIST_TEST}/examples)
 set(SIR_DIST_RT ${SIR_DIST_ROOT}/rt)
@@ -49,6 +51,7 @@ add_custom_target(dist_sircc
   DEPENDS sircc sem
   COMMAND ${CMAKE_COMMAND} -E make_directory ${SIR_DIST_BIN_OS}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${SIR_DIST_DOC}
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${SIR_DIST_PRELUDE}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${SIR_DIST_TEST_EXAMPLES}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${SIR_DIST_RT}
 
@@ -62,6 +65,9 @@ add_custom_target(dist_sircc
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/src.md ${SIR_DIST_DOC}/sircc.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/mir_producer.md ${SIR_DIST_DOC}/mir_producer.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/test.md ${SIR_DIST_TEST}/README.md
+
+  # preludes (compiler kit boilerplate)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/src/sircc/prelude ${SIR_DIST_PRELUDE}
 
   # normative JSONL examples (subset)
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/add.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/add.sir.jsonl

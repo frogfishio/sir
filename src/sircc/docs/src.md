@@ -47,6 +47,7 @@ sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj|--emit-zasm] [--clan
 sircc --verify-only <input.sir.jsonl>
 sircc --verify-strict --verify-only <input.sir.jsonl>
 sircc [--prelude <prelude.sir.jsonl>]... --verify-only <input.sir.jsonl>
+sircc [--prelude-builtin data_v1|zabi25_min]... --verify-only <input.sir.jsonl>
 sircc --dump-records --verify-only <input.sir.jsonl>
 sircc --print-target [--target-triple <triple>]
 sircc --print-support [--format text|json] [--full]
@@ -71,6 +72,8 @@ Notes:
 - `--diag-context N` prints the offending JSONL record plus `N` surrounding lines (also included as `context` in JSON diagnostics)
 - `--print-support` prints which SIR mnemonics are implemented vs missing (from the normative `mnemonics.html` table)
 - `--prelude P` parses `P` before the main input (useful for shared type/decl bundles; duplicates are still rejected)
+- `--prelude-builtin NAME` adds an official “compiler kit” prelude (bundled into `dist/lib/sircc/prelude` when you build `dist`)
+  - You can override the builtin search root with `SIRCC_PRELUDE_ROOT`.
 - `--verify-strict` tightens a few “best-effort” validation rules into hard errors (useful for integrator pipelines)
 - `--check` runs a small “try immediately” suite over `dist/test/examples` (or a custom `--examples-dir`)
 - `--runtime zabi25` links against the zABI 2.5 host runtime (default root is autodetected; override via `--zabi25-root` or `SIRCC_ZABI25_ROOT`)

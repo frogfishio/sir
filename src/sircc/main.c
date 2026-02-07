@@ -13,6 +13,103 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool file_exists(const char* p) {
+  if (!p) return false;
+  FILE* f = fopen(p, "rb");
+  if (!f) return false;
+  fclose(f);
+  return true;
+}
+
+static bool path_join(char* out, size_t out_cap, const char* a, const char* b) {
+  if (!out || !out_cap || !a || !b) return false;
+  size_t alen = strlen(a);
+  const char* sep = (alen > 0 && a[alen - 1] == '/') ? "" : "/";
+  int n = snprintf(out, out_cap, "%s%s%s", a, sep, b);
+  return n > 0 && (size_t)n < out_cap;
+}
+
+static bool infer_dist_root_from_argv0(const char* argv0, char* out, size_t out_cap) {
+  if (!argv0 || !out || !out_cap) return false;
+  const char* p = strstr(argv0, "/bin/");
+  if (!p) return false;
+  size_t prefix = (size_t)(p - argv0);
+  if (prefix >= out_cap) return false;
+  memcpy(out, argv0, prefix);
+  out[prefix] = 0;
+  if (out[0] == 0) snprintf(out, out_cap, "%s", ".");
+  return true;
+}
+
+static bool path_dirname(const char* path, char* out, size_t out_cap) {
+  if (!path || !out || out_cap == 0) return false;
+  const char* last = strrchr(path, '/');
+  if (!last) {
+    snprintf(out, out_cap, "%s", ".");
+    return true;
+  }
+  size_t n = (size_t)(last - path);
+  if (n == 0) n = 1; // keep "/"
+  if (n >= out_cap) return false;
+  memcpy(out, path, n);
+  out[n] = 0;
+  return true;
+}
+
+static const char* builtin_prelude_file(const char* name) {
+  if (!name) return NULL;
+  if (strcmp(name, "data_v1") == 0) return "data_v1.sir.jsonl";
+  if (strcmp(name, "zabi25") == 0) return "zabi25_min.sir.jsonl";
+  if (strcmp(name, "zabi25_min") == 0) return "zabi25_min.sir.jsonl";
+  return NULL;
+}
+
+static bool resolve_prelude_builtin_path(const char* builtin, const char* argv0, char* out, size_t out_cap) {
+  const char* file = builtin_prelude_file(builtin);
+  if (!file || !out || !out_cap) return false;
+
+  const char* env = getenv("SIRCC_PRELUDE_ROOT");
+  const char* roots[8] = {0};
+  size_t n = 0;
+  if (env && *env) roots[n++] = env;
+  roots[n++] = "dist/lib/sircc/prelude";
+  roots[n++] = "src/sircc/prelude";
+
+  // Relative to argv0 if available (covers build tree + dist layout).
+  char d0[4096];
+  if (path_dirname(argv0, d0, sizeof(d0))) {
+    static char rel1[4096];
+    static char rel2[4096];
+    static char rel3[4096];
+    static char rel4[4096];
+    // build/src/sircc/sircc -> ../../../src/sircc/prelude
+    if (path_join(rel1, sizeof(rel1), d0, "../../../src/sircc/prelude")) roots[n++] = rel1;
+    // dist/bin/<os>/sircc -> ../lib/sircc/prelude (best-effort)
+    if (path_join(rel2, sizeof(rel2), d0, "../lib/sircc/prelude")) roots[n++] = rel2;
+    // dist/bin/<os>/sircc -> ../../lib/sircc/prelude (best-effort)
+    if (path_join(rel3, sizeof(rel3), d0, "../../lib/sircc/prelude")) roots[n++] = rel3;
+    // installed layouts sometimes place preludes next to the binary
+    if (path_join(rel4, sizeof(rel4), d0, "../prelude")) roots[n++] = rel4;
+  }
+
+  char dist_root[4096];
+  if (infer_dist_root_from_argv0(argv0, dist_root, sizeof(dist_root))) {
+    static char rel[4096];
+    if (path_join(rel, sizeof(rel), dist_root, "lib/sircc/prelude")) roots[n++] = rel;
+  }
+
+  for (size_t i = 0; i < n; i++) {
+    char cand[4096];
+    if (!roots[i]) continue;
+    if (!path_join(cand, sizeof(cand), roots[i], file)) continue;
+    if (file_exists(cand)) {
+      snprintf(out, out_cap, "%s", cand);
+      return true;
+    }
+  }
+  return false;
+}
+
 static void usage(FILE* out) {
   fprintf(out,
           "sircc — SIR JSONL compiler\n"
@@ -21,6 +118,7 @@ static void usage(FILE* out) {
           "  sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj|--emit-zasm] [--clang <path>] [--target-triple <triple>]\n"
           "  sircc <input.sir.jsonl> -o <output.zasm.jsonl> --emit-zasm [--emit-zasm-map <map.jsonl>]\n"
           "  sircc [--prelude <prelude.sir.jsonl>]... <input.sir.jsonl> ...\n"
+          "  sircc [--prelude-builtin data_v1|zabi25_min]... <input.sir.jsonl> ...\n"
           "  sircc --verify-only <input.sir.jsonl>\n"
           "  sircc --verify-strict --verify-only <input.sir.jsonl>\n"
           "  sircc --lower-hl --emit-sir-core <output.sir.jsonl> <input.sir.jsonl>\n"
@@ -60,6 +158,8 @@ int main(int argc, char** argv) {
   const char* zabi25_root = NULL;
   const char* prelude_paths[32];
   size_t prelude_paths_len = 0;
+  char prelude_builtin_bufs[32][4096];
+  size_t prelude_builtin_bufs_len = 0;
 
   SirccOptions opt = {
       .argv0 = (argc > 0) ? argv[0] : NULL,
@@ -124,6 +224,30 @@ int main(int argc, char** argv) {
         return SIRCC_EXIT_USAGE;
       }
       prelude_paths[prelude_paths_len++] = argv[++i];
+      continue;
+    }
+    if (strcmp(a, "--prelude-builtin") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      const char* builtin = argv[++i];
+      if (prelude_paths_len >= (sizeof(prelude_paths) / sizeof(prelude_paths[0]))) {
+        fprintf(stderr, "sircc: too many preludes (max=%zu)\n", sizeof(prelude_paths) / sizeof(prelude_paths[0]));
+        return SIRCC_EXIT_USAGE;
+      }
+      if (prelude_builtin_bufs_len >= (sizeof(prelude_builtin_bufs) / sizeof(prelude_builtin_bufs[0]))) {
+        fprintf(stderr, "sircc: too many --prelude-builtin uses (max=%zu)\n",
+                sizeof(prelude_builtin_bufs) / sizeof(prelude_builtin_bufs[0]));
+        return SIRCC_EXIT_USAGE;
+      }
+      char* buf = prelude_builtin_bufs[prelude_builtin_bufs_len++];
+      buf[0] = 0;
+      if (!resolve_prelude_builtin_path(builtin, opt.argv0, buf, sizeof(prelude_builtin_bufs[0]))) {
+        fprintf(stderr, "sircc: unknown or missing prelude builtin '%s' (known: data_v1, zabi25_min)\n", builtin ? builtin : "(null)");
+        return SIRCC_EXIT_USAGE;
+      }
+      prelude_paths[prelude_paths_len++] = buf;
       continue;
     }
     if (strcmp(a, "--lower-hl") == 0) {

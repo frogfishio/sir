@@ -2,6 +2,10 @@
 
 This doc is a practical “emit this shape” guide for MIR producers targeting the **node frontend** of `sircc` (Stage/Milestone 3, LLVM backend).
 
+For the longer-term plan to move portable lowering complexity out of MIR and into the SIR toolchain (via SIR-HL packs/intent lowered into a stable SIR-Core contract), see:
+
+- `src/sircc/docs/hl_core_contract.md`
+
 ## Quick checklist
 
 - Emit `{"ir":"sir-v1.0","k":"meta", ...}` first (recommended; not required).
@@ -52,6 +56,10 @@ All keys live under the `k:"meta"` record’s `ext` object.
 Pattern: `decl.fn` + `call.indirect`.
 
 Do **not** call extern symbols via `ptr.sym` unless they are declared in-module: `sircc` treats `ptr.sym` as “address of a known symbol” and rejects unknown names during `--verify-only`.
+
+Notes:
+- Ordering does **not** matter: `sircc` supports forward references, so `decl.fn` can appear before or after uses (but declaring imports up front tends to produce clearer diagnostics).
+- The same rule applies to global data: use `sym(kind=var|const)` for data symbols referenced by `ptr.sym`.
 
 ```json
 {"ir":"sir-v1.0","k":"type","id":"t_i8","kind":"prim","prim":"i8"}
