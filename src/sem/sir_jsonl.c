@@ -2725,8 +2725,8 @@ static const char* sem_zi_err_name(int32_t rc) {
   }
 }
 
-static int sem_run_or_verify_sir_jsonl_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root,
-                                         sem_diag_format_t diag_format, bool diag_all, bool do_run) {
+static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root,
+                                           sem_diag_format_t diag_format, bool diag_all, bool do_run, int* out_prog_rc) {
   if (!path) return 2;
 
   sirj_ctx_t c;
@@ -2879,6 +2879,7 @@ static int sem_run_or_verify_sir_jsonl_ex(const char* path, const sem_cap_t* cap
   if (!do_run) {
     sir_module_free(m);
     ctx_dispose(&c);
+    if (out_prog_rc) *out_prog_rc = 0;
     return 0;
   }
 
@@ -2914,16 +2915,32 @@ static int sem_run_or_verify_sir_jsonl_ex(const char* path, const sem_cap_t* cap
     }
     return 1;
   }
-  return (int)rc;
+  if (out_prog_rc) *out_prog_rc = (int)rc;
+  return 0;
 }
 
 int sem_run_sir_jsonl(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root) {
-  return sem_run_or_verify_sir_jsonl_ex(path, caps, cap_count, fs_root, SEM_DIAG_TEXT, false, true);
+  int prog_rc = 0;
+  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, SEM_DIAG_TEXT, false, true, &prog_rc);
+  if (tool_rc != 0) return tool_rc;
+  return prog_rc;
 }
 
 int sem_run_sir_jsonl_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
                          bool diag_all) {
-  return sem_run_or_verify_sir_jsonl_ex(path, caps, cap_count, fs_root, diag_format, diag_all, true);
+  int prog_rc = 0;
+  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc);
+  if (tool_rc != 0) return tool_rc;
+  return prog_rc;
+}
+
+int sem_run_sir_jsonl_capture_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
+                                 bool diag_all, int* out_prog_rc) {
+  int prog_rc = 0;
+  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc);
+  if (tool_rc != 0) return tool_rc;
+  if (out_prog_rc) *out_prog_rc = prog_rc;
+  return 0;
 }
 
 int sem_verify_sir_jsonl(const char* path, sem_diag_format_t diag_format) {
@@ -2931,5 +2948,5 @@ int sem_verify_sir_jsonl(const char* path, sem_diag_format_t diag_format) {
 }
 
 int sem_verify_sir_jsonl_ex(const char* path, sem_diag_format_t diag_format, bool diag_all) {
-  return sem_run_or_verify_sir_jsonl_ex(path, NULL, 0, NULL, diag_format, diag_all, false);
+  return sem_run_or_verify_sir_jsonl_impl(path, NULL, 0, NULL, diag_format, diag_all, false, NULL);
 }

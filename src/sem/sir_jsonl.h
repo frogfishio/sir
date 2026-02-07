@@ -18,6 +18,12 @@ int sem_run_sir_jsonl(const char* path, const sem_cap_t* caps, uint32_t cap_coun
 int sem_run_sir_jsonl_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
                          bool diag_all);
 
+// Run and capture the program exit code separately from tool error codes.
+// Returns 0 on successful execution and writes the program exit code to `out_prog_rc`.
+// Returns 1/2 on parse/verify/lower/runtime failure (and prints diagnostics like `sem --run`).
+int sem_run_sir_jsonl_capture_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
+                                 bool diag_all, int* out_prog_rc);
+
 // Parse + lower + validate (but do not execute) a small SIR JSONL subset.
 // Returns 0 on success, or 1/2 for tool errors.
 int sem_verify_sir_jsonl(const char* path, sem_diag_format_t diag_format);

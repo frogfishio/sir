@@ -39,7 +39,7 @@ static void sem_print_help(FILE* out) {
           "      [--cap-file-fs] [--cap-async-default] [--cap-sys-info]\n"
           "      [--fs-root PATH]\n"
           "      [--tape-out PATH] [--tape-in PATH] [--tape-lax]\n"
-          "  sem --check <input.sir.jsonl|dir>... [--diagnostics text|json] [--all]\n"
+          "  sem --check <input.sir.jsonl|dir>... [--check-run] [--diagnostics text|json] [--all]\n"
           "  sem --cat GUEST_PATH --fs-root PATH\n"
           "  sem --sir-hello\n"
           "  sem --sir-module-hello\n"
@@ -52,6 +52,7 @@ static void sem_print_help(FILE* out) {
           "  --print-support  Print the supported SIR subset for `sem --run`\n"
           "  --caps        Issue zi_ctl CAPS_LIST and print capabilities\n"
           "  --check       Batch-verify one or more inputs (files or dirs)\n"
+          "  --check-run   For --check, run cases (not just verify)\n"
           "  --cat PATH    Read PATH via file/fs and write to stdout\n"
           "  --sir-hello   Run a tiny built-in sircore VM smoke program\n"
           "  --sir-module-hello  Run a tiny built-in sircore module smoke program\n"
@@ -104,17 +105,27 @@ static bool sem_has_suffix(const char* s, const char* suffix) {
   return memcmp(s + (n - m), suffix, m) == 0;
 }
 
-static int sem_do_check_one(const char* path, sem_diag_format_t diag_format, bool diag_all) {
-  const int rc = sem_verify_sir_jsonl_ex(path, diag_format, diag_all);
-  if (rc == 0) {
-    fprintf(stdout, "OK   %s\n", path);
-  } else {
-    fprintf(stdout, "FAIL %s\n", path);
+static int sem_do_check_one(const char* path, bool do_run, sem_diag_format_t diag_format, bool diag_all) {
+  if (do_run) {
+    int prog_rc = 0;
+    const int tool_rc = sem_run_sir_jsonl_capture_ex(path, NULL, 0, NULL, diag_format, diag_all, &prog_rc);
+    if (tool_rc == 0)
+      fprintf(stdout, "OK   %s rc=%d\n", path, prog_rc);
+    else
+      fprintf(stdout, "FAIL %s\n", path);
+    return tool_rc;
   }
+
+  const int rc = sem_verify_sir_jsonl_ex(path, diag_format, diag_all);
+
+  if (rc == 0)
+    fprintf(stdout, "OK   %s\n", path);
+  else
+    fprintf(stdout, "FAIL %s\n", path);
   return rc;
 }
 
-static int sem_do_check_dir(const char* dir, sem_diag_format_t diag_format, bool diag_all, uint32_t* inout_ok, uint32_t* inout_fail) {
+static int sem_do_check_dir(const char* dir, bool do_run, sem_diag_format_t diag_format, bool diag_all, uint32_t* inout_ok, uint32_t* inout_fail) {
   if (!dir || !inout_ok || !inout_fail) return 2;
   DIR* d = opendir(dir);
   if (!d) {
@@ -138,7 +149,7 @@ static int sem_do_check_dir(const char* dir, sem_diag_format_t diag_format, bool
     }
     if (!sem_path_is_file(full)) continue;
 
-    const int rc = sem_do_check_one(full, diag_format, diag_all);
+    const int rc = sem_do_check_one(full, do_run, diag_format, diag_all);
     if (rc == 0)
       (*inout_ok)++;
     else
@@ -757,6 +768,7 @@ int main(int argc, char** argv) {
   const char* tape_out = NULL;
   const char* tape_in = NULL;
   bool tape_strict = true;
+  bool check_run = false;
 
   dyn_cap_t dyn_caps[64];
   uint32_t dyn_n = 0;
@@ -779,6 +791,11 @@ int main(int argc, char** argv) {
       continue;
     }
     if (strcmp(a, "--check") == 0) {
+      check_mode = true;
+      continue;
+    }
+    if (strcmp(a, "--check-run") == 0) {
+      check_run = true;
       check_mode = true;
       continue;
     }
@@ -967,10 +984,10 @@ int main(int argc, char** argv) {
       const char* p = check_paths[i];
       if (!p || p[0] == '\0') continue;
       if (sem_path_is_dir(p)) {
-        const int rc = sem_do_check_dir(p, diag_format, diag_all, &ok, &fail);
+        const int rc = sem_do_check_dir(p, check_run, diag_format, diag_all, &ok, &fail);
         if (rc != 0) tool_rc = rc;
       } else if (sem_path_is_file(p)) {
-        const int rc = sem_do_check_one(p, diag_format, diag_all);
+        const int rc = sem_do_check_one(p, check_run, diag_format, diag_all);
         if (rc == 0)
           ok++;
         else

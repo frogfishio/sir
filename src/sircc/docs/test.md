@@ -6,6 +6,7 @@ From the repo root after building `dist/`:
 
 ```sh
 SIRCC=./dist/bin/<os>/sircc
+SEM=./dist/bin/<os>/sem
 
 $SIRCC --verify-only ./dist/test/examples/add.sir.jsonl
 $SIRCC ./dist/test/examples/mem_copy_fill.sir.jsonl -o /tmp/mem_copy_fill && /tmp/mem_copy_fill; echo $?
@@ -23,6 +24,10 @@ $SIRCC ./dist/test/examples/closure_make_call.sir.jsonl -o /tmp/closure_make_cal
 $SIRCC ./dist/test/examples/adt_make_get.sir.jsonl -o /tmp/adt_make_get && /tmp/adt_make_get; echo $?
 $SIRCC ./dist/test/examples/sem_if_thunk_trap_not_taken.sir.jsonl -o /tmp/sem_if && /tmp/sem_if; echo $?
 $SIRCC ./dist/test/examples/sem_match_sum_option_i32.sir.jsonl -o /tmp/sem_match_sum && /tmp/sem_match_sum; echo $?
+
+# SEM: emulator-friendly corpus (subset)
+$SEM --check ./dist/test/sem/examples          # verify-only
+$SEM --check --check-run ./dist/test/sem/run   # run (no tool failures)
 ```
 
 If you also built `sirc`, `dist/test/examples/` includes matching `.sir` sources for many examples:

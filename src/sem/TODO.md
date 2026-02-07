@@ -31,7 +31,8 @@ Design goal:
 Acceptance:
 - [ ] `cmake --build build --target dist` produces `dist/` and then:
   - [ ] `./dist/bin/<os>/sircc --check` passes
-  - [ ] `./dist/bin/<os>/sem --check ./dist/test/examples` passes (no missing-file / unsupported-subset surprises)
+  - [ ] `./dist/bin/<os>/sem --check ./dist/test/sem/examples` passes (verify-only)
+  - [ ] `./dist/bin/<os>/sem --check --check-run ./dist/test/sem/run` passes (run)
 
 Work items:
 - [x] Fix `sem --check` CLI flag parsing (so `--diagnostics json --all` works as flags, not paths)
@@ -41,8 +42,9 @@ Work items:
 - [x] Add commonly-used trap/sat variants present in shipped examples
   - [x] `i32.div.s.trap` (blocks `sem_if_thunk_trap_not_taken`)
 - [x] Allow side-effecting `call.indirect` in `block.stmts` (execute as statement; discard result)
-- [ ] Decide how Stage A handles examples that are *intentionally* beyond SEM (if any)
-  - [ ] Either add support, or move them out of `dist/test/examples`, or add a manifest that marks `sircc-only` vs `sem-runnable`
+- [x] Split dist corpus into `sem` verify/run subsets
+  - [x] `dist/test/sem/examples` (verify-only subset)
+  - [x] `dist/test/sem/run` (runnable subset for `--check-run`)
 
 ### Stage B — SIR-Core execution parity (compiler-kit Core)
 
