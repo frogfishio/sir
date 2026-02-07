@@ -8,6 +8,11 @@ This repo’s “shipable bundle” is produced by the build target `dist`, whic
 - `dist/bin/<os>/sirc` (optional: `.sir` → `.sir.jsonl`, when built with `-DSIR_ENABLE_SIRC=ON`)
 - `dist/test/` (a small normative example set you can run immediately)
 
+Producer docs:
+- `src/sircc/docs/compiler_kit_cheatsheet.md` (SIR vocabulary dictionary for integrators)
+- `src/sircc/docs/interop_extern.md` (C ABI import/export recipes)
+- `src/sircc/docs/target_layout_contract.md` (how to pin target + what layout you can assume)
+
 ## Quickstart
 
 Build the bundle:
@@ -73,6 +78,7 @@ Notes:
 - `--print-support` prints which SIR mnemonics are implemented vs missing (from the normative `mnemonics.html` table)
 - `--prelude P` parses `P` before the main input (useful for shared type/decl bundles; duplicates are still rejected)
 - `--prelude-builtin NAME` adds an official “compiler kit” prelude (bundled into `dist/lib/sircc/prelude` when you build `dist`)
+  - You can override the builtin search root with `SIRCC_PRELUDE_ROOT`.
 - `--verify-strict` tightens a few “best-effort” validation rules into hard errors (useful for integrator pipelines)
 - `--check` runs a small “try immediately” suite over `dist/test/examples` (or a custom `--examples-dir`)
 - `--runtime zabi25` links against the zABI 2.5 host runtime (default root is autodetected; override via `--zabi25-root` or `SIRCC_ZABI25_ROOT`)
@@ -94,9 +100,37 @@ This section describes the core value model and execution semantics `sircc` impl
   - `type.kind:"sum"` (via `adt:v1`)
 - Callables:
   - `type.kind:"fn"` (direct/indirect calls)
-  - `type.kind:"fun"` / `type.kind:"closure"` (via `fun:v1` / `closure:v1`; both are treated as opaque values)
+  - `type.kind:"fun"` / `type.kind:"closure"` (via `fun:v1` / `closure:v1`; both are treated as opaque values at the SIR level)
 
 Not currently in scope: atomics/eh/gc/coro packs.
+
+### Layout-defined vs opaque types
+
+Some SIR types have a **defined in-memory representation** under `sircc` (subject to the selected target’s ABI/layout); others are treated as **opaque** and may not be subjected to arbitrary pointer/integer casts.
+
+**Layout-defined**
+
+- `type.kind:"struct"`: lowered to an LLVM struct type with target ABI layout.
+- `type.kind:"array"`: lowered to an LLVM array type.
+- `type.kind:"sum"` (`adt:v1`): lowered to an LLVM struct:
+  - `{ i32 tag; [pad] i8; [payload_size] i8 }`
+  - where `payload_size = max(sizeof(variant_payload))` and `pad` is chosen so the payload start offset is aligned to `payload_align = max(alignof(variant_payload))`.
+  - This makes the tag offset fixed (0) and the payload offset deterministic.
+- `type.kind:"closure"` (`closure:v1`): lowered to an LLVM struct `{ code_ptr, env }` where:
+  - `code_ptr` is a function pointer of the **derived signature** `(env, callSig.params...) -> callSig.ret`
+  - `env` is the lowered LLVM type of `type.env`
+- `type.kind:"fun"` (`fun:v1`): lowered to an LLVM function pointer of the declared `type.sig` function type.
+
+**Opaque (frontends must not “peek”)**
+
+- `fun` and `closure` values are **opaque** at the SIR level: do not use `ptr.*` arithmetic/casts on values of these types. Use `fun.*` / `call.fun` and `closure.*` / `call.closure`.
+
+### ABI note (current state)
+
+`sircc` currently relies on the platform ABI as implemented by LLVM for function calls. A future “ABI profile” may formalize by-ref params and aggregate calling conventions, but for now:
+
+- Prefer passing aggregates by pointer.
+- Prefer returning scalars (`i32/i64/bool/ptr`) unless you control both sides and validate the ABI end-to-end.
 
 ### Integer semantics
 
@@ -175,12 +209,18 @@ These feature gates are enabled via `meta.ext.features` (array of strings). If a
 
 - Nodes:
   - `sem.if` (value-level conditional): `args:[cond, thenBranch, elseBranch]`
+  - `sem.cond` (value-level ternary): same shape as `sem.if` (lowered as `sem.if`)
   - `sem.and_sc` / `sem.or_sc` (short-circuit)
   - `sem.match_sum` (sum matching): `fields.sum`, `args:[scrut]`, `fields.cases[]`, `fields.default`
+  - `sem.switch` (integer switch intent): `args:[scrut]`, `fields.cases[]`, `fields.default`
+  - `sem.while` (loop intent; statement): `args:[condThunk, bodyThunk]`
+  - `sem.break` / `sem.continue` (loop control; statement; no fields)
+  - `sem.defer` (function-level defer; statement): `args:[thunk]` (MVP: body-form functions only)
+  - `sem.scope` (scoped cleanup; statement): `fields.defers[]` + `fields.body` (a structural `block` to inline)
 - Branch operands are objects:
   - `{ "kind":"val", "v": <node-ref> }`
   - `{ "kind":"thunk", "f": <fun/closure node-ref> }`
-    - thunks are 0-arg for `sem.if/and_sc/or_sc`
+    - thunks are 0-arg for `sem.if/cond/and_sc/or_sc/switch/while/defer/scope`
     - for `sem.match_sum`, case bodies may be 0-arg thunks or 1-arg thunks (payload passed); the thunk parameter type must match the payload type
 
 ## ZASM backend (zir) notes

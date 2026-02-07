@@ -79,7 +79,26 @@ Emit a `fn` with:
 - `fields.name`: exported symbol name
 - `fields.linkage:"public"`
 
-Example is also covered by `ctest` as `sircc_cinterop_export_add2`.
+Example (export `sir_add2(i32,i32)->i32`):
+
+```json
+{"ir":"sir-v1.0","k":"type","id":"t_i32","kind":"prim","prim":"i32"}
+{"ir":"sir-v1.0","k":"type","id":"t_add2","kind":"fn","params":["t_i32","t_i32"],"ret":"t_i32"}
+
+{"ir":"sir-v1.0","k":"node","id":"p_a","tag":"param","type_ref":"t_i32","fields":{"name":"a"}}
+{"ir":"sir-v1.0","k":"node","id":"p_b","tag":"param","type_ref":"t_i32","fields":{"name":"b"}}
+{"ir":"sir-v1.0","k":"node","id":"add","tag":"i32.add","type_ref":"t_i32","fields":{"args":[{"t":"ref","id":"p_a"},{"t":"ref","id":"p_b"}]}}
+{"ir":"sir-v1.0","k":"node","id":"ret","tag":"term.ret","fields":{"value":{"t":"ref","id":"add"}}}
+{"ir":"sir-v1.0","k":"node","id":"b0","tag":"block","fields":{"stmts":[{"t":"ref","id":"ret"}]}}
+
+{"ir":"sir-v1.0","k":"node","id":"fn:add2","tag":"fn","type_ref":"t_add2","fields":{"name":"sir_add2","linkage":"public","params":[{"t":"ref","id":"p_a"},{"t":"ref","id":"p_b"}],"body":{"t":"ref","id":"b0"}}}
+```
+
+This shape is also covered by `ctest` as `sircc_cinterop_export_add2`.
+
+Notes:
+- `sircc` currently relies on the platform ABI as implemented by LLVM. There is no explicit calling-convention field in SIR yet.
+- `sircc` currently supports `fn` linkage values: `"local"` and `"public"`. In `--verify-strict` mode, linkage must be explicit.
 
 ## Packs used by MIR
 

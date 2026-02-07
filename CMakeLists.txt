@@ -64,6 +64,13 @@ add_custom_target(dist_sircc
   COMMAND ${CMAKE_COMMAND} -E rm -f ${SIR_DIST_DOC}/src.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/src.md ${SIR_DIST_DOC}/sircc.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/mir_producer.md ${SIR_DIST_DOC}/mir_producer.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/compiler_kit_cheatsheet.md ${SIR_DIST_DOC}/compiler_kit_cheatsheet.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/ast_to_sir_cookbook.md ${SIR_DIST_DOC}/ast_to_sir_cookbook.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/data_v1.md ${SIR_DIST_DOC}/data_v1.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/interop_extern.md ${SIR_DIST_DOC}/interop_extern.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/target_layout_contract.md ${SIR_DIST_DOC}/target_layout_contract.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/diagnostics.md ${SIR_DIST_DOC}/diagnostics.md
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/hl_core_contract.md ${SIR_DIST_DOC}/hl_core_contract.md
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/docs/test.md ${SIR_DIST_TEST}/README.md
 
   # preludes (compiler kit boilerplate)
@@ -79,6 +86,7 @@ add_custom_target(dist_sircc
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/call_indirect_ptrsym.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/call_indirect_ptrsym.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/misaligned_load_traps.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/misaligned_load_traps.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/ptr_layout.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/ptr_layout.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/interop_export_global_i32.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/interop_export_global_i32.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/hello_zabi25_write.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/hello_zabi25_write.sir.jsonl
 
   # pack corpus (fun/closure/adt/sem)
@@ -87,6 +95,11 @@ add_custom_target(dist_sircc
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/adt_make_get.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/adt_make_get.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/sem_if_thunk_trap_not_taken.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/sem_if_thunk_trap_not_taken.sir.jsonl
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/sem_match_sum_option_i32.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/sem_match_sum_option_i32.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/simd_splat_extract.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/simd_splat_extract.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/simd_i32_add_extract_replace.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/simd_i32_add_extract_replace.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/simd_cmp_select_bool_mask.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/simd_cmp_select_bool_mask.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/simd_shuffle_two_inputs.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/simd_shuffle_two_inputs.sir.jsonl
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/simd_f32_mul_nan_canon_bits.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/simd_f32_mul_nan_canon_bits.sir.jsonl
 
   # negative fixtures (verify-only; diagnostics)
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/sircc/examples/bad_unknown_field.sir.jsonl ${SIR_DIST_TEST_EXAMPLES}/bad_unknown_field.sir.jsonl

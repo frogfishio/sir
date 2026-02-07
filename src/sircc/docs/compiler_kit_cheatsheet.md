@@ -8,6 +8,8 @@ Related docs:
 - `src/sircc/docs/src.md` (sircc CLI + semantics overview)
 - `src/sircc/docs/ast_to_sir_cookbook.md` (end-to-end AST→SIR patterns)
 - `src/sircc/docs/data_v1.md` (string/bytes baseline conventions)
+- `src/sircc/docs/interop_extern.md` (C ABI import/export contract)
+- `src/sircc/docs/target_layout_contract.md` (layout + pinned target rules)
 
 ---
 
@@ -39,6 +41,40 @@ You may also include a kind hint:
 ```json
 {"t":"ref","k":"type","id":"t:i32"}
 ```
+
+---
+
+## `meta` and feature gates (packs)
+
+Most producers should emit one `meta` record near the top:
+
+```json
+{"ir":"sir-v1.0","k":"meta","producer":"my-frontend","unit":"my_unit","ext":{"features":["data:v1","sem:v1","agg:v1","adt:v1","fun:v1","closure:v1"]}}
+```
+
+Notes:
+- `ext.features[]` controls which packs are allowed/validated.
+- Don’t guess support: `sircc --print-support` shows implemented vs missing mnemonics.
+
+---
+
+## Symbols (`sym`) — globals + extern data
+
+If you want a C-visible global (or an extern import), use a `sym` record.
+
+Minimal shape:
+
+```json
+{"ir":"sir-v1.0","k":"sym","id":"s:g","name":"g","kind":"var","linkage":"public","type_ref":"t:i32","value":{"t":"num","v":0}}
+```
+
+`sircc` uses `sym` records (kind `var|const`) to materialize LLVM globals when you first take their address:
+- `ptr.sym("g")` produces the address of a function *or* a global.
+
+Initializer rules (conservative by design):
+- `value: {"t":"num","v":0}` works for integer zero and null pointers
+- or `value: {"t":"ref","k":"node","id":<const.* node>}` for typed constants
+- for `linkage:"extern"`, omit `value`
 
 ---
 
@@ -90,7 +126,7 @@ Either way, the contract is:
 
 Notes:
 - pointer width comes from the selected target triple
-- do not invent `prim:"ptr"`; pointers are `kind:"ptr"`
+- do not invent `prim:"ptr"` for LLVM/Core producers; pointers are `kind:"ptr"` (some backend-specific test streams use `prim:"ptr"` as a convenience, but it is not a portable SIR type)
 
 ### Arrays (`array`)
 
@@ -250,7 +286,7 @@ This is the smallest useful pattern showing types + `decl.fn` + `cstr` + `call.i
 {"ir":"sir-v1.0","k":"node","id":"n:puts","tag":"decl.fn","type_ref":"t:puts_sig","fields":{"name":"puts"}}
 {"ir":"sir-v1.0","k":"node","id":"n:s","tag":"cstr","fields":{"value":"hello world\\n"}}
 {"ir":"sir-v1.0","k":"node","id":"n:call","tag":"call.indirect","type_ref":"t:i32","fields":{
-  "sig":{"t":"ref","id":"t:puts_sig"},
+  "sig":{"t":"ref","k":"type","id":"t:puts_sig"},
   "args":[{"t":"ref","id":"n:puts"},{"t":"ref","id":"n:s"}]
 }}
 
@@ -262,3 +298,223 @@ This is the smallest useful pattern showing types + `decl.fn` + `cstr` + `call.i
 
 Verifier rule (important for integrators):
 - if you want to call an external symbol, declare it with `decl.fn` (don’t rely on `ptr.sym` to name an undeclared symbol).
+
+---
+
+## Functions and control flow (Core CFG)
+
+### Parameters, `name`, and `let`
+
+Parameters:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"p:x","tag":"param","type_ref":"t:i32","fields":{"name":"x"}}
+```
+
+Read a bound name:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:x","tag":"name","type_ref":"t:i32","fields":{"name":"x"}}
+```
+
+Bind a new name:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:bind","tag":"let","fields":{"name":"x","value":{"t":"ref","k":"node","id":"n:expr"}}}
+```
+
+### Blocks and join parameters (`bparam`)
+
+`block` is a list of statements ending in a terminator:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"b0","tag":"block","fields":{"stmts":[{"t":"ref","id":"n:s0"},{"t":"ref","id":"n:term"}]}}
+```
+
+Join blocks can take parameters:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"bp:x","tag":"bparam","type_ref":"t:i64"}
+{"ir":"sir-v1.0","k":"node","id":"b_join","tag":"block","fields":{"params":[{"t":"ref","id":"bp:x"}],"stmts":[...]}}
+```
+
+Branch args:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"t_br","tag":"term.br","fields":{"to":{"t":"ref","id":"b_join"},"args":[{"t":"ref","id":"n:v"}]}}
+```
+
+### Terminators
+
+Unconditional branch:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"t0","tag":"term.br","fields":{"to":{"t":"ref","id":"b1"}}}
+```
+
+Conditional branch:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"t1","tag":"term.condbr","fields":{
+  "cond":{"t":"ref","id":"n:cond"},
+  "then":{"to":{"t":"ref","id":"b_then"}},
+  "else":{"to":{"t":"ref","id":"b_else"}}
+}}
+```
+
+Switch:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"t2","tag":"term.switch","fields":{
+  "scrut":{"t":"ref","id":"n:x"},
+  "cases":[{"lit":{"t":"ref","id":"n:zero"},"to":{"t":"ref","id":"b0"}}],
+  "default":{"to":{"t":"ref","id":"bdef"}}
+}}
+```
+
+Return:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"t3","tag":"term.ret","fields":{"value":{"t":"ref","id":"n:rc"}}}
+```
+
+### Functions (`fn`)
+
+Body-form:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"fn:main","tag":"fn","type_ref":"t:main_sig","fields":{
+  "name":"main",
+  "linkage":"public",
+  "params":[],
+  "body":{"t":"ref","id":"b0"}
+}}
+```
+
+CFG-form:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"fn:main","tag":"fn","type_ref":"t:main_sig","fields":{
+  "name":"main",
+  "linkage":"public",
+  "params":[],
+  "entry":{"t":"ref","id":"b_entry"},
+  "blocks":[{"t":"ref","id":"b_entry"},{"t":"ref","id":"b_then"},{"t":"ref","id":"b_else"}]
+}}
+```
+
+Strict-mode note:
+- under `--verify-strict`, `fn.fields.linkage` is required and must be `"local"` or `"public"`.
+
+---
+
+## Calls (interop-safe patterns)
+
+Import an extern function (`decl.fn`):
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:puts","tag":"decl.fn","type_ref":"t:puts_sig","fields":{"name":"puts"}}
+```
+
+Call it (`call.indirect`):
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:call","tag":"call.indirect","type_ref":"t:i32","fields":{
+  "sig":{"t":"ref","k":"type","id":"t:puts_sig"},
+  "args":[{"t":"ref","id":"n:puts"},{"t":"ref","id":"n:s"}]
+}}
+```
+
+Rule of thumb:
+- **extern calls**: `decl.fn` + `call.indirect`
+- `ptr.sym` is for addresses of **declared** things (functions or `sym` globals), not “magic linker lookup”
+
+---
+
+## Memory (stack alloc, load/store, bulk ops)
+
+Stack allocation:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:p","tag":"alloca","fields":{"ty":{"t":"ref","k":"type","id":"t:i32"},"flags":{"count":1,"align":4,"zero":true}}}
+```
+
+Typed load/store:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:v","tag":"load.i32","type_ref":"t:i32","fields":{"addr":{"t":"ref","id":"n:p"},"align":4}}
+{"ir":"sir-v1.0","k":"node","id":"n:st","tag":"store.i32","fields":{"addr":{"t":"ref","id":"n:p"},"value":{"t":"ref","id":"n:v"},"align":4}}
+```
+
+Bulk memory:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:fill","tag":"mem.fill","fields":{"args":[{"t":"ref","id":"n:dst"},{"t":"ref","id":"n:byte"},{"t":"ref","id":"n:len"}],"flags":{"alignDst":1}}}
+{"ir":"sir-v1.0","k":"node","id":"n:copy","tag":"mem.copy","fields":{"args":[{"t":"ref","id":"n:dst"},{"t":"ref","id":"n:src"},{"t":"ref","id":"n:len"}],"flags":{"alignDst":1,"alignSrc":1,"overlap":"disallow"}}}
+```
+
+---
+
+## Pointer ops (`ptr.*`)
+
+Address-of symbol:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:p","tag":"ptr.sym","fields":{"name":"g"}}
+```
+
+Add raw bytes:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:p2","tag":"ptr.add","fields":{"args":[{"t":"ref","id":"n:p"},{"t":"ref","id":"n:byte_off"}]}}
+```
+
+Typed offset (scales by `sizeof(ty)`):
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:p3","tag":"ptr.offset","fields":{"ty":{"t":"ref","k":"type","id":"t:i32"},"args":[{"t":"ref","id":"n:p"},{"t":"ref","id":"n:i"}]}}
+```
+
+Pointer ↔ i64:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:addr","tag":"ptr.to_i64","type_ref":"t:i64","fields":{"args":[{"t":"ref","id":"n:p"}]}}
+{"ir":"sir-v1.0","k":"node","id":"n:p4","tag":"ptr.from_i64","type_ref":"t:p_i8","fields":{"args":[{"t":"ref","id":"n:addr"}]}}
+```
+
+---
+
+## Ops: general naming patterns
+
+Many ops are “typed mnemonics” and use `fields.args:[...]`, for example:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:op","tag":"i32.add","type_ref":"t:i32","fields":{"args":[{"t":"ref","id":"n:a"},{"t":"ref","id":"n:b"}]}}
+```
+
+Ternary select:
+
+```json
+{"ir":"sir-v1.0","k":"node","id":"n:s","tag":"select","type_ref":"t:i32","fields":{"args":[{"t":"ref","id":"n:cond"},{"t":"ref","id":"n:then"},{"t":"ref","id":"n:else"}]}}
+```
+
+Signed vs unsigned behavior is expressed by the mnemonic you choose (e.g. `i32.cmp.sgt` vs `i32.cmp.ult`).
+
+For the authoritative implemented set, use:
+- `sircc --print-support`
+
+---
+
+## `sem:v1` (structured intent; recommended for AST producers)
+
+If you’re emitting SIR from an AST and you don’t want to build CFG by hand, emit the `sem:*` intent nodes:
+
+- `sem.if` (statement-level if)
+- `sem.and_sc`, `sem.or_sc` (short-circuit)
+- `sem.cond` (expression-level conditional)
+- `sem.while` + `sem.break` + `sem.continue` (loops)
+- `sem.switch` (integer switch intent)
+- `sem.defer` (cleanup intent)
+- `sem.scope` (scoped defers across all exits)
+
+`sircc` lowers `sem:*` deterministically into Core CFG and then verifies the lowered stream.

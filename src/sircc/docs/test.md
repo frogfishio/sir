@@ -12,6 +12,12 @@ $SIRCC ./dist/test/examples/mem_copy_fill.sir.jsonl -o /tmp/mem_copy_fill && /tm
 $SIRCC ./dist/test/examples/cfg_if.sir.jsonl -o /tmp/cfg_if && /tmp/cfg_if; echo $?
 $SIRCC ./dist/test/examples/cfg_switch.sir.jsonl -o /tmp/cfg_switch && /tmp/cfg_switch; echo $?
 $SIRCC ./dist/test/examples/hello_world_puts.sir.jsonl -o /tmp/hello && /tmp/hello; echo $?
+$SIRCC ./dist/test/examples/interop_export_global_i32.sir.jsonl -o /tmp/interop_export_global_i32 && /tmp/interop_export_global_i32; echo $?
+$SIRCC ./dist/test/examples/simd_splat_extract.sir.jsonl -o /tmp/simd_splat_extract && /tmp/simd_splat_extract; echo $?
+$SIRCC ./dist/test/examples/simd_i32_add_extract_replace.sir.jsonl -o /tmp/simd_i32_add_extract_replace && /tmp/simd_i32_add_extract_replace; echo $?
+$SIRCC ./dist/test/examples/simd_cmp_select_bool_mask.sir.jsonl -o /tmp/simd_cmp_select_bool_mask && /tmp/simd_cmp_select_bool_mask; echo $?
+$SIRCC ./dist/test/examples/simd_shuffle_two_inputs.sir.jsonl -o /tmp/simd_shuffle_two_inputs && /tmp/simd_shuffle_two_inputs; echo $?
+$SIRCC ./dist/test/examples/simd_f32_mul_nan_canon_bits.sir.jsonl -o /tmp/simd_f32_mul_nan_canon_bits && /tmp/simd_f32_mul_nan_canon_bits; echo $?
 $SIRCC ./dist/test/examples/fun_sym_call.sir.jsonl -o /tmp/fun_sym_call && /tmp/fun_sym_call; echo $?
 $SIRCC ./dist/test/examples/closure_make_call.sir.jsonl -o /tmp/closure_make_call && /tmp/closure_make_call; echo $?
 $SIRCC ./dist/test/examples/adt_make_get.sir.jsonl -o /tmp/adt_make_get && /tmp/adt_make_get; echo $?
@@ -34,6 +40,12 @@ Expected exit codes:
 - `cfg_if.sir.jsonl` → `222` (with no CLI args; the program’s `main(x)` receives `argc` as `x`, so `argc==1` ⇒ returns `222`)
 - `cfg_switch.sir.jsonl` → `20` (with no CLI args; `argc==1` selects case `1` ⇒ returns `20`)
 - `hello_world_puts.sir.jsonl` → `0` (also prints a line via `puts`)
+- `interop_export_global_i32.sir.jsonl` → `42`
+- `simd_splat_extract.sir.jsonl` → `7`
+- `simd_i32_add_extract_replace.sir.jsonl` → `9`
+- `simd_cmp_select_bool_mask.sir.jsonl` → `7`
+- `simd_shuffle_two_inputs.sir.jsonl` → `6`
+- `simd_f32_mul_nan_canon_bits.sir.jsonl` → `7`
 - `fun_sym_call.sir.jsonl` → `7`
 - `closure_make_call.sir.jsonl` → `12`
 - `adt_make_get.sir.jsonl` → `12`

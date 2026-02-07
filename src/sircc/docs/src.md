@@ -10,6 +10,8 @@ This repo’s “shipable bundle” is produced by the build target `dist`, whic
 
 Producer docs:
 - `src/sircc/docs/compiler_kit_cheatsheet.md` (SIR vocabulary dictionary for integrators)
+- `src/sircc/docs/interop_extern.md` (C ABI import/export recipes)
+- `src/sircc/docs/target_layout_contract.md` (how to pin target + what layout you can assume)
 
 ## Quickstart
 
