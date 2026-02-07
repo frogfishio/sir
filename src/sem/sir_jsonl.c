@@ -972,6 +972,9 @@ static bool eval_i32_bin_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
     case SIR_INST_I32_DIV_S_SAT:
       ok = sir_mb_emit_i32_div_s_sat(c->mb, c->fn, dst, a_slot, b_slot);
       break;
+    case SIR_INST_I32_DIV_S_TRAP:
+      ok = sir_mb_emit_i32_div_s_trap(c->mb, c->fn, dst, a_slot, b_slot);
+      break;
     case SIR_INST_I32_DIV_U_SAT:
       ok = sir_mb_emit_i32_div_u_sat(c->mb, c->fn, dst, a_slot, b_slot);
       break;
@@ -988,6 +991,44 @@ static bool eval_i32_bin_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
   *out_kind = VK_I32;
+  return true;
+}
+
+static bool eval_i32_zext_i8(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 1) return false;
+  uint32_t x_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &x_id)) return false;
+  sir_val_id_t x_slot = 0;
+  val_kind_t xk = VK_INVALID;
+  if (!eval_node(c, x_id, &x_slot, &xk)) return false;
+  if (xk != VK_I8) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  if (!sir_mb_emit_i32_zext_i8(c->mb, c->fn, dst, x_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_I32)) return false;
+  *out_slot = dst;
+  *out_kind = VK_I32;
+  return true;
+}
+
+static bool eval_i64_zext_i32(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 1) return false;
+  uint32_t x_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &x_id)) return false;
+  sir_val_id_t x_slot = 0;
+  val_kind_t xk = VK_INVALID;
+  if (!eval_node(c, x_id, &x_slot, &xk)) return false;
+  if (xk != VK_I32) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_I64);
+  if (!sir_mb_emit_i64_zext_i32(c->mb, c->fn, dst, x_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_I64)) return false;
+  *out_slot = dst;
+  *out_kind = VK_I64;
   return true;
 }
 
@@ -1674,9 +1715,12 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "i32.shr.s") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_SHR_S, out_slot, out_kind);
   if (strcmp(n->tag, "i32.shr.u") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_SHR_U, out_slot, out_kind);
   if (strcmp(n->tag, "i32.div.s.sat") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_DIV_S_SAT, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.div.s.trap") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_DIV_S_TRAP, out_slot, out_kind);
   if (strcmp(n->tag, "i32.div.u.sat") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_DIV_U_SAT, out_slot, out_kind);
   if (strcmp(n->tag, "i32.rem.s.sat") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_REM_S_SAT, out_slot, out_kind);
   if (strcmp(n->tag, "i32.rem.u.sat") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_REM_U_SAT, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.zext.i8") == 0) return eval_i32_zext_i8(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "i64.zext.i32") == 0) return eval_i64_zext_i32(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.trunc.i64") == 0) return eval_i32_trunc_i64(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.eq") == 0) return eval_i32_cmp_eq(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.ne") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_NE, out_slot, out_kind);
@@ -1729,6 +1773,15 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
   if (strcmp(n->tag, "store.ptr") == 0) return eval_store_mnemonic(c, n, SIR_INST_STORE_PTR);
   if (strcmp(n->tag, "mem.copy") == 0) return eval_mem_copy_stmt(c, stmt_id, n);
   if (strcmp(n->tag, "mem.fill") == 0) return eval_mem_fill_stmt(c, stmt_id, n);
+  if (strcmp(n->tag, "call.indirect") == 0) {
+    // Calls are expression nodes in SIR, but they often appear in block.stmts for side effects.
+    sir_val_id_t tmp = 0;
+    val_kind_t tk = VK_INVALID;
+    if (!eval_node(c, stmt_id, &tmp, &tk)) return false;
+    (void)tmp;
+    (void)tk;
+    return true;
+  }
 
   if (strcmp(n->tag, "term.ret") == 0 || strcmp(n->tag, "return") == 0) {
     // MVP: return a previously computed value (or default 0).

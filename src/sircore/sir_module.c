@@ -506,6 +506,9 @@ bool sir_mb_emit_i32_shr_u(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_
 bool sir_mb_emit_i32_div_s_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
   return emit_i32_bin(b, f, SIR_INST_I32_DIV_S_SAT, dst, a, b_);
 }
+bool sir_mb_emit_i32_div_s_trap(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_i32_bin(b, f, SIR_INST_I32_DIV_S_TRAP, dst, a, b_);
+}
 bool sir_mb_emit_i32_div_u_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
   return emit_i32_bin(b, f, SIR_INST_I32_DIV_U_SAT, dst, a, b_);
 }
@@ -573,6 +576,26 @@ bool sir_mb_emit_i32_trunc_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val
   i.results[0] = dst;
   i.u.i32_trunc_i64.x = x;
   i.u.i32_trunc_i64.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_i32_zext_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_I32_ZEXT_I8;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i32_zext_i8.x = x;
+  i.u.i32_zext_i8.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_i64_zext_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_I64_ZEXT_I32;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i64_zext_i32.x = x;
+  i.u.i64_zext_i32.dst = dst;
   return emit_inst(b, f, i);
 }
 
@@ -1290,6 +1313,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_I32_SHR_S:
         case SIR_INST_I32_SHR_U:
         case SIR_INST_I32_DIV_S_SAT:
+        case SIR_INST_I32_DIV_S_TRAP:
         case SIR_INST_I32_DIV_U_SAT:
         case SIR_INST_I32_REM_S_SAT:
         case SIR_INST_I32_REM_U_SAT:
@@ -1393,6 +1417,18 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_I32_TRUNC_I64:
           if (inst->u.i32_trunc_i64.dst >= vc || inst->u.i32_trunc_i64.x >= vc) {
             set_err(err, err_cap, "i32_trunc_i64 operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_I32_ZEXT_I8:
+          if (inst->u.i32_zext_i8.dst >= vc || inst->u.i32_zext_i8.x >= vc) {
+            set_err(err, err_cap, "i32_zext_i8 operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_I64_ZEXT_I32:
+          if (inst->u.i64_zext_i32.dst >= vc || inst->u.i64_zext_i32.x >= vc) {
+            set_err(err, err_cap, "i64_zext_i32 operand out of range");
             return false;
           }
           break;
@@ -1959,6 +1995,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
       case SIR_INST_I32_SHR_S:
       case SIR_INST_I32_SHR_U:
       case SIR_INST_I32_DIV_S_SAT:
+      case SIR_INST_I32_DIV_S_TRAP:
       case SIR_INST_I32_DIV_U_SAT:
       case SIR_INST_I32_REM_S_SAT:
       case SIR_INST_I32_REM_U_SAT: {
@@ -2038,6 +2075,13 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
             if (y == 0) r = 0;
             else if (x == INT32_MIN && y == -1) r = INT32_MIN;
             else r = (int32_t)(x / y);
+            break;
+          case SIR_INST_I32_DIV_S_TRAP:
+            if (y == 0 || (x == INT32_MIN && y == -1)) {
+              free(vals);
+              return 255 + 1;
+            }
+            r = (int32_t)(x / y);
             break;
           case SIR_INST_I32_DIV_U_SAT:
             if (y == 0) r = 0;
@@ -2344,6 +2388,38 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_INVALID;
         }
         vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = (int32_t)(uint32_t)xv.u.i64};
+        ip++;
+        break;
+      }
+      case SIR_INST_I32_ZEXT_I8: {
+        const sir_val_id_t x = i->u.i32_zext_i8.x;
+        const sir_val_id_t dst = i->u.i32_zext_i8.dst;
+        if (x >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t xv = vals[x];
+        if (xv.kind != SIR_VAL_I8) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = (int32_t)(uint32_t)xv.u.u8};
+        ip++;
+        break;
+      }
+      case SIR_INST_I64_ZEXT_I32: {
+        const sir_val_id_t x = i->u.i64_zext_i32.x;
+        const sir_val_id_t dst = i->u.i64_zext_i32.dst;
+        if (x >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t xv = vals[x];
+        if (xv.kind != SIR_VAL_I32) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_I64, .u.i64 = (int64_t)(uint64_t)(uint32_t)xv.u.i32};
         ip++;
         break;
       }

@@ -572,6 +572,54 @@ target_compile_options(sem_unit_verify_bad_ptr_offset_void PRIVATE -Wall -Wextra
 
 add_test(NAME sem_verify_bad_ptr_offset_void COMMAND sem_unit_verify_bad_ptr_offset_void)
 
+add_executable(sem_unit_run_mem_copy_fill
+  tests/test_run_mem_copy_fill.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_mem_copy_fill PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_mem_copy_fill PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_mem_copy_fill PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_mem_copy_fill PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_mem_copy_fill PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_mem_copy_fill COMMAND sem_unit_run_mem_copy_fill)
+
+add_executable(sem_unit_run_sem_i32_div_s_trap_ok
+  tests/test_run_sem_i32_div_s_trap_ok.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_i32_div_s_trap_ok PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_i32_div_s_trap_ok PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_i32_div_s_trap_ok PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_i32_div_s_trap_ok PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_i32_div_s_trap_ok PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_i32_div_s_trap_ok COMMAND sem_unit_run_sem_i32_div_s_trap_ok)
+
+add_executable(sem_unit_run_sem_i32_div_s_trap_zero
+  tests/test_run_sem_i32_div_s_trap_zero.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_i32_div_s_trap_zero PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_i32_div_s_trap_zero PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_i32_div_s_trap_zero PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_i32_div_s_trap_zero PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_i32_div_s_trap_zero PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_i32_div_s_trap_zero COMMAND sem_unit_run_sem_i32_div_s_trap_zero)
+
 add_test(
   NAME sem_check_smoke
   COMMAND $<TARGET_FILE:sem> --check

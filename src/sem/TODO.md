@@ -34,12 +34,13 @@ Acceptance:
   - [ ] `./dist/bin/<os>/sem --check ./dist/test/examples` passes (no missing-file / unsupported-subset surprises)
 
 Work items:
-- [ ] Fix `sem --check` CLI flag parsing (so `--diagnostics json --all` works as flags, not paths)
-- [ ] Add missing “glue” integer ops used by the dist examples
-  - [ ] `i32.zext.i8` (blocks `mem_copy_fill`)
-  - [ ] `i64.zext.i32` / `i32.trunc.i64` parity as needed by examples/frontends
-- [ ] Add commonly-used trap/sat variants present in shipped examples
-  - [ ] `i32.div.s.trap` (blocks `sem_if_thunk_trap_not_taken`)
+- [x] Fix `sem --check` CLI flag parsing (so `--diagnostics json --all` works as flags, not paths)
+- [x] Add missing “glue” integer ops used by the dist examples
+  - [x] `i32.zext.i8` (blocks `mem_copy_fill`)
+  - [x] `i64.zext.i32` / `i32.trunc.i64` parity as needed by examples/frontends
+- [x] Add commonly-used trap/sat variants present in shipped examples
+  - [x] `i32.div.s.trap` (blocks `sem_if_thunk_trap_not_taken`)
+- [x] Allow side-effecting `call.indirect` in `block.stmts` (execute as statement; discard result)
 - [ ] Decide how Stage A handles examples that are *intentionally* beyond SEM (if any)
   - [ ] Either add support, or move them out of `dist/test/examples`, or add a manifest that marks `sircc-only` vs `sem-runnable`
 

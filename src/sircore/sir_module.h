@@ -105,6 +105,7 @@ typedef enum sir_inst_kind {
   SIR_INST_I32_SHR_S,
   SIR_INST_I32_SHR_U,
   SIR_INST_I32_DIV_S_SAT,
+  SIR_INST_I32_DIV_S_TRAP,
   SIR_INST_I32_DIV_U_SAT,
   SIR_INST_I32_REM_S_SAT,
   SIR_INST_I32_REM_U_SAT,
@@ -130,6 +131,8 @@ typedef enum sir_inst_kind {
   SIR_INST_BOOL_AND,
   SIR_INST_BOOL_OR,
   SIR_INST_BOOL_XOR,
+  SIR_INST_I32_ZEXT_I8,
+  SIR_INST_I64_ZEXT_I32,
   SIR_INST_I32_TRUNC_I64,
   SIR_INST_SELECT,      // yields value: cond ? a : b
   SIR_INST_BR,
@@ -249,6 +252,14 @@ typedef struct sir_inst {
       sir_val_id_t x;
       sir_val_id_t dst;
     } i32_trunc_i64;
+    struct {
+      sir_val_id_t x;
+      sir_val_id_t dst;
+    } i32_zext_i8;
+    struct {
+      sir_val_id_t x;
+      sir_val_id_t dst;
+    } i64_zext_i32;
     struct {
       sir_val_id_t cond;
       sir_val_id_t a;
@@ -385,6 +396,7 @@ bool sir_mb_emit_i32_shl(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t 
 bool sir_mb_emit_i32_shr_s(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x, sir_val_id_t shift);
 bool sir_mb_emit_i32_shr_u(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x, sir_val_id_t shift);
 bool sir_mb_emit_i32_div_s_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_i32_div_s_trap(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_div_u_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_rem_s_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_rem_u_sat(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
@@ -410,6 +422,8 @@ bool sir_mb_emit_bool_not(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t
 bool sir_mb_emit_bool_and(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_bool_or(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_bool_xor(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_i32_zext_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
+bool sir_mb_emit_i64_zext_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
 bool sir_mb_emit_i32_trunc_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
 bool sir_mb_emit_select(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t cond, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_br_args(sir_module_builder_t* b, sir_func_id_t f, uint32_t target_ip, const sir_val_id_t* src_slots, const sir_val_id_t* dst_slots,

@@ -171,12 +171,15 @@ static void sem_print_support(FILE* out, bool json) {
       "i32.shl",
       "i32.shr.s / i32.shr.u",
       "i32.div.s.sat / i32.div.u.sat",
+      "i32.div.s.trap",
       "i32.rem.s.sat / i32.rem.u.sat",
       "binop.add",
       "i32.cmp.eq",
       "i32.cmp.ne",
       "i32.cmp.slt / sle / sgt / sge",
       "i32.cmp.ult / ule / ugt / uge",
+      "i32.zext.i8",
+      "i64.zext.i32",
       "i32.trunc.i64",
       "bool.not",
       "bool.and / bool.or / bool.xor",
@@ -745,8 +748,10 @@ int main(int argc, char** argv) {
   bool sir_module_hello = false;
   const char* run_path = NULL;
   const char* verify_path = NULL;
+  const char* check_paths_buf[256];
   const char** check_paths = NULL;
   uint32_t check_path_count = 0;
+  bool check_mode = false;
   sem_diag_format_t diag_format = SEM_DIAG_TEXT;
   bool diag_all = false;
   const char* tape_out = NULL;
@@ -774,10 +779,8 @@ int main(int argc, char** argv) {
       continue;
     }
     if (strcmp(a, "--check") == 0) {
-      // Collect remaining args as paths (files or dirs).
-      check_paths = (const char**)&argv[i + 1];
-      check_path_count = (uint32_t)(argc - (i + 1));
-      break;
+      check_mode = true;
+      continue;
     }
     if (strcmp(a, "--print-support") == 0) {
       want_support = true;
@@ -872,11 +875,23 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    if (check_mode && a[0] != '-') {
+      if (check_path_count >= (uint32_t)(sizeof(check_paths_buf) / sizeof(check_paths_buf[0]))) {
+        fprintf(stderr, "sem: --check: too many paths\n");
+        sem_free_caps(dyn_caps, dyn_n);
+        return 2;
+      }
+      check_paths_buf[check_path_count++] = a;
+      continue;
+    }
+
     fprintf(stderr, "sem: unknown argument: %s\n", a);
     sem_print_help(stderr);
     sem_free_caps(dyn_caps, dyn_n);
     return 2;
   }
+
+  if (check_path_count) check_paths = check_paths_buf;
 
   if (want_support) {
     sem_print_support(stdout, json);
@@ -886,6 +901,12 @@ int main(int argc, char** argv) {
 
   if (run_path && verify_path) {
     fprintf(stderr, "sem: choose either --run or --verify\n");
+    sem_free_caps(dyn_caps, dyn_n);
+    return 2;
+  }
+
+  if (check_mode && check_path_count == 0) {
+    fprintf(stderr, "sem: --check: expected at least one file/dir path\n");
     sem_free_caps(dyn_caps, dyn_n);
     return 2;
   }
