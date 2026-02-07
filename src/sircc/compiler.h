@@ -46,6 +46,8 @@ typedef struct SirccOptions {
   SirccRuntimeKind runtime;
   const char* zabi25_root; // optional; default probes repo and dist paths
   const char* zasm_map_path; // optional; when emitting zasm, write a sidecar id map JSONL
+  bool lower_hl;            // run SIR-HL→Core legalization and exit (no codegen)
+  const char* emit_sir_core_path; // required when lower_hl=true
   bool verify_only;
   bool dump_records;
   bool print_target;

@@ -48,6 +48,11 @@ This TODO is organized as milestones. Each milestone should end with:
 
 These are the next “semantic widening” items to unlock real-language lowering (MIR parity) and make `sem:v1` practical.
 
+- [ ] **SIR-HL → SIR-Core legalizer contract + tool surface**
+  - [ ] Ownership + contracts doc (portable lowering moves to `sircc`): `src/sircc/docs/hl_core_contract.md`
+  - [ ] Add `sircc --lower-hl --emit-sir-core` to produce a lowered Core JSONL stream
+  - [ ] Add goldens: intent/packs input → core output (stable derived ids)
+
 - [x] **Struct types + deterministic layout (base v1.0)**
   - [x] Parse `type.kind:"struct"` with `fields[]` and lower it to LLVM struct types
   - [x] Implement size/align with padding rules (baseline, non-packed)

@@ -21,6 +21,7 @@ static void usage(FILE* out) {
           "  sircc <input.sir.jsonl> -o <output> [--emit-llvm|--emit-obj|--emit-zasm] [--clang <path>] [--target-triple <triple>]\n"
           "  sircc <input.sir.jsonl> -o <output.zasm.jsonl> --emit-zasm [--emit-zasm-map <map.jsonl>]\n"
           "  sircc --verify-only <input.sir.jsonl>\n"
+          "  sircc --lower-hl --emit-sir-core <output.sir.jsonl> <input.sir.jsonl>\n"
           "  sircc --dump-records --verify-only <input.sir.jsonl>\n"
           "  sircc --print-target [--target-triple <triple>]\n"
           "  sircc --print-support [--format text|json] [--full]\n"
@@ -31,6 +32,10 @@ static void usage(FILE* out) {
           "  sircc --require-pinned-triple ...\n"
           "  sircc --require-target-contract ...\n"
           "  sircc --version\n"
+          "\n"
+          "Lowering:\n"
+          "  --lower-hl         Lower supported SIR-HL into Core SIR (no codegen)\n"
+          "  --emit-sir-core P  Write lowered Core SIR JSONL to P (requires --lower-hl)\n"
           "\n"
           "License: GPLv3+\n"
           "© 2026 Frogfish — Author: Alexander Croft\n");
@@ -62,6 +67,8 @@ int main(int argc, char** argv) {
       .runtime = SIRCC_RUNTIME_LIBC,
       .zabi25_root = NULL,
       .zasm_map_path = NULL,
+      .lower_hl = false,
+      .emit_sir_core_path = NULL,
       .verify_only = false,
       .dump_records = false,
       .print_target = false,
@@ -94,6 +101,18 @@ int main(int argc, char** argv) {
     }
     if (strcmp(a, "--verify-only") == 0) {
       opt.verify_only = true;
+      continue;
+    }
+    if (strcmp(a, "--lower-hl") == 0) {
+      opt.lower_hl = true;
+      continue;
+    }
+    if (strcmp(a, "--emit-sir-core") == 0) {
+      if (i + 1 >= argc) {
+        usage(stderr);
+        return SIRCC_EXIT_USAGE;
+      }
+      opt.emit_sir_core_path = argv[++i];
       continue;
     }
     if (strcmp(a, "--print-support") == 0) {
@@ -327,7 +346,7 @@ int main(int argc, char** argv) {
     usage(stderr);
     return SIRCC_EXIT_USAGE;
   }
-  if (!opt.verify_only && !opt.output_path) {
+  if (!opt.verify_only && !opt.lower_hl && !opt.output_path) {
     usage(stderr);
     return SIRCC_EXIT_USAGE;
   }

@@ -6,6 +6,7 @@ add_executable(sircc
   compiler_ids.c
   compiler_diag.c
   compiler_emit.c
+  compiler_lower_hl.c
   compiler_link.c
   compiler_lower_cfg.c
   compiler_lower_expr_a.c
@@ -374,6 +375,15 @@ add_test(
 )
 
 add_test(
+  NAME sircc_lower_hl_sem_if_thunk_rejected
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;--lower-hl\\;--emit-sir-core\\;${CMAKE_CURRENT_BINARY_DIR}/sem_if_thunk.core.sir.jsonl\\;${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_thunk_trap_not_taken.sir.jsonl
+    "-DEXPECT=\\\"code\\\":\\\"sircc.lower_hl.sem.if.thunk_unsupported\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_cinterop_export_add2
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -446,6 +456,26 @@ add_test(
 add_test(
   NAME sircc_verify_hello_world_puts
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/hello_world_puts.sir.jsonl
+)
+
+add_test(
+  NAME sircc_lower_hl_sem_if_val_to_select
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_if_val_to_select.core.sir.jsonl
+    -DARGS=--lower-hl\\;--emit-sir-core\\;${CMAKE_CURRENT_BINARY_DIR}/sem_if_val_to_select.core.sir.jsonl\\;${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_val_to_select.sir.jsonl
+    "-DEXPECT=\\\"tag\\\":\\\"select\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_output_file_contains.cmake
+)
+
+add_test(
+  NAME sircc_lower_hl_sem_if_val_strips_sem
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_if_val_to_select.core.sir.jsonl
+    -DARGS=--lower-hl\\;--emit-sir-core\\;${CMAKE_CURRENT_BINARY_DIR}/sem_if_val_to_select.core.sir.jsonl\\;${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_val_to_select.sir.jsonl
+    "-DNOT_EXPECT=\\\"tag\\\":\\\"sem.if\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_output_file_not_contains.cmake
 )
 
 add_test(

@@ -2,6 +2,10 @@
 
 This doc is a practical “emit this shape” guide for MIR producers targeting the **node frontend** of `sircc` (Stage/Milestone 3, LLVM backend).
 
+For the longer-term plan to move portable lowering complexity out of MIR and into the SIR toolchain (via SIR-HL packs/intent lowered into a stable SIR-Core contract), see:
+
+- `src/sircc/docs/hl_core_contract.md`
+
 ## Quick checklist
 
 - Emit `{"ir":"sir-v1.0","k":"meta", ...}` first (recommended; not required).

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "compiler_internal.h"
+#include "compiler_lower_hl.h"
 #include "compiler_zasm_internal.h"
 
 #include <llvm-c/Analysis.h>
@@ -17,7 +18,7 @@
 
 int sircc_compile(const SirccOptions* opt) {
   if (!opt || !opt->input_path) return SIRCC_EXIT_USAGE;
-  if (!opt->verify_only && !opt->output_path) return SIRCC_EXIT_USAGE;
+  if (!opt->verify_only && !opt->lower_hl && !opt->output_path) return SIRCC_EXIT_USAGE;
 
   SirProgram p = {0};
   p.opt = opt;
@@ -76,6 +77,16 @@ int sircc_compile(const SirccOptions* opt) {
       ok = false;
       goto done;
     }
+  }
+
+  if (opt->lower_hl) {
+    if (!opt->emit_sir_core_path || !*opt->emit_sir_core_path) {
+      err_codef(&p, "sircc.lower_hl.missing_output", "sircc: --lower-hl requires --emit-sir-core <output.sir.jsonl>");
+      ok = false;
+      goto done;
+    }
+    ok = lower_hl_and_emit_sir_core(&p, opt->emit_sir_core_path);
+    goto done;
   }
 
   if (opt->verify_only) {
