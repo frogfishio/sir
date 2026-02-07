@@ -1256,6 +1256,36 @@ bad:
 }
 
 bool validate_program(SirProgram* p) {
+  // Core fn record validation (runs for --verify-only too).
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* n = p->nodes[i];
+    if (!n) continue;
+    if (strcmp(n->tag, "fn") != 0) continue;
+    if (!n->fields || n->fields->type != JSON_OBJECT) {
+      SIRCC_ERR_NODE(p, n, "sircc.fn.fields.missing", "sircc: fn node %lld missing fields", (long long)n->id);
+      return false;
+    }
+
+    const char* name = json_get_string(json_obj_get(n->fields, "name"));
+    if (!name || !*name) {
+      SIRCC_ERR_NODE(p, n, "sircc.fn.name.missing", "sircc: fn node %lld missing fields.name", (long long)n->id);
+      return false;
+    }
+
+    const char* linkage = json_get_string(json_obj_get(n->fields, "linkage"));
+    if (linkage && *linkage) {
+      if (strcmp(linkage, "local") != 0 && strcmp(linkage, "public") != 0) {
+        SIRCC_ERR_NODE(p, n, "sircc.fn.linkage.bad",
+                       "sircc: fn node %lld has unsupported linkage '%s' (use 'local' or 'public')", (long long)n->id, linkage);
+        return false;
+      }
+    } else if (p->opt && p->opt->verify_strict) {
+      SIRCC_ERR_NODE(p, n, "sircc.fn.linkage.missing",
+                     "sircc: fn node %lld missing fields.linkage (strict mode requires explicit 'local' or 'public')", (long long)n->id);
+      return false;
+    }
+  }
+
   // Validate CFG-form functions even under --verify-only.
   for (size_t i = 0; i < p->nodes_cap; i++) {
     NodeRec* n = p->nodes[i];

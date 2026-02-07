@@ -135,6 +135,7 @@ static void usage(FILE* out) {
           "\n"
           "Lowering:\n"
           "  --lower-hl         Lower supported SIR-HL into Core SIR (no codegen)\n"
+          "  --lower-strict     Tighten lowering rules (implies --verify-strict)\n"
           "  --emit-sir-core P  Write lowered Core SIR JSONL to P (requires --lower-hl)\n"
           "\n"
           "License: GPLv3+\n"
@@ -175,6 +176,7 @@ int main(int argc, char** argv) {
       .zasm_map_path = NULL,
       .lower_hl = false,
       .emit_sir_core_path = NULL,
+      .lower_strict = false,
       .verify_only = false,
       .verify_strict = false,
       .dump_records = false,
@@ -252,6 +254,11 @@ int main(int argc, char** argv) {
     }
     if (strcmp(a, "--lower-hl") == 0) {
       opt.lower_hl = true;
+      continue;
+    }
+    if (strcmp(a, "--lower-strict") == 0) {
+      opt.lower_strict = true;
+      opt.verify_strict = true;
       continue;
     }
     if (strcmp(a, "--emit-sir-core") == 0) {

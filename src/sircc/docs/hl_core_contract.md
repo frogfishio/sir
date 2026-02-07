@@ -42,15 +42,31 @@ If any of those is false, the construct stays frontend-owned.
 
 ## The contracts
 
-### SIR-Core contract (stable)
+### SIR-Core contract (stable, codegen boundary)
 
-SIR-Core is the smallest set that:
+SIR-Core is the set that:
 
 - is **fully verified** by `sircc --verify-only`
 - is **fully codegenned** by `sircc` (LLVM backend)
 - is expected to be **stable across languages** and long-lived
 
-Practically: “Stage 3 base v1.0” + a pinned target contract + the interop rules (extern import/export).
+In this repo’s current terminology, SIR-Core is:
+
+- **Base**: “Stage 3 base v1.0” (CFG, blocks/terms, loads/stores, integer/float ops, etc.)
+- **Interop**: extern import/export rules (function + global symbols)
+- **Pinned target contract**: layout/size/align/endian when reproducibility matters
+
+And (because these are already deterministic + verified + codegenned) SIR-Core also includes the
+currently-implemented “data-model” packs that do **not** require an extra legalizer stage:
+
+- `agg:v1` (globals + structured constants)
+- `fun:v1`
+- `closure:v1`
+- `adt:v1`
+- `simd:v1`
+
+In other words: if `sircc --verify-only` accepts it and `sircc` can codegen it without any additional
+lowering pipeline, it belongs to the SIR-Core contract surface.
 
 The exact support set is surfaced by:
 
@@ -68,6 +84,11 @@ SIR-HL comes in two shapes:
 
 1) **Packs**: `agg:v1`, `fun:v1`, `closure:v1`, `adt:v1`, …
 2) **Intent**: `sem:v1` (`sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.match_sum`, …)
+
+Current implementation note:
+
+- Today, the only SIR-HL family that `sircc` *lowers away* is `sem:v1`.
+- Other packs listed above are *feature-gated*, but are treated as SIR-Core for codegen (no extra legalizer stage).
 
 ## Interchange + versioning rules
 
@@ -141,13 +162,16 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
 - [ ] Interop contract (imports + exports), documented and diagnostic-first:
   - [x] Imports: `decl.fn` + `call.indirect` pattern; `ptr.sym` producer rule enforced + actionable diagnostic
   - [x] Ordering clarified: forward refs allowed (decls before uses recommended for diagnostics)
-  - [ ] Exports: document required fields/rules (`fn.name`, `linkage:"public"`, signature stability, C ABI expectations)
-  - [ ] Decide/encode varargs + byref + aggregate ABI strategy (profile or pack, but one canonical answer)
+  - [x] Exports: `fn.fields.name` is the exported symbol; `fn.fields.linkage:"public"` exports it; signature is the `type.kind:"fn"` referred by `fn.type_ref` (LLVM platform ABI)
+  - [x] Varargs/byref/aggregates policy (current, LLVM backend):
+    - varargs is supported via `type.varargs:true`, but producers should avoid it unless required and tested on the target
+    - byref is producer-owned: represent byref params as pointers in the `type.kind:"fn"` signature
+    - do not rely on struct/array by-value ABI; lower aggregates to pointers (and explicit copies) for portability until an ABI profile exists
 
 - [ ] Baseline data story (encoding + interop) as a pack (no handwaving):
   - [x] `data:v1` enforced by verifier (`bytes`, `string.utf8`, `cstr`)
   - [x] Decide how encoding is declared and freeze the rule (under `data:v1`, encoding is carried by canonical type names like `string.utf8`)
-  - [ ] Define required explicit conversions (e.g. `string.utf8` ⇄ `cstr`) as library/host calls (no implicit magic)
+  - [x] Define required explicit conversions (e.g. `string.utf8` ⇄ `cstr`) as library/host calls (no implicit magic) — see `src/sircc/docs/data_v1.md`
 
 - [ ] Globals + constants that real languages need (no per-frontend folklore):
   - [x] Structured constants / aggregate initializers (arrays/structs) and global data symbols (`sym(kind=var|const)`)
@@ -160,8 +184,10 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
 
 - [ ] Strict integration modes:
   - [x] `--verify-strict` exists
-  - [ ] Add a `--lower-strict` (or tie to `--verify-strict`) so HL→Core lowering also rejects ambiguous shapes early
-  - [ ] Make “strict” the recommended mode for integrators (documented defaults)
+  - [x] Add a `--lower-strict` (ties to `--verify-strict`) so HL→Core lowering runs with strict validation expectations
+  - [x] Make “strict” the recommended mode for integrators:
+    - validate: `sircc --verify-strict --verify-only <input.sir.jsonl>`
+    - lower: `sircc --lower-hl --lower-strict --emit-sir-core out.core.sir.jsonl <input.sir.jsonl>`
 
 ### P1 — Efficient emission (reduce boilerplate; keep emitters uniform)
 

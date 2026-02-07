@@ -3104,5 +3104,17 @@ bool lower_hl_in_place(SirProgram* p) {
   // Currently, SIR-HL is the `sem:v1` intent family.
   // Future HL constructs should also be lowered here so normal codegen and
   // `--lower-hl` share the same pipeline.
-  return lower_sem_nodes(p);
+  if (!lower_sem_nodes(p)) return false;
+
+  // Strict invariant: after lowering, no sem.* nodes may remain.
+  // (If this fires, it indicates a bug or an incomplete lowering implementation.)
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* n = p->nodes ? p->nodes[i] : NULL;
+    if (!n || !n->tag) continue;
+    if (strncmp(n->tag, "sem.", 4) != 0) continue;
+    SIRCC_ERR_NODE(p, n, "sircc.lower_hl.unlowered", "sircc: HL lowering left an unlowered node '%s' (node %lld)", n->tag, (long long)n->id);
+    return false;
+  }
+
+  return true;
 }
