@@ -89,6 +89,7 @@ This output becomes:
 - the unit of testing for optimizer/legalizer changes
 
 Note: the current MVP implementation only lowers the “pure/val” cases of `sem:v1` (see P1), and will reject thunk-based `sem:*` nodes with a diagnostic.
+Note: the current implementation supports thunk-based `sem:v1` lowering (CFG desugaring) and will also hoist nested `sem.*` used in expression positions into `let` bindings during lowering, so `sem.*` can appear under other expression nodes.
 
 ### Backward compatibility
 
@@ -137,9 +138,10 @@ MIR still owns language semantics, but it stops owning the “portable lowering 
 - [x] MVP: lower the pure/val cases into Core expressions
   - [x] `sem.if` with `val/val` branches → `select`
   - [x] `sem.and_sc` / `sem.or_sc` with `rhs kind=val` → `bool.and` / `bool.or`
-- [ ] Full: implement `sem.if` lowering → CFG form (blocks/terms) + validate (required for thunk branches)
-- [ ] Full: implement `sem.and_sc` / `sem.or_sc` lowering → CFG with short-circuit (required for thunk branches)
-- [ ] Implement `sem.match_sum` lowering → `adt.tag` + `term.switch` + join args
+- [x] Full: implement `sem.if` lowering → CFG form (blocks/terms) + validate (required for thunk branches)
+- [x] Full: implement `sem.and_sc` / `sem.or_sc` lowering → CFG with short-circuit (required for thunk branches)
+- [x] Implement `sem.match_sum` lowering → `adt.tag` + `term.switch` + join args
+- [x] Hoist nested `sem.*` used as operands (use-position) into `let` so lowering is uniform
 - [ ] Emit stable derived ids (`"sircc:lower:..."`) so producers can diff outputs
 - [ ] Add golden tests:
   - [ ] input = sem intent

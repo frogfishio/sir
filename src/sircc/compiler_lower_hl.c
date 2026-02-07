@@ -472,6 +472,58 @@ static JsonValue* fn_fields_to_cfg(SirProgram* p, JsonValue* old_fields, int64_t
   return fields;
 }
 
+static JsonValue* fn_fields_with_blocks(SirProgram* p, JsonValue* old_fields, JsonValue* new_blocks) {
+  if (!p || !old_fields || old_fields->type != JSON_OBJECT) return NULL;
+  if (!new_blocks || new_blocks->type != JSON_ARRAY) return NULL;
+  size_t keep = 0;
+  bool have_blocks = false;
+  for (size_t i = 0; i < old_fields->v.obj.len; i++) {
+    const char* k = old_fields->v.obj.items[i].key;
+    if (!k) continue;
+    if (strcmp(k, "blocks") == 0) {
+      have_blocks = true;
+      keep++;
+      continue;
+    }
+    keep++;
+  }
+  if (!have_blocks) return NULL;
+
+  JsonValue* fields = jv_make_obj(&p->arena, keep);
+  if (!fields) return NULL;
+  size_t wi = 0;
+  for (size_t i = 0; i < old_fields->v.obj.len; i++) {
+    const char* k = old_fields->v.obj.items[i].key;
+    if (!k) continue;
+    if (strcmp(k, "blocks") == 0) {
+      fields->v.obj.items[wi].key = "blocks";
+      fields->v.obj.items[wi].value = new_blocks;
+      wi++;
+      continue;
+    }
+    fields->v.obj.items[wi++] = old_fields->v.obj.items[i];
+  }
+  fields->v.obj.len = wi;
+  return fields;
+}
+
+static bool cfg_fn_append_blocks(SirProgram* p, NodeRec* fn, const int64_t* add_block_ids, size_t add_len) {
+  if (!p || !fn || !fn->fields || !add_block_ids || add_len == 0) return false;
+  JsonValue* blocks = json_obj_get(fn->fields, "blocks");
+  if (!blocks || blocks->type != JSON_ARRAY) return false;
+  JsonValue* new_blocks = jv_make_arr(&p->arena, blocks->v.arr.len + add_len);
+  if (!new_blocks) return false;
+  for (size_t i = 0; i < blocks->v.arr.len; i++) new_blocks->v.arr.items[i] = blocks->v.arr.items[i];
+  for (size_t i = 0; i < add_len; i++) {
+    new_blocks->v.arr.items[blocks->v.arr.len + i] = jv_make_ref(&p->arena, add_block_ids[i]);
+    if (!new_blocks->v.arr.items[blocks->v.arr.len + i]) return false;
+  }
+  JsonValue* nf = fn_fields_with_blocks(p, fn->fields, new_blocks);
+  if (!nf) return false;
+  fn->fields = nf;
+  return true;
+}
+
 static bool lower_sem_value_to_cfg_ret(SirProgram* p, NodeRec* fn, int64_t sem_node_id, const char* sem_tag, int64_t cond_id,
                                       const BranchOperand* br_then, const BranchOperand* br_else) {
   if (!p || !fn || !fn->fields) return false;
@@ -692,6 +744,8 @@ static bool lower_sem_value_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t sem_n
 
   NodeRec* letn = get_node(p, let_stmt_id);
   if (!letn || !letn->tag || strcmp(letn->tag, "let") != 0) return false;
+  const char* let_name = letn->fields ? json_get_string(json_obj_get(letn->fields, "name")) : NULL;
+  if (!let_name || !*let_name) return false;
 
   NodeRec* semn = get_node(p, sem_node_id);
   if (!semn) return false;
@@ -715,7 +769,14 @@ static bool lower_sem_value_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t sem_n
   // Reuse sem node id as the continuation bparam (this strips sem.* from output).
   semn->tag = "bparam";
   semn->type_ref = result_ty;
-  semn->fields = NULL;
+  JsonValue* bpf = jv_make_obj(&p->arena, 1);
+  if (!bpf) return false;
+  bpf->v.obj.items[0].key = "name";
+  bpf->v.obj.items[0].value = jv_make(&p->arena, JSON_STRING);
+  if (!bpf->v.obj.items[0].value) return false;
+  bpf->v.obj.items[0].value->v.s = arena_strdup(&p->arena, let_name);
+  if (!bpf->v.obj.items[0].value->v.s) return false;
+  semn->fields = bpf;
 
   // Create continuation/then/else blocks.
   const int64_t then_bid = alloc_new_node_id(p, &next_id);
@@ -729,10 +790,11 @@ static bool lower_sem_value_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t sem_n
   cont_params->v.arr.items[0] = jv_make_ref(&p->arena, sem_node_id);
   if (!cont_params->v.arr.items[0]) return false;
 
-  const size_t suffix_n = stmts->v.arr.len - let_idx;
+  // Suffix begins after the let statement, because the binding is provided by the block param name.
+  const size_t suffix_n = (let_idx + 1 <= stmts->v.arr.len) ? (stmts->v.arr.len - (let_idx + 1)) : 0;
   JsonValue* cont_stmts = jv_make_arr(&p->arena, suffix_n);
   if (!cont_stmts) return false;
-  for (size_t i = 0; i < suffix_n; i++) cont_stmts->v.arr.items[i] = stmts->v.arr.items[let_idx + i];
+  for (size_t i = 0; i < suffix_n; i++) cont_stmts->v.arr.items[i] = stmts->v.arr.items[(let_idx + 1) + i];
 
   JsonValue* cont_fields = block_fields_with_stmts(p, NULL, cont_stmts, cont_params);
   if (!cont_fields) return false;
@@ -835,6 +897,178 @@ static bool lower_sem_value_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t sem_n
   int64_t blks[4] = {body_id, then_bid, else_bid, cont_bid};
   fn->fields = fn_fields_to_cfg(p, fn->fields, body_id, blks, 4);
   if (!fn->fields) return false;
+  return true;
+}
+
+static bool lower_sem_value_to_cfg_let_cfg(SirProgram* p, NodeRec* fn, int64_t block_id, int64_t sem_node_id, const char* sem_tag, int64_t cond_id,
+                                          const BranchOperand* br_then, const BranchOperand* br_else, int64_t let_stmt_id) {
+  if (!p || !fn || !fn->fields) return false;
+  if (!json_obj_get(fn->fields, "entry")) return false;
+
+  NodeRec* blk = get_node(p, block_id);
+  if (!blk || !blk->fields || !blk->tag || strcmp(blk->tag, "block") != 0) return false;
+  JsonValue* stmts = json_obj_get(blk->fields, "stmts");
+  if (!stmts || stmts->type != JSON_ARRAY || stmts->v.arr.len == 0) return false;
+
+  // Find the let stmt index.
+  size_t let_idx = (size_t)-1;
+  for (size_t i = 0; i < stmts->v.arr.len; i++) {
+    int64_t sid = 0;
+    if (!parse_node_ref_id(p, stmts->v.arr.items[i], &sid)) continue;
+    if (sid == let_stmt_id) {
+      let_idx = i;
+      break;
+    }
+  }
+  if (let_idx == (size_t)-1) return false;
+
+  NodeRec* letn = get_node(p, let_stmt_id);
+  if (!letn || !letn->tag || strcmp(letn->tag, "let") != 0) return false;
+  const char* let_name = letn->fields ? json_get_string(json_obj_get(letn->fields, "name")) : NULL;
+  if (!let_name || !*let_name) return false;
+
+  NodeRec* semn = get_node(p, sem_node_id);
+  if (!semn) return false;
+  int64_t result_ty = semn->type_ref;
+  if (result_ty == 0) {
+    result_ty = infer_branch_type(p, br_then);
+    if (!result_ty) result_ty = infer_branch_type(p, br_else);
+  }
+  if (result_ty == 0) {
+    SIRCC_ERR_NODE(p, semn, "sircc.lower_hl.sem.type_missing", "sircc: --lower-hl could not infer result type for %s", sem_tag);
+    return false;
+  }
+
+  int64_t next_id = 0;
+
+  // Reuse sem node id as the continuation bparam (this strips sem.* from output).
+  semn->tag = "bparam";
+  semn->type_ref = result_ty;
+  JsonValue* bpf = jv_make_obj(&p->arena, 1);
+  if (!bpf) return false;
+  bpf->v.obj.items[0].key = "name";
+  bpf->v.obj.items[0].value = jv_make(&p->arena, JSON_STRING);
+  if (!bpf->v.obj.items[0].value) return false;
+  bpf->v.obj.items[0].value->v.s = arena_strdup(&p->arena, let_name);
+  if (!bpf->v.obj.items[0].value->v.s) return false;
+  semn->fields = bpf;
+
+  // Create continuation/then/else blocks.
+  const int64_t then_bid = alloc_new_node_id(p, &next_id);
+  const int64_t else_bid = alloc_new_node_id(p, &next_id);
+  const int64_t cont_bid = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, then_bid) || !ensure_node_slot(p, else_bid) || !ensure_node_slot(p, cont_bid)) return false;
+
+  // Continuation block params=[bparam], stmts = suffix (after let).
+  JsonValue* cont_params = jv_make_arr(&p->arena, 1);
+  if (!cont_params) return false;
+  cont_params->v.arr.items[0] = jv_make_ref(&p->arena, sem_node_id);
+  if (!cont_params->v.arr.items[0]) return false;
+
+  const size_t suffix_n = (let_idx + 1 <= stmts->v.arr.len) ? (stmts->v.arr.len - (let_idx + 1)) : 0;
+  JsonValue* cont_stmts = jv_make_arr(&p->arena, suffix_n);
+  if (!cont_stmts) return false;
+  for (size_t i = 0; i < suffix_n; i++) cont_stmts->v.arr.items[i] = stmts->v.arr.items[(let_idx + 1) + i];
+
+  JsonValue* cont_fields = block_fields_with_stmts(p, NULL, cont_stmts, cont_params);
+  if (!cont_fields) return false;
+  make_node_stub(p, cont_bid, "block", 0, cont_fields);
+
+  // Resolve then/else branch value node ids (materialize thunk calls inside the branch block).
+  int64_t then_val_id = 0, else_val_id = 0;
+  if (br_then->kind == BRANCH_VAL) then_val_id = br_then->node_id;
+  else if (!make_call_thunk(p, &next_id, br_then->node_id, result_ty, &then_val_id)) return false;
+  if (br_else->kind == BRANCH_VAL) else_val_id = br_else->node_id;
+  else if (!make_call_thunk(p, &next_id, br_else->node_id, result_ty, &else_val_id)) return false;
+
+  const int64_t then_br_id = alloc_new_node_id(p, &next_id);
+  const int64_t else_br_id = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, then_br_id) || !ensure_node_slot(p, else_br_id)) return false;
+
+  JsonValue* then_br_args = jv_make_arr(&p->arena, 1);
+  JsonValue* else_br_args = jv_make_arr(&p->arena, 1);
+  if (!then_br_args || !else_br_args) return false;
+  then_br_args->v.arr.items[0] = jv_make_ref(&p->arena, then_val_id);
+  else_br_args->v.arr.items[0] = jv_make_ref(&p->arena, else_val_id);
+  if (!then_br_args->v.arr.items[0] || !else_br_args->v.arr.items[0]) return false;
+
+  JsonValue* then_br_fields = jv_make_obj(&p->arena, 2);
+  JsonValue* else_br_fields = jv_make_obj(&p->arena, 2);
+  if (!then_br_fields || !else_br_fields) return false;
+  then_br_fields->v.obj.items[0].key = "to";
+  then_br_fields->v.obj.items[0].value = jv_make_ref(&p->arena, cont_bid);
+  then_br_fields->v.obj.items[1].key = "args";
+  then_br_fields->v.obj.items[1].value = then_br_args;
+  else_br_fields->v.obj.items[0].key = "to";
+  else_br_fields->v.obj.items[0].value = jv_make_ref(&p->arena, cont_bid);
+  else_br_fields->v.obj.items[1].key = "args";
+  else_br_fields->v.obj.items[1].value = else_br_args;
+  if (!then_br_fields->v.obj.items[0].value || !else_br_fields->v.obj.items[0].value) return false;
+
+  make_node_stub(p, then_br_id, "term.br", 0, then_br_fields);
+  make_node_stub(p, else_br_id, "term.br", 0, else_br_fields);
+
+  const bool then_has_call = (br_then->kind == BRANCH_THUNK);
+  const bool else_has_call = (br_else->kind == BRANCH_THUNK);
+  JsonValue* then_stmts = jv_make_arr(&p->arena, then_has_call ? 2 : 1);
+  JsonValue* else_stmts = jv_make_arr(&p->arena, else_has_call ? 2 : 1);
+  if (!then_stmts || !else_stmts) return false;
+  size_t ti = 0, ei = 0;
+  if (then_has_call) {
+    then_stmts->v.arr.items[ti++] = jv_make_ref(&p->arena, then_val_id);
+    if (!then_stmts->v.arr.items[ti - 1]) return false;
+  }
+  then_stmts->v.arr.items[ti++] = jv_make_ref(&p->arena, then_br_id);
+  if (!then_stmts->v.arr.items[ti - 1]) return false;
+  if (else_has_call) {
+    else_stmts->v.arr.items[ei++] = jv_make_ref(&p->arena, else_val_id);
+    if (!else_stmts->v.arr.items[ei - 1]) return false;
+  }
+  else_stmts->v.arr.items[ei++] = jv_make_ref(&p->arena, else_br_id);
+  if (!else_stmts->v.arr.items[ei - 1]) return false;
+
+  JsonValue* then_fields = block_fields_with_stmts(p, NULL, then_stmts, NULL);
+  JsonValue* else_fields = block_fields_with_stmts(p, NULL, else_stmts, NULL);
+  if (!then_fields || !else_fields) return false;
+  make_node_stub(p, then_bid, "block", 0, then_fields);
+  make_node_stub(p, else_bid, "block", 0, else_fields);
+
+  // Entry block: prefix stmts (before let), then term.cbr.
+  JsonValue* new_entry_stmts = jv_make_arr(&p->arena, let_idx + 1);
+  if (!new_entry_stmts) return false;
+  for (size_t i = 0; i < let_idx; i++) new_entry_stmts->v.arr.items[i] = stmts->v.arr.items[i];
+
+  const int64_t cbr_id = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, cbr_id)) return false;
+
+  JsonValue* then_obj = jv_make_obj(&p->arena, 1);
+  JsonValue* else_obj = jv_make_obj(&p->arena, 1);
+  if (!then_obj || !else_obj) return false;
+  then_obj->v.obj.items[0].key = "to";
+  then_obj->v.obj.items[0].value = jv_make_ref(&p->arena, then_bid);
+  else_obj->v.obj.items[0].key = "to";
+  else_obj->v.obj.items[0].value = jv_make_ref(&p->arena, else_bid);
+  if (!then_obj->v.obj.items[0].value || !else_obj->v.obj.items[0].value) return false;
+
+  JsonValue* cbr_fields = jv_make_obj(&p->arena, 3);
+  if (!cbr_fields) return false;
+  cbr_fields->v.obj.items[0].key = "cond";
+  cbr_fields->v.obj.items[0].value = jv_make_ref(&p->arena, cond_id);
+  cbr_fields->v.obj.items[1].key = "then";
+  cbr_fields->v.obj.items[1].value = then_obj;
+  cbr_fields->v.obj.items[2].key = "else";
+  cbr_fields->v.obj.items[2].value = else_obj;
+  if (!cbr_fields->v.obj.items[0].value) return false;
+
+  make_node_stub(p, cbr_id, "term.cbr", 0, cbr_fields);
+  new_entry_stmts->v.arr.items[let_idx] = jv_make_ref(&p->arena, cbr_id);
+  if (!new_entry_stmts->v.arr.items[let_idx]) return false;
+
+  blk->fields = block_fields_with_stmts(p, blk->fields, new_entry_stmts, json_obj_get(blk->fields, "params"));
+  if (!blk->fields) return false;
+
+  const int64_t add_blks[3] = {then_bid, else_bid, cont_bid};
+  if (!cfg_fn_append_blocks(p, fn, add_blks, 3)) return false;
   return true;
 }
 
@@ -1207,6 +1441,10 @@ static bool lower_sem_match_sum_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t m
     }
   }
   if (let_idx == (size_t)-1) return false;
+  NodeRec* letn = get_node(p, let_stmt_id);
+  if (!letn || !letn->fields || !letn->tag || strcmp(letn->tag, "let") != 0) return false;
+  const char* let_name = json_get_string(json_obj_get(letn->fields, "name"));
+  if (!let_name || !*let_name) return false;
 
   NodeRec* mn = get_node(p, match_node_id);
   if (!mn || !mn->fields || !mn->tag || strcmp(mn->tag, "sem.match_sum") != 0) return false;
@@ -1246,7 +1484,14 @@ static bool lower_sem_match_sum_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t m
   // Reuse match node id as the continuation bparam (this strips sem.* from output).
   mn->tag = "bparam";
   mn->type_ref = result_ty;
-  mn->fields = NULL;
+  JsonValue* bpf = jv_make_obj(&p->arena, 1);
+  if (!bpf) return false;
+  bpf->v.obj.items[0].key = "name";
+  bpf->v.obj.items[0].value = jv_make(&p->arena, JSON_STRING);
+  if (!bpf->v.obj.items[0].value) return false;
+  bpf->v.obj.items[0].value->v.s = arena_strdup(&p->arena, let_name);
+  if (!bpf->v.obj.items[0].value->v.s) return false;
+  mn->fields = bpf;
 
   // Continuation block params=[bparam], stmts = suffix (starting at let).
   const int64_t cont_bid = alloc_new_node_id(p, &next_id);
@@ -1257,10 +1502,11 @@ static bool lower_sem_match_sum_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t m
   cont_params->v.arr.items[0] = jv_make_ref(&p->arena, match_node_id);
   if (!cont_params->v.arr.items[0]) return false;
 
-  const size_t suffix_n = stmts->v.arr.len - let_idx;
+  // Suffix begins after the let statement, because the binding is provided by the block param name.
+  const size_t suffix_n = (let_idx + 1 <= stmts->v.arr.len) ? (stmts->v.arr.len - (let_idx + 1)) : 0;
   JsonValue* cont_stmts = jv_make_arr(&p->arena, suffix_n);
   if (!cont_stmts) return false;
-  for (size_t i = 0; i < suffix_n; i++) cont_stmts->v.arr.items[i] = stmts->v.arr.items[let_idx + i];
+  for (size_t i = 0; i < suffix_n; i++) cont_stmts->v.arr.items[i] = stmts->v.arr.items[(let_idx + 1) + i];
 
   JsonValue* cont_fields = block_fields_with_stmts(p, NULL, cont_stmts, cont_params);
   if (!cont_fields) return false;
@@ -1519,6 +1765,335 @@ static bool lower_sem_match_sum_to_cfg_let(SirProgram* p, NodeRec* fn, int64_t m
   return true;
 }
 
+static bool lower_sem_match_sum_to_cfg_let_cfg(SirProgram* p, NodeRec* fn, int64_t block_id, int64_t match_node_id, int64_t let_stmt_id) {
+  if (!p || !fn || !fn->fields) return false;
+  if (!json_obj_get(fn->fields, "entry")) return false;
+
+  NodeRec* blk = get_node(p, block_id);
+  if (!blk || !blk->fields || !blk->tag || strcmp(blk->tag, "block") != 0) return false;
+  JsonValue* stmts = json_obj_get(blk->fields, "stmts");
+  if (!stmts || stmts->type != JSON_ARRAY || stmts->v.arr.len == 0) return false;
+
+  // Find the let stmt index.
+  size_t let_idx = (size_t)-1;
+  for (size_t i = 0; i < stmts->v.arr.len; i++) {
+    int64_t sid = 0;
+    if (!parse_node_ref_id(p, stmts->v.arr.items[i], &sid)) continue;
+    if (sid == let_stmt_id) {
+      let_idx = i;
+      break;
+    }
+  }
+  if (let_idx == (size_t)-1) return false;
+
+  NodeRec* letn = get_node(p, let_stmt_id);
+  if (!letn || !letn->fields || !letn->tag || strcmp(letn->tag, "let") != 0) return false;
+  const char* let_name = json_get_string(json_obj_get(letn->fields, "name"));
+  if (!let_name || !*let_name) return false;
+
+  NodeRec* mn = get_node(p, match_node_id);
+  if (!mn || !mn->fields || !mn->tag || strcmp(mn->tag, "sem.match_sum") != 0) return false;
+  const int64_t result_ty = mn->type_ref;
+  if (result_ty == 0) return false;
+
+  int64_t sum_ty_id = 0;
+  if (!parse_type_ref_id(p, json_obj_get(mn->fields, "sum"), &sum_ty_id)) return false;
+  TypeRec* sty = get_type(p, sum_ty_id);
+  if (!sty || sty->kind != TYPE_SUM) return false;
+
+  JsonValue* args = json_obj_get(mn->fields, "args");
+  if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) return false;
+  int64_t scrut_id = 0;
+  if (!parse_node_ref_id(p, args->v.arr.items[0], &scrut_id)) return false;
+
+  JsonValue* cases = json_obj_get(mn->fields, "cases");
+  JsonValue* def = json_obj_get(mn->fields, "default");
+  if (!cases || cases->type != JSON_ARRAY || !def || def->type != JSON_OBJECT) return false;
+
+  const int64_t i32_ty = find_prim_type_id(p, "i32");
+  if (!i32_ty) return false;
+
+  int64_t next_id = 0;
+
+  // Reuse match node id as the continuation bparam (this strips sem.* from output).
+  mn->tag = "bparam";
+  mn->type_ref = result_ty;
+  JsonValue* bpf = jv_make_obj(&p->arena, 1);
+  if (!bpf) return false;
+  bpf->v.obj.items[0].key = "name";
+  bpf->v.obj.items[0].value = jv_make(&p->arena, JSON_STRING);
+  if (!bpf->v.obj.items[0].value) return false;
+  bpf->v.obj.items[0].value->v.s = arena_strdup(&p->arena, let_name);
+  if (!bpf->v.obj.items[0].value->v.s) return false;
+  mn->fields = bpf;
+
+  // Continuation block.
+  const int64_t cont_bid = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, cont_bid)) return false;
+
+  JsonValue* cont_params = jv_make_arr(&p->arena, 1);
+  if (!cont_params) return false;
+  cont_params->v.arr.items[0] = jv_make_ref(&p->arena, match_node_id);
+  if (!cont_params->v.arr.items[0]) return false;
+
+  const size_t suffix_n = (let_idx + 1 <= stmts->v.arr.len) ? (stmts->v.arr.len - (let_idx + 1)) : 0;
+  JsonValue* cont_stmts = jv_make_arr(&p->arena, suffix_n);
+  if (!cont_stmts) return false;
+  for (size_t i = 0; i < suffix_n; i++) cont_stmts->v.arr.items[i] = stmts->v.arr.items[(let_idx + 1) + i];
+
+  JsonValue* cont_fields = block_fields_with_stmts(p, NULL, cont_stmts, cont_params);
+  if (!cont_fields) return false;
+  make_node_stub(p, cont_bid, "block", 0, cont_fields);
+
+  // Allocate blocks: one per case, plus default.
+  const size_t case_n = cases->v.arr.len;
+  int64_t* case_bids = NULL;
+  if (case_n) {
+    case_bids = (int64_t*)arena_alloc(&p->arena, case_n * sizeof(*case_bids));
+    if (!case_bids) return false;
+    memset(case_bids, 0, case_n * sizeof(*case_bids));
+  }
+  for (size_t i = 0; i < case_n; i++) {
+    case_bids[i] = alloc_new_node_id(p, &next_id);
+    if (!ensure_node_slot(p, case_bids[i])) return false;
+  }
+  const int64_t def_bid = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, def_bid)) return false;
+
+  // Build per-case blocks.
+  for (size_t i = 0; i < case_n; i++) {
+    JsonValue* co = cases->v.arr.items[i];
+    if (!co || co->type != JSON_OBJECT) return false;
+    int64_t variant = 0;
+    if (!json_get_i64(json_obj_get(co, "variant"), &variant)) return false;
+    if (variant < 0) return false;
+    const size_t vix = (size_t)variant;
+    if (vix >= sty->variant_len) return false;
+    const int64_t pay_ty = sty->variants[vix].ty;
+
+    JsonValue* body_br = json_obj_get(co, "body");
+    if (!body_br || body_br->type != JSON_OBJECT) return false;
+    BranchOperand br = {0};
+    if (!parse_branch_operand(p, body_br, &br)) return false;
+
+    int64_t val_id = 0;
+    JsonValue* stm = NULL;
+    size_t stm_n = 0;
+
+    if (br.kind == BRANCH_VAL) {
+      val_id = br.node_id;
+      stm_n = 1;
+      stm = jv_make_arr(&p->arena, stm_n);
+      if (!stm) return false;
+    } else {
+      TypeRec* sig = NULL;
+      bool is_closure = false;
+      if (!get_callable_sig(p, br.node_id, &sig, &is_closure)) return false;
+      if (!sig) return false;
+      if (sig->param_len != 0 && sig->param_len != 1) return false;
+
+      int64_t payload_id = 0;
+      if (sig->param_len == 1) {
+        if (pay_ty == 0) return false;
+        payload_id = alloc_new_node_id(p, &next_id);
+        if (!ensure_node_slot(p, payload_id)) return false;
+        JsonValue* get_args = jv_make_arr(&p->arena, 1);
+        if (!get_args) return false;
+        get_args->v.arr.items[0] = jv_make_ref(&p->arena, scrut_id);
+        if (!get_args->v.arr.items[0]) return false;
+        JsonValue* flags = jv_make_obj(&p->arena, 1);
+        if (!flags) return false;
+        flags->v.obj.items[0].key = "variant";
+        JsonValue* vn = jv_make(&p->arena, JSON_NUMBER);
+        if (!vn) return false;
+        vn->v.i = (int64_t)vix;
+        flags->v.obj.items[0].value = vn;
+        JsonValue* ty_ref = jv_make_obj(&p->arena, 3);
+        if (!ty_ref) return false;
+        ty_ref->v.obj.items[0].key = "t";
+        ty_ref->v.obj.items[0].value = jv_make(&p->arena, JSON_STRING);
+        if (!ty_ref->v.obj.items[0].value) return false;
+        ty_ref->v.obj.items[0].value->v.s = "ref";
+        ty_ref->v.obj.items[1].key = "k";
+        ty_ref->v.obj.items[1].value = jv_make(&p->arena, JSON_STRING);
+        if (!ty_ref->v.obj.items[1].value) return false;
+        ty_ref->v.obj.items[1].value->v.s = "type";
+        ty_ref->v.obj.items[2].key = "id";
+        ty_ref->v.obj.items[2].value = jv_make(&p->arena, JSON_NUMBER);
+        if (!ty_ref->v.obj.items[2].value) return false;
+        ty_ref->v.obj.items[2].value->v.i = sum_ty_id;
+
+        JsonValue* get_fields = jv_make_obj(&p->arena, 3);
+        if (!get_fields) return false;
+        get_fields->v.obj.items[0].key = "ty";
+        get_fields->v.obj.items[0].value = ty_ref;
+        get_fields->v.obj.items[1].key = "args";
+        get_fields->v.obj.items[1].value = get_args;
+        get_fields->v.obj.items[2].key = "flags";
+        get_fields->v.obj.items[2].value = flags;
+        make_node_stub(p, payload_id, "adt.get", pay_ty, get_fields);
+      }
+
+      if (!make_call_thunk_with_payload(p, &next_id, br.node_id, payload_id, result_ty, &val_id)) return false;
+
+      stm_n = (sig->param_len == 1) ? 3 : 2;
+      stm = jv_make_arr(&p->arena, stm_n);
+      if (!stm) return false;
+      size_t wi = 0;
+      if (sig->param_len == 1) {
+        stm->v.arr.items[wi++] = jv_make_ref(&p->arena, payload_id);
+        if (!stm->v.arr.items[wi - 1]) return false;
+      }
+      stm->v.arr.items[wi++] = jv_make_ref(&p->arena, val_id);
+      if (!stm->v.arr.items[wi - 1]) return false;
+    }
+
+    const int64_t br_id = alloc_new_node_id(p, &next_id);
+    if (!ensure_node_slot(p, br_id)) return false;
+    JsonValue* br_args = jv_make_arr(&p->arena, 1);
+    if (!br_args) return false;
+    br_args->v.arr.items[0] = jv_make_ref(&p->arena, val_id);
+    if (!br_args->v.arr.items[0]) return false;
+    JsonValue* br_fields = jv_make_obj(&p->arena, 2);
+    if (!br_fields) return false;
+    br_fields->v.obj.items[0].key = "to";
+    br_fields->v.obj.items[0].value = jv_make_ref(&p->arena, cont_bid);
+    if (!br_fields->v.obj.items[0].value) return false;
+    br_fields->v.obj.items[1].key = "args";
+    br_fields->v.obj.items[1].value = br_args;
+    make_node_stub(p, br_id, "term.br", 0, br_fields);
+
+    stm->v.arr.items[stm->v.arr.len - 1] = jv_make_ref(&p->arena, br_id);
+    if (!stm->v.arr.items[stm->v.arr.len - 1]) return false;
+
+    JsonValue* block_fields = block_fields_with_stmts(p, NULL, stm, NULL);
+    if (!block_fields) return false;
+    make_node_stub(p, case_bids[i], "block", 0, block_fields);
+  }
+
+  // Default block.
+  BranchOperand dbr = {0};
+  if (!parse_branch_operand(p, def, &dbr)) return false;
+  int64_t def_val_id = 0;
+  JsonValue* def_stmts = NULL;
+  if (dbr.kind == BRANCH_VAL) {
+    def_val_id = dbr.node_id;
+    def_stmts = jv_make_arr(&p->arena, 1);
+    if (!def_stmts) return false;
+  } else {
+    if (!make_call_thunk(p, &next_id, dbr.node_id, result_ty, &def_val_id)) return false;
+    def_stmts = jv_make_arr(&p->arena, 2);
+    if (!def_stmts) return false;
+    def_stmts->v.arr.items[0] = jv_make_ref(&p->arena, def_val_id);
+    if (!def_stmts->v.arr.items[0]) return false;
+  }
+  const int64_t def_br_id = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, def_br_id)) return false;
+  JsonValue* def_br_args = jv_make_arr(&p->arena, 1);
+  if (!def_br_args) return false;
+  def_br_args->v.arr.items[0] = jv_make_ref(&p->arena, def_val_id);
+  if (!def_br_args->v.arr.items[0]) return false;
+  JsonValue* def_br_fields = jv_make_obj(&p->arena, 2);
+  if (!def_br_fields) return false;
+  def_br_fields->v.obj.items[0].key = "to";
+  def_br_fields->v.obj.items[0].value = jv_make_ref(&p->arena, cont_bid);
+  if (!def_br_fields->v.obj.items[0].value) return false;
+  def_br_fields->v.obj.items[1].key = "args";
+  def_br_fields->v.obj.items[1].value = def_br_args;
+  make_node_stub(p, def_br_id, "term.br", 0, def_br_fields);
+  def_stmts->v.arr.items[def_stmts->v.arr.len - 1] = jv_make_ref(&p->arena, def_br_id);
+  if (!def_stmts->v.arr.items[def_stmts->v.arr.len - 1]) return false;
+  JsonValue* def_block_fields = block_fields_with_stmts(p, NULL, def_stmts, NULL);
+  if (!def_block_fields) return false;
+  make_node_stub(p, def_bid, "block", 0, def_block_fields);
+
+  // Entry: prefix stmts, then term.switch over adt.tag(scrut).
+  JsonValue* new_entry_stmts = jv_make_arr(&p->arena, let_idx + 1);
+  if (!new_entry_stmts) return false;
+  for (size_t i = 0; i < let_idx; i++) new_entry_stmts->v.arr.items[i] = stmts->v.arr.items[i];
+
+  const int64_t tag_id = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, tag_id)) return false;
+  JsonValue* tag_args = jv_make_arr(&p->arena, 1);
+  if (!tag_args) return false;
+  tag_args->v.arr.items[0] = jv_make_ref(&p->arena, scrut_id);
+  if (!tag_args->v.arr.items[0]) return false;
+  JsonValue* tag_fields = jv_make_obj(&p->arena, 1);
+  if (!tag_fields) return false;
+  tag_fields->v.obj.items[0].key = "args";
+  tag_fields->v.obj.items[0].value = tag_args;
+  make_node_stub(p, tag_id, "adt.tag", i32_ty, tag_fields);
+
+  const int64_t sw_id = alloc_new_node_id(p, &next_id);
+  if (!ensure_node_slot(p, sw_id)) return false;
+  JsonValue* sw_cases = jv_make_arr(&p->arena, case_n);
+  if (!sw_cases) return false;
+
+  for (size_t i = 0; i < case_n; i++) {
+    JsonValue* co = cases->v.arr.items[i];
+    if (!co || co->type != JSON_OBJECT) return false;
+    int64_t variant = 0;
+    if (!json_get_i64(json_obj_get(co, "variant"), &variant)) return false;
+    if (variant < 0) return false;
+
+    const int64_t lit_id = alloc_new_node_id(p, &next_id);
+    if (!ensure_node_slot(p, lit_id)) return false;
+    JsonValue* lit_fields = jv_make_obj(&p->arena, 1);
+    if (!lit_fields) return false;
+    lit_fields->v.obj.items[0].key = "value";
+    JsonValue* ln = jv_make(&p->arena, JSON_NUMBER);
+    if (!ln) return false;
+    ln->v.i = variant;
+    lit_fields->v.obj.items[0].value = ln;
+    make_node_stub(p, lit_id, "const.i32", i32_ty, lit_fields);
+
+    JsonValue* entry = jv_make_obj(&p->arena, 2);
+    if (!entry) return false;
+    entry->v.obj.items[0].key = "lit";
+    entry->v.obj.items[0].value = jv_make_ref(&p->arena, lit_id);
+    if (!entry->v.obj.items[0].value) return false;
+    entry->v.obj.items[1].key = "to";
+    entry->v.obj.items[1].value = jv_make_ref(&p->arena, case_bids[i]);
+    if (!entry->v.obj.items[1].value) return false;
+    sw_cases->v.arr.items[i] = entry;
+  }
+
+  JsonValue* sw_def = jv_make_obj(&p->arena, 1);
+  if (!sw_def) return false;
+  sw_def->v.obj.items[0].key = "to";
+  sw_def->v.obj.items[0].value = jv_make_ref(&p->arena, def_bid);
+  if (!sw_def->v.obj.items[0].value) return false;
+
+  JsonValue* sw_fields = jv_make_obj(&p->arena, 3);
+  if (!sw_fields) return false;
+  sw_fields->v.obj.items[0].key = "scrut";
+  sw_fields->v.obj.items[0].value = jv_make_ref(&p->arena, tag_id);
+  if (!sw_fields->v.obj.items[0].value) return false;
+  sw_fields->v.obj.items[1].key = "cases";
+  sw_fields->v.obj.items[1].value = sw_cases;
+  sw_fields->v.obj.items[2].key = "default";
+  sw_fields->v.obj.items[2].value = sw_def;
+  make_node_stub(p, sw_id, "term.switch", 0, sw_fields);
+
+  new_entry_stmts->v.arr.items[let_idx] = jv_make_ref(&p->arena, sw_id);
+  if (!new_entry_stmts->v.arr.items[let_idx]) return false;
+
+  blk->fields = block_fields_with_stmts(p, blk->fields, new_entry_stmts, json_obj_get(blk->fields, "params"));
+  if (!blk->fields) return false;
+
+  // Append blocks (cont + cases + default).
+  const size_t add_n = 1 + case_n + 1;
+  int64_t* add = (int64_t*)arena_alloc(&p->arena, add_n * sizeof(*add));
+  if (!add) return false;
+  size_t wi = 0;
+  add[wi++] = cont_bid;
+  for (size_t i = 0; i < case_n; i++) add[wi++] = case_bids[i];
+  add[wi++] = def_bid;
+  if (!cfg_fn_append_blocks(p, fn, add, add_n)) return false;
+
+  return true;
+}
+
 static bool lower_sem_sc_to_bool_bin(SirProgram* p, NodeRec* n, bool is_and) {
   if (!p || !n || !n->fields) return false;
   JsonValue* args = json_obj_get(n->fields, "args");
@@ -1562,39 +2137,502 @@ static bool lower_sem_sc_to_bool_bin(SirProgram* p, NodeRec* n, bool is_and) {
   return true;
 }
 
-static bool lower_sem_nodes(SirProgram* p) {
-  if (!p) return false;
-  if (!p->feat_sem_v1) return true;
+typedef struct HoistLetList {
+  int64_t* ids;
+  size_t len;
+  size_t cap;
+} HoistLetList;
 
-  // 1) First, rewrite the pure/val cases in-place (these can appear anywhere).
-  for (size_t i = 0; i < p->nodes_cap; i++) {
-    NodeRec* n = p->nodes ? p->nodes[i] : NULL;
-    if (!n || !n->tag) continue;
-    if (strcmp(n->tag, "sem.if") == 0) {
-      // Try the simple val/val -> select rewrite. If it doesn't apply, leave it for CFG lowering.
-      (void)lower_sem_if_to_select(p, n);
-    } else if (strcmp(n->tag, "sem.and_sc") == 0) {
-      (void)lower_sem_sc_to_bool_bin(p, n, true);
-    } else if (strcmp(n->tag, "sem.or_sc") == 0) {
-      (void)lower_sem_sc_to_bool_bin(p, n, false);
+typedef struct SemHoistMapItem {
+  int64_t sem_id;
+  int64_t name_id;
+} SemHoistMapItem;
+
+typedef struct SemHoistMap {
+  SemHoistMapItem* items;
+  size_t len;
+  size_t cap;
+} SemHoistMap;
+
+static int64_t sem_hoist_map_find(const SemHoistMap* m, int64_t sem_id) {
+  if (!m || sem_id == 0) return 0;
+  for (size_t i = 0; i < m->len; i++) {
+    if (m->items[i].sem_id == sem_id) return m->items[i].name_id;
+  }
+  return 0;
+}
+
+static bool sem_hoist_map_put(SemHoistMap* m, int64_t sem_id, int64_t name_id) {
+  if (!m || sem_id == 0 || name_id == 0) return false;
+  if (m->len == m->cap) {
+    const size_t ncap = m->cap ? (m->cap * 2) : 8;
+    SemHoistMapItem* np = (SemHoistMapItem*)realloc(m->items, ncap * sizeof(*np));
+    if (!np) return false;
+    m->items = np;
+    m->cap = ncap;
+  }
+  m->items[m->len].sem_id = sem_id;
+  m->items[m->len].name_id = name_id;
+  m->len++;
+  return true;
+}
+
+static bool hoist_let_list_push(SirProgram* p, HoistLetList* l, int64_t id) {
+  if (!p || !l || id == 0) return false;
+  if (l->len == l->cap) {
+    const size_t ncap = l->cap ? (l->cap * 2) : 8;
+    int64_t* np = (int64_t*)realloc(l->ids, ncap * sizeof(*np));
+    if (!np) return false;
+    l->ids = np;
+    l->cap = ncap;
+  }
+  l->ids[l->len++] = id;
+  return true;
+}
+
+static bool hoist_sem_in_slot(SirProgram* p, JsonValue** slot, SemHoistMap* hoisted, HoistLetList* out_lets, int64_t* next_id,
+                              uint8_t* visiting, size_t visiting_cap) {
+  if (!p || !slot || !*slot) return true;
+
+  int64_t ref_id = 0;
+  if (parse_node_ref_id(p, *slot, &ref_id)) {
+    NodeRec* n = get_node(p, ref_id);
+    if (!n || !n->tag) return true;
+
+    if (strncmp(n->tag, "sem.", 4) == 0) {
+      const int64_t already = sem_hoist_map_find(hoisted, ref_id);
+      if (already) {
+        *slot = jv_make_ref(&p->arena, already);
+        if (!*slot) return false;
+        return true;
+      }
+
+      const char* sem_tag = n->tag;
+      if (n->type_ref == 0) {
+        bump_exit_code(p, SIRCC_EXIT_ERROR);
+        SIRCC_ERR_NODE(p, n, "sircc.lower_hl.sem.type_missing", "sircc: --lower-hl could not infer result type for %s", sem_tag);
+        return false;
+      }
+
+      char buf[64];
+      (void)snprintf(buf, sizeof(buf), "_sircc_sem_tmp_%lld", (long long)ref_id);
+      const char* tmp_name = arena_strdup(&p->arena, buf);
+      if (!tmp_name) return false;
+
+      const int64_t name_id = alloc_new_node_id(p, next_id);
+      if (!ensure_node_slot(p, name_id)) return false;
+      JsonValue* name_fields = jv_make_obj(&p->arena, 1);
+      if (!name_fields) return false;
+      name_fields->v.obj.items[0].key = "name";
+      name_fields->v.obj.items[0].value = jv_make_str(&p->arena, tmp_name);
+      if (!name_fields->v.obj.items[0].value) return false;
+      make_node_stub(p, name_id, "name", n->type_ref, name_fields);
+
+      const int64_t let_id = alloc_new_node_id(p, next_id);
+      if (!ensure_node_slot(p, let_id)) return false;
+      JsonValue* let_fields = jv_make_obj(&p->arena, 2);
+      if (!let_fields) return false;
+      let_fields->v.obj.items[0].key = "name";
+      let_fields->v.obj.items[0].value = jv_make_str(&p->arena, tmp_name);
+      if (!let_fields->v.obj.items[0].value) return false;
+      let_fields->v.obj.items[1].key = "value";
+      let_fields->v.obj.items[1].value = *slot; // keep the sem ref
+      make_node_stub(p, let_id, "let", 0, let_fields);
+
+      if (!hoist_let_list_push(p, out_lets, let_id)) return false;
+      if (!sem_hoist_map_put(hoisted, ref_id, name_id)) return false;
+
+      *slot = jv_make_ref(&p->arena, name_id);
+      if (!*slot) return false;
+      return true;
+    }
+
+    // Recurse into referenced node fields to find sem nested inside expressions.
+    if (ref_id > 0 && (size_t)ref_id < visiting_cap && visiting) {
+      if (visiting[ref_id]) return true;
+      visiting[ref_id] = 1;
+    }
+    if (n->fields && n->fields->type == JSON_OBJECT) {
+      for (size_t i = 0; i < n->fields->v.obj.len; i++) {
+        if (!hoist_sem_in_slot(p, &n->fields->v.obj.items[i].value, hoisted, out_lets, next_id, visiting, visiting_cap)) return false;
+      }
+    } else if (n->fields && n->fields->type == JSON_ARRAY) {
+      for (size_t i = 0; i < n->fields->v.arr.len; i++) {
+        if (!hoist_sem_in_slot(p, &n->fields->v.arr.items[i], hoisted, out_lets, next_id, visiting, visiting_cap)) return false;
+      }
+    }
+    return true;
+  }
+
+  if ((*slot)->type == JSON_ARRAY) {
+    for (size_t i = 0; i < (*slot)->v.arr.len; i++) {
+      if (!hoist_sem_in_slot(p, &(*slot)->v.arr.items[i], hoisted, out_lets, next_id, visiting, visiting_cap)) return false;
+    }
+  } else if ((*slot)->type == JSON_OBJECT) {
+    for (size_t i = 0; i < (*slot)->v.obj.len; i++) {
+      if (!hoist_sem_in_slot(p, &(*slot)->v.obj.items[i].value, hoisted, out_lets, next_id, visiting, visiting_cap)) return false;
+    }
+  }
+  return true;
+}
+
+typedef struct RefVec {
+  JsonValue** items;
+  size_t len;
+  size_t cap;
+} RefVec;
+
+static bool ref_vec_push(RefVec* v, JsonValue* it) {
+  if (!v || !it) return false;
+  if (v->len == v->cap) {
+    const size_t ncap = v->cap ? (v->cap * 2) : 16;
+    JsonValue** np = (JsonValue**)realloc(v->items, ncap * sizeof(*np));
+    if (!np) return false;
+    v->items = np;
+    v->cap = ncap;
+  }
+  v->items[v->len++] = it;
+  return true;
+}
+
+static bool hoist_sem_uses_in_body_fn(SirProgram* p, NodeRec* fn, bool* out_did) {
+  if (out_did) *out_did = false;
+  if (!p || !fn || !fn->fields || fn->fields->type != JSON_OBJECT) return false;
+  if (json_obj_get(fn->fields, "entry")) return true; // not body-form
+
+  int64_t body_id = 0;
+  if (!parse_node_ref_id(p, json_obj_get(fn->fields, "body"), &body_id)) return true;
+  NodeRec* body = get_node(p, body_id);
+  if (!body || !body->fields) return true;
+  JsonValue* stmts = json_obj_get(body->fields, "stmts");
+  if (!stmts || stmts->type != JSON_ARRAY || stmts->v.arr.len == 0) return true;
+
+  uint8_t* visiting = (uint8_t*)arena_alloc(&p->arena, p->nodes_cap ? p->nodes_cap : 1);
+  if (!visiting) return false;
+  memset(visiting, 0, p->nodes_cap ? p->nodes_cap : 1);
+
+  int64_t next_id = 0;
+  HoistLetList lets = {0};
+  SemHoistMap hoisted = {0};
+  bool did = false;
+
+  RefVec vec = {0};
+
+  for (size_t si = 0; si < stmts->v.arr.len; si++) {
+    int64_t sid = 0;
+    if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
+    NodeRec* s = get_node(p, sid);
+    if (!s || !s->tag || !s->fields) continue;
+
+    // Hoist sem.* used inside this statement, but preserve `let name = sem.*` as-is.
+    if (strcmp(s->tag, "let") == 0) {
+      // Recurse into the RHS node (and its children) without rewriting the let.value ref itself.
+      int64_t vid = 0;
+      if (parse_node_ref_id(p, json_obj_get(s->fields, "value"), &vid)) {
+        NodeRec* v = get_node(p, vid);
+        if (v && v->fields) {
+          if (!hoist_sem_in_slot(p, &v->fields, &hoisted, &lets, &next_id, visiting, p->nodes_cap)) return false;
+        }
+      }
+    } else if (s->fields->type == JSON_OBJECT) {
+      for (size_t i = 0; i < s->fields->v.obj.len; i++) {
+        if (!hoist_sem_in_slot(p, &s->fields->v.obj.items[i].value, &hoisted, &lets, &next_id, visiting, p->nodes_cap)) return false;
+      }
+    }
+
+    if (lets.len) {
+      for (size_t li = 0; li < lets.len; li++) {
+        if (!ref_vec_push(&vec, jv_make_ref(&p->arena, lets.ids[li]))) return false;
+      }
+      lets.len = 0;
+      did = true;
+    }
+
+    // Append original statement.
+    if (!ref_vec_push(&vec, stmts->v.arr.items[si])) return false;
+  }
+
+  if (did) {
+    JsonValue* new_stmts = jv_make_arr(&p->arena, vec.len);
+    if (!new_stmts) return false;
+    for (size_t i = 0; i < vec.len; i++) new_stmts->v.arr.items[i] = vec.items[i];
+    body->fields = block_fields_with_stmts(p, body->fields, new_stmts, json_obj_get(body->fields, "params"));
+    if (!body->fields) return false;
+    if (out_did) *out_did = true;
+  }
+
+  free(vec.items);
+  free(lets.ids);
+  free(hoisted.items);
+  return true;
+}
+
+static bool hoist_sem_uses_in_cfg_fn(SirProgram* p, NodeRec* fn, bool* out_did) {
+  if (out_did) *out_did = false;
+  if (!p || !fn || !fn->fields || fn->fields->type != JSON_OBJECT) return false;
+  if (!json_obj_get(fn->fields, "entry")) return true;
+
+  JsonValue* blocks = json_obj_get(fn->fields, "blocks");
+  if (!blocks || blocks->type != JSON_ARRAY) return true;
+
+  int64_t next_id = 0;
+
+  for (size_t bi = 0; bi < blocks->v.arr.len; bi++) {
+    bool blk_did = false;
+    int64_t bid = 0;
+    if (!parse_node_ref_id(p, blocks->v.arr.items[bi], &bid)) continue;
+    NodeRec* blk = get_node(p, bid);
+    if (!blk || !blk->fields || !blk->tag || strcmp(blk->tag, "block") != 0) continue;
+
+    JsonValue* stmts = json_obj_get(blk->fields, "stmts");
+    if (!stmts || stmts->type != JSON_ARRAY) continue;
+
+    uint8_t* visiting = (uint8_t*)arena_alloc(&p->arena, p->nodes_cap ? p->nodes_cap : 1);
+    if (!visiting) return false;
+    memset(visiting, 0, p->nodes_cap ? p->nodes_cap : 1);
+
+    HoistLetList lets = {0};
+    SemHoistMap hoisted = {0};
+    RefVec vec = {0};
+
+    for (size_t si = 0; si < stmts->v.arr.len; si++) {
+      int64_t sid = 0;
+      if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
+      NodeRec* s = get_node(p, sid);
+      if (!s || !s->tag || !s->fields) continue;
+
+      if (strcmp(s->tag, "let") == 0) {
+        int64_t vid = 0;
+        if (parse_node_ref_id(p, json_obj_get(s->fields, "value"), &vid)) {
+          NodeRec* v = get_node(p, vid);
+          if (v && v->fields) {
+            if (!hoist_sem_in_slot(p, &v->fields, &hoisted, &lets, &next_id, visiting, p->nodes_cap)) return false;
+          }
+        }
+      } else if (s->fields->type == JSON_OBJECT) {
+        for (size_t i = 0; i < s->fields->v.obj.len; i++) {
+          if (!hoist_sem_in_slot(p, &s->fields->v.obj.items[i].value, &hoisted, &lets, &next_id, visiting, p->nodes_cap)) return false;
+        }
+      }
+
+      if (lets.len) {
+        for (size_t li = 0; li < lets.len; li++) {
+          if (!ref_vec_push(&vec, jv_make_ref(&p->arena, lets.ids[li]))) return false;
+        }
+        lets.len = 0;
+        blk_did = true;
+      }
+
+      if (!ref_vec_push(&vec, stmts->v.arr.items[si])) return false;
+    }
+
+    // Hoist sem uses inside the terminator (append lets to stmts tail).
+    JsonValue* term_ref = json_obj_get(blk->fields, "term");
+    if (term_ref) {
+      int64_t tid = 0;
+      if (parse_node_ref_id(p, term_ref, &tid)) {
+        NodeRec* t = get_node(p, tid);
+        if (t && t->fields) {
+          if (!hoist_sem_in_slot(p, &t->fields, &hoisted, &lets, &next_id, visiting, p->nodes_cap)) return false;
+        }
+      }
+    }
+    if (lets.len) {
+      for (size_t li = 0; li < lets.len; li++) {
+        if (!ref_vec_push(&vec, jv_make_ref(&p->arena, lets.ids[li]))) return false;
+      }
+      lets.len = 0;
+      blk_did = true;
+    }
+
+    if (blk_did) {
+      JsonValue* new_stmts = jv_make_arr(&p->arena, vec.len);
+      if (!new_stmts) return false;
+      for (size_t i = 0; i < vec.len; i++) new_stmts->v.arr.items[i] = vec.items[i];
+      blk->fields = block_fields_with_stmts(p, blk->fields, new_stmts, json_obj_get(blk->fields, "params"));
+      if (!blk->fields) return false;
+      if (out_did) *out_did = true;
+    }
+
+    free(vec.items);
+    free(lets.ids);
+    free(hoisted.items);
+  }
+
+  return true;
+}
+
+static bool lower_one_sem_in_body_fn(SirProgram* p, NodeRec* fn, bool* out_did) {
+  if (out_did) *out_did = false;
+  if (!p || !fn || !fn->fields || fn->fields->type != JSON_OBJECT) return false;
+  if (json_obj_get(fn->fields, "entry")) return true; // not body-form
+
+  int64_t body_id = 0;
+  if (!parse_node_ref_id(p, json_obj_get(fn->fields, "body"), &body_id)) return true;
+  NodeRec* body = get_node(p, body_id);
+  if (!body || !body->fields) return true;
+  JsonValue* stmts = json_obj_get(body->fields, "stmts");
+  if (!stmts || stmts->type != JSON_ARRAY || stmts->v.arr.len == 0) return true;
+
+  // Let-position lowering: find `let name = sem.*(...)`.
+  for (size_t si = 0; si < stmts->v.arr.len; si++) {
+    int64_t sid = 0;
+    if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
+    NodeRec* s = get_node(p, sid);
+    if (!s || !s->tag || strcmp(s->tag, "let") != 0) continue;
+    if (!s->fields || s->fields->type != JSON_OBJECT) continue;
+    int64_t vid = 0;
+    if (!parse_node_ref_id(p, json_obj_get(s->fields, "value"), &vid)) continue;
+    NodeRec* v = get_node(p, vid);
+    if (!v || !v->tag) continue;
+    if (strncmp(v->tag, "sem.", 4) != 0) continue;
+
+    if (strcmp(v->tag, "sem.if") == 0) {
+      JsonValue* args = json_obj_get(v->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 3) continue;
+      int64_t cond_id = 0;
+      if (!parse_node_ref_id(p, args->v.arr.items[0], &cond_id)) continue;
+      BranchOperand bt = {0}, be = {0};
+      if (!parse_branch_operand(p, args->v.arr.items[1], &bt) || !parse_branch_operand(p, args->v.arr.items[2], &be)) continue;
+      if (!lower_sem_value_to_cfg_let(p, fn, vid, "sem.if", cond_id, &bt, &be, sid)) return false;
+      if (out_did) *out_did = true;
+      return true;
+    }
+
+    if (strcmp(v->tag, "sem.match_sum") == 0) {
+      if (!lower_sem_match_sum_to_cfg_let(p, fn, vid, sid)) return false;
+      if (out_did) *out_did = true;
+      return true;
+    }
+
+    if (strcmp(v->tag, "sem.and_sc") == 0 || strcmp(v->tag, "sem.or_sc") == 0) {
+      JsonValue* args = json_obj_get(v->fields, "args");
+      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) continue;
+      int64_t lhs_id = 0;
+      if (!parse_node_ref_id(p, args->v.arr.items[0], &lhs_id)) continue;
+      BranchOperand rhs = {0};
+      if (!parse_branch_operand(p, args->v.arr.items[1], &rhs)) continue;
+
+      NodeRec* lhsn = get_node(p, lhs_id);
+      const int64_t bool_ty = lhsn ? lhsn->type_ref : 0;
+      if (!bool_ty) continue;
+      int64_t next_id = 0;
+      const int64_t c_id = alloc_new_node_id(p, &next_id);
+      if (!ensure_node_slot(p, c_id)) return false;
+      JsonValue* c_fields = jv_make_obj(&p->arena, 1);
+      if (!c_fields) return false;
+      c_fields->v.obj.items[0].key = "value";
+      JsonValue* lit = jv_make(&p->arena, JSON_NUMBER);
+      if (!lit) return false;
+      const bool is_and = (strcmp(v->tag, "sem.and_sc") == 0);
+      lit->v.i = is_and ? 0 : 1;
+      c_fields->v.obj.items[0].value = lit;
+      make_node_stub(p, c_id, "const.bool", bool_ty, c_fields);
+
+      BranchOperand bt = {0}, be = {0};
+      if (is_and) {
+        bt = rhs;
+        be.kind = BRANCH_VAL;
+        be.node_id = c_id;
+      } else {
+        bt.kind = BRANCH_VAL;
+        bt.node_id = c_id;
+        be = rhs;
+      }
+      if (!lower_sem_value_to_cfg_let(p, fn, vid, v->tag, lhs_id, &bt, &be, sid)) return false;
+      if (out_did) *out_did = true;
+      return true;
     }
   }
 
-  // 2) Handle remaining sem.* by converting return-position and let-position uses into CFG.
-  for (size_t i = 0; i < p->nodes_cap; i++) {
-    NodeRec* fn = p->nodes ? p->nodes[i] : NULL;
-    if (!fn || !fn->tag || strcmp(fn->tag, "fn") != 0) continue;
-    if (!fn->fields || fn->fields->type != JSON_OBJECT) continue;
-    if (json_obj_get(fn->fields, "entry")) continue; // already CFG form; MVP: don't rewrite
+  // Return-position lowering for body-form.
+  JsonValue* last = stmts->v.arr.items[stmts->v.arr.len - 1];
+  int64_t term_id = 0;
+  if (!parse_node_ref_id(p, last, &term_id)) return true;
+  NodeRec* term = get_node(p, term_id);
+  if (!term || !term->fields) return true;
+  if (!(strcmp(term->tag, "term.ret") == 0 || strcmp(term->tag, "return") == 0)) return true;
+  int64_t rid = 0;
+  if (!parse_node_ref_id(p, json_obj_get(term->fields, "value"), &rid)) return true;
+  NodeRec* rnode = get_node(p, rid);
+  if (!rnode || !rnode->tag) return true;
 
-    int64_t body_id = 0;
-    if (!parse_node_ref_id(p, json_obj_get(fn->fields, "body"), &body_id)) continue;
-    NodeRec* body = get_node(p, body_id);
-    if (!body || !body->fields) continue;
-    JsonValue* stmts = json_obj_get(body->fields, "stmts");
+  if (strcmp(rnode->tag, "sem.if") == 0) {
+    JsonValue* args = json_obj_get(rnode->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 3) return true;
+    int64_t cond_id = 0;
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &cond_id)) return true;
+    BranchOperand bt = {0}, be = {0};
+    if (!parse_branch_operand(p, args->v.arr.items[1], &bt) || !parse_branch_operand(p, args->v.arr.items[2], &be)) return true;
+    if (!lower_sem_value_to_cfg_ret(p, fn, rid, "sem.if", cond_id, &bt, &be)) return false;
+    if (out_did) *out_did = true;
+    return true;
+  }
+
+  if (strcmp(rnode->tag, "sem.match_sum") == 0) {
+    if (!lower_sem_match_sum_to_cfg_ret(p, fn, rid)) return false;
+    if (out_did) *out_did = true;
+    return true;
+  }
+
+  if (strcmp(rnode->tag, "sem.and_sc") == 0 || strcmp(rnode->tag, "sem.or_sc") == 0) {
+    JsonValue* args = json_obj_get(rnode->fields, "args");
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) return true;
+    int64_t lhs_id = 0;
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &lhs_id)) return true;
+    BranchOperand rhs = {0};
+    if (!parse_branch_operand(p, args->v.arr.items[1], &rhs)) return true;
+
+    NodeRec* lhsn = get_node(p, lhs_id);
+    const int64_t bool_ty = lhsn ? lhsn->type_ref : 0;
+    if (!bool_ty) return true;
+    int64_t next_id = 0;
+    const int64_t c_id = alloc_new_node_id(p, &next_id);
+    if (!ensure_node_slot(p, c_id)) return false;
+    JsonValue* c_fields = jv_make_obj(&p->arena, 1);
+    if (!c_fields) return false;
+    c_fields->v.obj.items[0].key = "value";
+    JsonValue* lit = jv_make(&p->arena, JSON_NUMBER);
+    if (!lit) return false;
+    const bool is_and = (strcmp(rnode->tag, "sem.and_sc") == 0);
+    lit->v.i = is_and ? 0 : 1;
+    c_fields->v.obj.items[0].value = lit;
+    make_node_stub(p, c_id, "const.bool", bool_ty, c_fields);
+
+    BranchOperand bt = {0}, be = {0};
+    if (is_and) {
+      bt = rhs;
+      be.kind = BRANCH_VAL;
+      be.node_id = c_id;
+    } else {
+      bt.kind = BRANCH_VAL;
+      bt.node_id = c_id;
+      be = rhs;
+    }
+    if (!lower_sem_value_to_cfg_ret(p, fn, rid, rnode->tag, lhs_id, &bt, &be)) return false;
+    if (out_did) *out_did = true;
+    return true;
+  }
+
+  return true;
+}
+
+static bool lower_one_sem_in_cfg_fn(SirProgram* p, NodeRec* fn, bool* out_did) {
+  if (out_did) *out_did = false;
+  if (!p || !fn || !fn->fields || fn->fields->type != JSON_OBJECT) return false;
+  if (!json_obj_get(fn->fields, "entry")) return true;
+
+  JsonValue* blocks = json_obj_get(fn->fields, "blocks");
+  if (!blocks || blocks->type != JSON_ARRAY) return true;
+
+  for (size_t bi = 0; bi < blocks->v.arr.len; bi++) {
+    int64_t bid = 0;
+    if (!parse_node_ref_id(p, blocks->v.arr.items[bi], &bid)) continue;
+    NodeRec* blk = get_node(p, bid);
+    if (!blk || !blk->fields || !blk->tag || strcmp(blk->tag, "block") != 0) continue;
+    JsonValue* stmts = json_obj_get(blk->fields, "stmts");
     if (!stmts || stmts->type != JSON_ARRAY || stmts->v.arr.len == 0) continue;
 
-    // Let-position lowering: find `let name = sem.*(...)` and convert to CFG with a continuation block.
     for (size_t si = 0; si < stmts->v.arr.len; si++) {
       int64_t sid = 0;
       if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
@@ -1614,13 +2652,15 @@ static bool lower_sem_nodes(SirProgram* p) {
         if (!parse_node_ref_id(p, args->v.arr.items[0], &cond_id)) continue;
         BranchOperand bt = {0}, be = {0};
         if (!parse_branch_operand(p, args->v.arr.items[1], &bt) || !parse_branch_operand(p, args->v.arr.items[2], &be)) continue;
-        if (!lower_sem_value_to_cfg_let(p, fn, vid, "sem.if", cond_id, &bt, &be, sid)) return false;
-        goto next_fn;
+        if (!lower_sem_value_to_cfg_let_cfg(p, fn, bid, vid, "sem.if", cond_id, &bt, &be, sid)) return false;
+        if (out_did) *out_did = true;
+        return true;
       }
 
       if (strcmp(v->tag, "sem.match_sum") == 0) {
-        if (!lower_sem_match_sum_to_cfg_let(p, fn, vid, sid)) return false;
-        goto next_fn;
+        if (!lower_sem_match_sum_to_cfg_let_cfg(p, fn, bid, vid, sid)) return false;
+        if (out_did) *out_did = true;
+        return true;
       }
 
       if (strcmp(v->tag, "sem.and_sc") == 0 || strcmp(v->tag, "sem.or_sc") == 0) {
@@ -1657,82 +2697,54 @@ static bool lower_sem_nodes(SirProgram* p) {
           bt.node_id = c_id;
           be = rhs;
         }
-        if (!lower_sem_value_to_cfg_let(p, fn, vid, v->tag, lhs_id, &bt, &be, sid)) return false;
-        goto next_fn;
+        if (!lower_sem_value_to_cfg_let_cfg(p, fn, bid, vid, v->tag, lhs_id, &bt, &be, sid)) return false;
+        if (out_did) *out_did = true;
+        return true;
       }
     }
-    JsonValue* last = stmts->v.arr.items[stmts->v.arr.len - 1];
-    int64_t term_id = 0;
-    if (!parse_node_ref_id(p, last, &term_id)) continue;
-    NodeRec* term = get_node(p, term_id);
-    if (!term || !term->fields) continue;
-    if (!(strcmp(term->tag, "term.ret") == 0 || strcmp(term->tag, "return") == 0)) continue;
-    int64_t rid = 0;
-    if (!parse_node_ref_id(p, json_obj_get(term->fields, "value"), &rid)) continue;
-    NodeRec* rnode = get_node(p, rid);
-    if (!rnode || !rnode->tag) continue;
+  }
+  return true;
+}
 
-    if (strcmp(rnode->tag, "sem.if") == 0) {
-      JsonValue* args = json_obj_get(rnode->fields, "args");
-      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 3) continue;
-      int64_t cond_id = 0;
-      if (!parse_node_ref_id(p, args->v.arr.items[0], &cond_id)) continue;
-      BranchOperand bt = {0}, be = {0};
-      if (!parse_branch_operand(p, args->v.arr.items[1], &bt) || !parse_branch_operand(p, args->v.arr.items[2], &be)) continue;
-      if (!lower_sem_value_to_cfg_ret(p, fn, rid, "sem.if", cond_id, &bt, &be)) return false;
-      continue;
+static bool lower_sem_nodes(SirProgram* p) {
+  if (!p) return false;
+  if (!p->feat_sem_v1) return true;
+
+  // 1) First, rewrite the pure/val cases in-place (these can appear anywhere).
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* n = p->nodes ? p->nodes[i] : NULL;
+    if (!n || !n->tag) continue;
+    if (strcmp(n->tag, "sem.if") == 0) {
+      // Try the simple val/val -> select rewrite. If it doesn't apply, leave it for CFG lowering.
+      (void)lower_sem_if_to_select(p, n);
+    } else if (strcmp(n->tag, "sem.and_sc") == 0) {
+      (void)lower_sem_sc_to_bool_bin(p, n, true);
+    } else if (strcmp(n->tag, "sem.or_sc") == 0) {
+      (void)lower_sem_sc_to_bool_bin(p, n, false);
     }
+  }
 
-    if (strcmp(rnode->tag, "sem.match_sum") == 0) {
-      if (!lower_sem_match_sum_to_cfg_ret(p, fn, rid)) return false;
-      continue;
-    }
+  // 2) Handle remaining sem.* by iteratively lowering per-function until fixed point.
+  for (size_t i = 0; i < p->nodes_cap; i++) {
+    NodeRec* fn = p->nodes ? p->nodes[i] : NULL;
+    if (!fn || !fn->tag || strcmp(fn->tag, "fn") != 0) continue;
+    if (!fn->fields || fn->fields->type != JSON_OBJECT) continue;
 
-    if (strcmp(rnode->tag, "sem.and_sc") == 0 || strcmp(rnode->tag, "sem.or_sc") == 0) {
-      JsonValue* args = json_obj_get(rnode->fields, "args");
-      if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) continue;
-      int64_t lhs_id = 0;
-      if (!parse_node_ref_id(p, args->v.arr.items[0], &lhs_id)) continue;
-      BranchOperand rhs = {0};
-      if (!parse_branch_operand(p, args->v.arr.items[1], &rhs)) continue;
-
-      // Build the missing constant branch in the entry region.
-      NodeRec* lhsn = get_node(p, lhs_id);
-      const int64_t bool_ty = lhsn ? lhsn->type_ref : 0;
-      if (!bool_ty) continue;
-      int64_t next_id = 0;
-      const int64_t c_id = alloc_new_node_id(p, &next_id);
-      if (!ensure_node_slot(p, c_id)) return false;
-      JsonValue* c_fields = jv_make_obj(&p->arena, 1);
-      if (!c_fields) return false;
-      c_fields->v.obj.items[0].key = "value";
-      // const.bool uses numeric 0/1 payloads.
-      JsonValue* lit = jv_make(&p->arena, JSON_NUMBER);
-      if (!lit) return false;
-      const bool is_and = (strcmp(rnode->tag, "sem.and_sc") == 0);
-      lit->v.i = is_and ? 0 : 1;
-      c_fields->v.obj.items[0].value = lit;
-      make_node_stub(p, c_id, "const.bool", bool_ty, c_fields);
-
-      BranchOperand bt = {0}, be = {0};
-      const bool is_and_sc = (strcmp(rnode->tag, "sem.and_sc") == 0);
-      if (is_and_sc) {
-        // if lhs then rhs else false
-        bt = rhs;
-        be.kind = BRANCH_VAL;
-        be.node_id = c_id;
+    for (;;) {
+      bool did = false;
+      // First, hoist sem.* used in expression positions into lets so the lowering pass
+      // can treat them uniformly.
+      if (json_obj_get(fn->fields, "entry")) {
+        if (!hoist_sem_uses_in_cfg_fn(p, fn, &did)) return false;
+        if (did) continue;
+        if (!lower_one_sem_in_cfg_fn(p, fn, &did)) return false;
       } else {
-        // if lhs then true else rhs
-        bt.kind = BRANCH_VAL;
-        bt.node_id = c_id;
-        be = rhs;
+        if (!hoist_sem_uses_in_body_fn(p, fn, &did)) return false;
+        if (did) continue;
+        if (!lower_one_sem_in_body_fn(p, fn, &did)) return false;
       }
-      if (!lower_sem_value_to_cfg_ret(p, fn, rid, rnode->tag, lhs_id, &bt, &be)) return false;
-      continue;
+      if (!did) break;
     }
-
-  next_fn:
-    ;
   }
 
   // 3) If any sem.* remains, we don't know how to lower it yet.

@@ -430,6 +430,28 @@ add_test(
 )
 
 add_test(
+  NAME sircc_lower_hl_sem_if_nested_add_thunk_to_cfg
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_nested_in_add_thunk_trap_not_taken.sir.jsonl
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_if_nested_add_thunk.core.sir.jsonl
+    -DCONTAINS=\\\"tag\\\":\\\"term.cbr\\\"\\;\\\"tag\\\":\\\"bparam\\\"
+    -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.if\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
+)
+
+add_test(
+  NAME sircc_diff_hl_vs_core_sem_if_nested_add_thunk
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_nested_in_add_thunk_trap_not_taken.sir.jsonl
+    -DCORE_OUT=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_if_nested_add_thunk.core.sir.jsonl
+    -DEXE_HL=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_if_nested_add_thunk.hl.exe
+    -DEXE_CORE=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_if_nested_add_thunk.core.exe
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/diff_compile_run_hl_vs_core.cmake
+)
+
+add_test(
   NAME sircc_diff_hl_vs_core_sem_match_sum
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>
@@ -446,7 +468,7 @@ add_test(
     -DSIRCC=$<TARGET_FILE:sircc>
     -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_if_thunk_let_trap_not_taken.sir.jsonl
     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_if_thunk_let.core.sir.jsonl
-    -DCONTAINS=\\\"tag\\\":\\\"term.cbr\\\"\\;\\\"tag\\\":\\\"bparam\\\"\\;\\\"tag\\\":\\\"let\\\"
+    -DCONTAINS=\\\"tag\\\":\\\"term.cbr\\\"\\;\\\"tag\\\":\\\"bparam\\\"
     -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.if\\\"
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
 )
@@ -457,7 +479,7 @@ add_test(
     -DSIRCC=$<TARGET_FILE:sircc>
     -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_match_sum_let_option_i32.sir.jsonl
     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_match_sum_let.core.sir.jsonl
-    -DCONTAINS=\\\"tag\\\":\\\"term.switch\\\"\\;\\\"tag\\\":\\\"bparam\\\"\\;\\\"tag\\\":\\\"let\\\"
+    -DCONTAINS=\\\"tag\\\":\\\"term.switch\\\"\\;\\\"tag\\\":\\\"bparam\\\"
     -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.match_sum\\\"
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
 )
