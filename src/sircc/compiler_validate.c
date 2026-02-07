@@ -1220,6 +1220,63 @@ static bool validate_sem_node(SirProgram* p, NodeRec* n) {
     goto ok;
   }
 
+  if (strcmp(n->tag, "sem.scope") == 0) {
+    // Shape:
+    //   fields.defers: [ thunk(void), ... ]
+    //   fields.body: ref(block)  (a purely structural block to inline)
+    JsonValue* defers = json_obj_get(n->fields, "defers");
+    JsonValue* body = json_obj_get(n->fields, "body");
+    if (!defers || defers->type != JSON_ARRAY || !body) {
+      err_codef(p, "sircc.sem.scope.fields_bad", "sircc: sem.scope node %lld requires fields.defers (array) and fields.body (block ref)",
+                (long long)n->id);
+      goto bad;
+    }
+    int64_t body_id = 0;
+    if (!parse_node_ref_id(p, body, &body_id)) {
+      err_codef(p, "sircc.sem.scope.body.ref_bad", "sircc: sem.scope body must be a block ref");
+      goto bad;
+    }
+    NodeRec* bn = get_node(p, body_id);
+    if (!bn || !bn->tag || strcmp(bn->tag, "block") != 0) {
+      err_codef(p, "sircc.sem.scope.body.not_block", "sircc: sem.scope body must reference a block node");
+      goto bad;
+    }
+    if (!bn->fields || bn->fields->type != JSON_OBJECT) {
+      err_codef(p, "sircc.sem.scope.body.bad_fields", "sircc: sem.scope body block missing fields");
+      goto bad;
+    }
+    if (json_obj_get(bn->fields, "params")) {
+      err_codef(p, "sircc.sem.scope.body.params_unsupported", "sircc: sem.scope body block params are not supported");
+      goto bad;
+    }
+    JsonValue* bstmts = json_obj_get(bn->fields, "stmts");
+    if (!bstmts || bstmts->type != JSON_ARRAY) {
+      err_codef(p, "sircc.sem.scope.body.stmts_bad", "sircc: sem.scope body block must have stmts array");
+      goto bad;
+    }
+
+    const int64_t void_ty = find_prim_type_id(p, "void");
+    if (!void_ty) {
+      err_codef(p, "sircc.sem.scope.need_void", "sircc: sem.scope requires a void primitive type in the module");
+      goto bad;
+    }
+    for (size_t i = 0; i < defers->v.arr.len; i++) {
+      JsonValue* d = defers->v.arr.items[i];
+      if (!d || d->type != JSON_OBJECT) {
+        err_codef(p, "sircc.sem.scope.defer.bad", "sircc: sem.scope defers[%zu] must be thunk operand object", i);
+        goto bad;
+      }
+      const char* k = json_get_string(json_obj_get(d, "kind"));
+      if (!k || strcmp(k, "thunk") != 0) {
+        err_codef(p, "sircc.sem.scope.defer.kind_bad", "sircc: sem.scope defers[%zu] must be kind:'thunk'", i);
+        goto bad;
+      }
+      int64_t rty = 0;
+      if (!branch_result_type(p, d, void_ty, 0, false, &rty)) goto bad;
+    }
+    goto ok;
+  }
+
   goto ok;
 
 bad:

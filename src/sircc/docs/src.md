@@ -211,10 +211,11 @@ These feature gates are enabled via `meta.ext.features` (array of strings). If a
   - `sem.while` (loop intent; statement): `args:[condThunk, bodyThunk]`
   - `sem.break` / `sem.continue` (loop control; statement; no fields)
   - `sem.defer` (function-level defer; statement): `args:[thunk]` (MVP: body-form functions only)
+  - `sem.scope` (scoped cleanup; statement): `fields.defers[]` + `fields.body` (a structural `block` to inline)
 - Branch operands are objects:
   - `{ "kind":"val", "v": <node-ref> }`
   - `{ "kind":"thunk", "f": <fun/closure node-ref> }`
-    - thunks are 0-arg for `sem.if/cond/and_sc/or_sc/switch/while/defer`
+    - thunks are 0-arg for `sem.if/cond/and_sc/or_sc/switch/while/defer/scope`
     - for `sem.match_sum`, case bodies may be 0-arg thunks or 1-arg thunks (payload passed); the thunk parameter type must match the payload type
 
 ## ZASM backend (zir) notes

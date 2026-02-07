@@ -308,8 +308,9 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
 - [x] loops: `sem.while` + `sem.break` + `sem.continue` (continue targets the loop header; body thunk returns `i32 action`)
 - [x] expression-level conditional: `sem.cond` (ternary; lowered as `sem.if`)
 - [x] multi-way branch: `sem.switch` (integer switch intent; lowers to `term.switch`)
-- [x] function-level cleanup (MVP): `sem.defer` (injected before returns; currently supported for body-form functions)
-- [ ] scoped cleanup (future): `sem.scope` (requires precise lowering across all exits)
+- [x] function-level cleanup (MVP): `sem.defer` (injected before returns; supported in body-form + CFG-form functions)
+- [x] scoped cleanup (MVP): `sem.scope` (inline structural block + run defers on fallthrough/return)
+- [ ] scoped cleanup (future): `sem.scope` extended to cover Core CFG exits (`term.br`/`term.condbr`/`term.switch`) + unwind paths (when `eh:*` exists)
 
 ## Milestone 5 — Completeness: docs + conformance + examples
 

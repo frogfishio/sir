@@ -375,6 +375,24 @@ add_test(
 )
 
 add_test(
+  NAME sircc_diag_bad_sem_switch_scrut_type
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_sem_switch_scrut_type.sir.jsonl
+    "-DEXPECT=\\\"code\\\":\\\"sircc.sem.switch.scrut_type_bad\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
+  NAME sircc_diag_bad_sem_while_cond_not_thunk
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DARGS=--diagnostics\\;json\\;--verify-only\\;${CMAKE_CURRENT_LIST_DIR}/examples/bad_sem_while_cond_not_thunk.sir.jsonl
+    "-DEXPECT=\\\"code\\\":\\\"sircc.sem.while.cond.kind_bad\\\""
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/expect_stderr_contains.cmake
+)
+
+add_test(
   NAME sircc_verify_data_v1_ok
   COMMAND sircc --verify-only ${CMAKE_CURRENT_LIST_DIR}/examples/data_v1_ok.sir.jsonl
 )
@@ -590,6 +608,39 @@ add_test(
     -DEXE_HL=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_defer_increments_global_before_ret.hl.exe
     -DEXE_CORE=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_defer_increments_global_before_ret.core.exe
     -P ${CMAKE_CURRENT_LIST_DIR}/tests/diff_compile_run_hl_vs_core.cmake
+)
+
+add_test(
+  NAME sircc_lower_hl_sem_scope_defer_runs_on_fallthrough
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_scope_defer_runs_on_fallthrough.sir.jsonl
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_scope_defer_runs_on_fallthrough.core.sir.jsonl
+    -DCONTAINS=\\\"tag\\\":\\\"call.fun\\\"
+    -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.scope\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
+)
+
+add_test(
+  NAME sircc_diff_hl_vs_core_sem_scope_defer_runs_on_fallthrough
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_scope_defer_runs_on_fallthrough.sir.jsonl
+    -DCORE_OUT=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_scope_defer_runs_on_fallthrough.core.sir.jsonl
+    -DEXE_HL=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_scope_defer_runs_on_fallthrough.hl.exe
+    -DEXE_CORE=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_scope_defer_runs_on_fallthrough.core.exe
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/diff_compile_run_hl_vs_core.cmake
+)
+
+add_test(
+  NAME sircc_lower_hl_sem_defer_cfg_form_strips_sem
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_defer_cfg_form_strips_sem.sir.jsonl
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_defer_cfg_form_strips_sem.core.sir.jsonl
+    -DCONTAINS=\\\"tag\\\":\\\"call.fun\\\"
+    -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.defer\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
 )
 
 add_test(

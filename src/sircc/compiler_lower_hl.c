@@ -2583,6 +2583,437 @@ static bool lower_sem_defer_in_body_fn(SirProgram* p, NodeRec* fn, int64_t body_
   return true;
 }
 
+static bool lower_sem_defer_in_cfg_fn(SirProgram* p, NodeRec* fn, bool* out_did) {
+  if (out_did) *out_did = false;
+  if (!p || !fn || !fn->fields || fn->fields->type != JSON_OBJECT) return false;
+  if (!json_obj_get(fn->fields, "entry")) return true; // not cfg-form
+
+  JsonValue* blocks = json_obj_get(fn->fields, "blocks");
+  if (!blocks || blocks->type != JSON_ARRAY) return true;
+
+  int64_t* defers = NULL;
+  size_t defer_len = 0;
+  size_t defer_cap = 0;
+
+  bool found_any = false;
+
+  // Collect defers and remove sem.defer statements from blocks.
+  for (size_t bi = 0; bi < blocks->v.arr.len; bi++) {
+    int64_t bid = 0;
+    if (!parse_node_ref_id(p, blocks->v.arr.items[bi], &bid)) continue;
+    NodeRec* blk = get_node(p, bid);
+    if (!blk || !blk->fields || !blk->tag || strcmp(blk->tag, "block") != 0) continue;
+    JsonValue* stmts = json_obj_get(blk->fields, "stmts");
+    if (!stmts || stmts->type != JSON_ARRAY) continue;
+
+    JsonValue** kept = NULL;
+    size_t kept_len = 0;
+    size_t kept_cap = 0;
+    bool blk_changed = false;
+
+    for (size_t si = 0; si < stmts->v.arr.len; si++) {
+      int64_t sid = 0;
+      if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
+      NodeRec* s = get_node(p, sid);
+      if (s && s->tag && strcmp(s->tag, "sem.defer") == 0) {
+        if (!s->fields || s->fields->type != JSON_OBJECT) return false;
+        JsonValue* args = json_obj_get(s->fields, "args");
+        if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) return false;
+        BranchOperand br = {0};
+        if (!parse_branch_operand(p, args->v.arr.items[0], &br)) return false;
+        if (br.kind != BRANCH_THUNK) return false;
+
+        // Strip sem.* from output.
+        s->tag = "term.unreachable";
+        s->fields = NULL;
+        s->type_ref = 0;
+
+        if (defer_len == defer_cap) {
+          const size_t ncap = defer_cap ? (defer_cap * 2) : 8;
+          int64_t* np = (int64_t*)realloc(defers, ncap * sizeof(*np));
+          if (!np) return false;
+          defers = np;
+          defer_cap = ncap;
+        }
+        defers[defer_len++] = br.node_id;
+        blk_changed = true;
+        found_any = true;
+        continue; // remove from stmts
+      }
+
+      if (kept_len == kept_cap) {
+        const size_t ncap = kept_cap ? (kept_cap * 2) : 16;
+        JsonValue** np = (JsonValue**)realloc(kept, ncap * sizeof(*np));
+        if (!np) return false;
+        kept = np;
+        kept_cap = ncap;
+      }
+      kept[kept_len++] = stmts->v.arr.items[si];
+    }
+
+    if (blk_changed) {
+      if (kept_len == 0) {
+        free(kept);
+        free(defers);
+        SIRCC_ERR_NODE(p, blk, "sircc.lower_hl.sem.defer.empty_block", "sircc: sem.defer removal left an empty CFG block");
+        return false;
+      }
+      JsonValue* new_stmts = jv_make_arr(&p->arena, kept_len);
+      if (!new_stmts) {
+        free(kept);
+        free(defers);
+        return false;
+      }
+      for (size_t i = 0; i < kept_len; i++) new_stmts->v.arr.items[i] = kept[i];
+      blk->fields = block_fields_with_stmts(p, blk->fields, new_stmts, json_obj_get(blk->fields, "params"));
+      if (!blk->fields) {
+        free(kept);
+        free(defers);
+        return false;
+      }
+    }
+    free(kept);
+  }
+
+  if (!found_any) {
+    free(defers);
+    return true;
+  }
+
+  const int64_t void_ty = find_prim_type_id(p, "void");
+  if (!void_ty) {
+    free(defers);
+    return false;
+  }
+
+  // Inject deferred calls before each return terminator in each CFG block.
+  for (size_t bi = 0; bi < blocks->v.arr.len; bi++) {
+    int64_t bid = 0;
+    if (!parse_node_ref_id(p, blocks->v.arr.items[bi], &bid)) continue;
+    NodeRec* blk = get_node(p, bid);
+    if (!blk || !blk->fields || !blk->tag || strcmp(blk->tag, "block") != 0) continue;
+    JsonValue* stmts = json_obj_get(blk->fields, "stmts");
+    if (!stmts || stmts->type != JSON_ARRAY || stmts->v.arr.len == 0) continue;
+
+    // Only need to inject if the last stmt is a return terminator.
+    int64_t tid = 0;
+    if (!parse_node_ref_id(p, stmts->v.arr.items[stmts->v.arr.len - 1], &tid)) continue;
+    NodeRec* t = get_node(p, tid);
+    if (!t || !t->tag) continue;
+    const bool is_ret = (strcmp(t->tag, "term.ret") == 0 || strcmp(t->tag, "return") == 0);
+    if (!is_ret) continue;
+
+    JsonValue** out_items = NULL;
+    size_t out_len = 0;
+    size_t out_cap = 0;
+
+    // Prefix: all stmts except terminator.
+    for (size_t i = 0; i + 1 < stmts->v.arr.len; i++) {
+      if (out_len == out_cap) {
+        const size_t ncap = out_cap ? (out_cap * 2) : 16;
+        JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+        if (!np) {
+          free(out_items);
+          free(defers);
+          return false;
+        }
+        out_items = np;
+        out_cap = ncap;
+      }
+      out_items[out_len++] = stmts->v.arr.items[i];
+    }
+
+    // Defers in reverse order.
+    for (size_t di = defer_len; di-- > 0;) {
+      char suf[64];
+      snprintf(suf, sizeof(suf), "defer.%zu.call", (size_t)di);
+      int64_t call_id = 0;
+      if (!make_call_thunk(p, tid, suf, defers[di], void_ty, &call_id)) {
+        free(out_items);
+        free(defers);
+        return false;
+      }
+      JsonValue* cref = jv_make_ref(&p->arena, call_id);
+      if (!cref) {
+        free(out_items);
+        free(defers);
+        return false;
+      }
+      if (out_len == out_cap) {
+        const size_t ncap = out_cap ? (out_cap * 2) : 16;
+        JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+        if (!np) {
+          free(out_items);
+          free(defers);
+          return false;
+        }
+        out_items = np;
+        out_cap = ncap;
+      }
+      out_items[out_len++] = cref;
+    }
+
+    // Terminator.
+    if (out_len == out_cap) {
+      const size_t ncap = out_cap ? (out_cap * 2) : 16;
+      JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+      if (!np) {
+        free(out_items);
+        free(defers);
+        return false;
+      }
+      out_items = np;
+      out_cap = ncap;
+    }
+    out_items[out_len++] = stmts->v.arr.items[stmts->v.arr.len - 1];
+
+    JsonValue* new_stmts = jv_make_arr(&p->arena, out_len);
+    if (!new_stmts) {
+      free(out_items);
+      free(defers);
+      return false;
+    }
+    for (size_t i = 0; i < out_len; i++) new_stmts->v.arr.items[i] = out_items[i];
+    blk->fields = block_fields_with_stmts(p, blk->fields, new_stmts, json_obj_get(blk->fields, "params"));
+    free(out_items);
+    if (!blk->fields) {
+      free(defers);
+      return false;
+    }
+    found_any = true;
+  }
+
+  free(defers);
+  if (out_did) *out_did = found_any;
+  return true;
+}
+
+static bool sem_scope_collect_defers(SirProgram* p, NodeRec* scope, int64_t void_ty, int64_t** out_defers, size_t* out_len) {
+  if (out_defers) *out_defers = NULL;
+  if (out_len) *out_len = 0;
+  if (!p || !scope || !scope->fields || scope->fields->type != JSON_OBJECT) return false;
+  JsonValue* defers = json_obj_get(scope->fields, "defers");
+  if (!defers || defers->type != JSON_ARRAY) return false;
+  int64_t* ids = NULL;
+  size_t len = 0;
+  if (defers->v.arr.len) {
+    ids = (int64_t*)malloc(defers->v.arr.len * sizeof(*ids));
+    if (!ids) return false;
+  }
+  for (size_t i = 0; i < defers->v.arr.len; i++) {
+    JsonValue* d = defers->v.arr.items[i];
+    if (!d || d->type != JSON_OBJECT) {
+      free(ids);
+      return false;
+    }
+    const char* k = json_get_string(json_obj_get(d, "kind"));
+    if (!k || strcmp(k, "thunk") != 0) {
+      free(ids);
+      return false;
+    }
+    int64_t fid = 0;
+    if (!parse_node_ref_id(p, json_obj_get(d, "f"), &fid)) {
+      free(ids);
+      return false;
+    }
+    TypeRec* sig = NULL;
+    bool is_closure = false;
+    if (!get_callable_sig(p, fid, &sig, &is_closure) || !sig || sig->kind != TYPE_FN) {
+      free(ids);
+      return false;
+    }
+    if (sig->param_len != 0 || sig->ret != void_ty) {
+      free(ids);
+      return false;
+    }
+    ids[len++] = fid;
+  }
+  if (out_defers) *out_defers = ids;
+  if (out_len) *out_len = len;
+  return true;
+}
+
+static bool lower_sem_scope_in_stmts(SirProgram* p, JsonValue* stmts, size_t scope_idx, int64_t scope_stmt_id, bool* out_did) {
+  if (out_did) *out_did = false;
+  if (!p || !stmts || stmts->type != JSON_ARRAY) return false;
+
+  NodeRec* scope = get_node(p, scope_stmt_id);
+  if (!scope || !scope->tag || strcmp(scope->tag, "sem.scope") != 0) return false;
+  if (!scope->fields || scope->fields->type != JSON_OBJECT) return false;
+
+  const int64_t void_ty = find_prim_type_id(p, "void");
+  if (!void_ty) return false;
+
+  int64_t* defer_fns = NULL;
+  size_t defer_len = 0;
+  if (!sem_scope_collect_defers(p, scope, void_ty, &defer_fns, &defer_len)) return false;
+
+  int64_t body_id = 0;
+  if (!parse_node_ref_id(p, json_obj_get(scope->fields, "body"), &body_id)) {
+    free(defer_fns);
+    return false;
+  }
+  NodeRec* body = get_node(p, body_id);
+  if (!body || !body->fields || !body->tag || strcmp(body->tag, "block") != 0) {
+    free(defer_fns);
+    return false;
+  }
+  JsonValue* bstmts = json_obj_get(body->fields, "stmts");
+  if (!bstmts || bstmts->type != JSON_ARRAY) {
+    free(defer_fns);
+    return false;
+  }
+
+  // Build new statement list:
+  //   prefix (before sem.scope)
+  //   body stmts, but:
+  //     - inject defers before any return terminator (term.ret / return)
+  //   if body doesn't terminate, append defers at end (normal fallthrough)
+  //   suffix (after sem.scope)
+  JsonValue** out_items = NULL;
+  size_t out_len = 0;
+  size_t out_cap = 0;
+  bool body_terminated = false;
+
+  // prefix
+  for (size_t i = 0; i < scope_idx; i++) {
+    if (out_len == out_cap) {
+      const size_t ncap = out_cap ? (out_cap * 2) : 16;
+      JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+      if (!np) {
+        free(out_items);
+        free(defer_fns);
+        return false;
+      }
+      out_items = np;
+      out_cap = ncap;
+    }
+    out_items[out_len++] = stmts->v.arr.items[i];
+  }
+
+  // body
+  for (size_t i = 0; i < bstmts->v.arr.len; i++) {
+    int64_t sid = 0;
+    (void)parse_node_ref_id(p, bstmts->v.arr.items[i], &sid);
+    NodeRec* s = get_node(p, sid);
+    const bool is_ret = s && s->tag && (strcmp(s->tag, "term.ret") == 0 || strcmp(s->tag, "return") == 0);
+    if (is_ret) {
+      for (size_t di = defer_len; di-- > 0;) {
+        char suf[64];
+        snprintf(suf, sizeof(suf), "scope.defer.%zu.call", (size_t)di);
+        int64_t call_id = 0;
+        if (!make_call_thunk(p, scope_stmt_id, suf, defer_fns[di], void_ty, &call_id)) {
+          free(out_items);
+          free(defer_fns);
+          return false;
+        }
+        JsonValue* cref = jv_make_ref(&p->arena, call_id);
+        if (!cref) {
+          free(out_items);
+          free(defer_fns);
+          return false;
+        }
+        if (out_len == out_cap) {
+          const size_t ncap = out_cap ? (out_cap * 2) : 16;
+          JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+          if (!np) {
+            free(out_items);
+            free(defer_fns);
+            return false;
+          }
+          out_items = np;
+          out_cap = ncap;
+        }
+        out_items[out_len++] = cref;
+      }
+      body_terminated = true;
+    }
+
+    if (out_len == out_cap) {
+      const size_t ncap = out_cap ? (out_cap * 2) : 16;
+      JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+      if (!np) {
+        free(out_items);
+        free(defer_fns);
+        return false;
+      }
+      out_items = np;
+      out_cap = ncap;
+    }
+    out_items[out_len++] = bstmts->v.arr.items[i];
+    if (body_terminated) break;
+  }
+
+  // fallthrough cleanup
+  if (!body_terminated) {
+    for (size_t di = defer_len; di-- > 0;) {
+      char suf[64];
+      snprintf(suf, sizeof(suf), "scope.defer.%zu.call", (size_t)di);
+      int64_t call_id = 0;
+      if (!make_call_thunk(p, scope_stmt_id, suf, defer_fns[di], void_ty, &call_id)) {
+        free(out_items);
+        free(defer_fns);
+        return false;
+      }
+      JsonValue* cref = jv_make_ref(&p->arena, call_id);
+      if (!cref) {
+        free(out_items);
+        free(defer_fns);
+        return false;
+      }
+      if (out_len == out_cap) {
+        const size_t ncap = out_cap ? (out_cap * 2) : 16;
+        JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+        if (!np) {
+          free(out_items);
+          free(defer_fns);
+          return false;
+        }
+        out_items = np;
+        out_cap = ncap;
+      }
+      out_items[out_len++] = cref;
+    }
+  }
+
+  // suffix
+  for (size_t i = scope_idx + 1; i < stmts->v.arr.len; i++) {
+    if (out_len == out_cap) {
+      const size_t ncap = out_cap ? (out_cap * 2) : 16;
+      JsonValue** np = (JsonValue**)realloc(out_items, ncap * sizeof(*np));
+      if (!np) {
+        free(out_items);
+        free(defer_fns);
+        return false;
+      }
+      out_items = np;
+      out_cap = ncap;
+    }
+    out_items[out_len++] = stmts->v.arr.items[i];
+  }
+
+  JsonValue* new_stmts = jv_make_arr(&p->arena, out_len);
+  if (!new_stmts) {
+    free(out_items);
+    free(defer_fns);
+    return false;
+  }
+  for (size_t i = 0; i < out_len; i++) new_stmts->v.arr.items[i] = out_items[i];
+
+  // Strip sem.* from output.
+  scope->tag = "term.unreachable";
+  scope->fields = NULL;
+  scope->type_ref = 0;
+
+  stmts->v.arr.items = new_stmts->v.arr.items;
+  stmts->v.arr.len = new_stmts->v.arr.len;
+
+  free(out_items);
+  free(defer_fns);
+  if (out_did) *out_did = true;
+  return true;
+}
+
 static bool lower_sem_while_in_body_fn(SirProgram* p, NodeRec* fn, int64_t body_id, size_t while_stmt_idx, int64_t while_node_id) {
   if (!p || !fn || !fn->fields) return false;
   NodeRec* body = get_node(p, body_id);
@@ -3727,6 +4158,14 @@ static bool lower_one_sem_in_body_fn(SirProgram* p, NodeRec* fn, bool* out_did) 
     if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
     NodeRec* s = get_node(p, sid);
     if (!s || !s->tag) continue;
+    if (strcmp(s->tag, "sem.scope") == 0) {
+      bool did = false;
+      if (!lower_sem_scope_in_stmts(p, stmts, si, sid, &did)) return false;
+      if (did) {
+        if (out_did) *out_did = true;
+        return true;
+      }
+    }
     if (strcmp(s->tag, "sem.defer") == 0) {
       bool did = false;
       if (!lower_sem_defer_in_body_fn(p, fn, body_id, &did)) return false;
@@ -3925,10 +4364,21 @@ static bool lower_one_sem_in_cfg_fn(SirProgram* p, NodeRec* fn, bool* out_did) {
       if (!parse_node_ref_id(p, stmts->v.arr.items[si], &sid)) continue;
       NodeRec* s = get_node(p, sid);
       if (!s || !s->tag) continue;
+      if (strcmp(s->tag, "sem.scope") == 0) {
+        bool did = false;
+        if (!lower_sem_scope_in_stmts(p, stmts, si, sid, &did)) return false;
+        if (did) {
+          if (out_did) *out_did = true;
+          return true;
+        }
+      }
       if (strcmp(s->tag, "sem.defer") == 0) {
-        SIRCC_ERR_NODE(p, s, "sircc.lower_hl.sem.defer.cfg_unsupported",
-                       "sircc: --lower-hl does not support sem.defer inside CFG-form functions yet (emit sem.defer only in body-form for now)");
-        return false;
+        bool did = false;
+        if (!lower_sem_defer_in_cfg_fn(p, fn, &did)) return false;
+        if (did) {
+          if (out_did) *out_did = true;
+          return true;
+        }
       }
       if (strcmp(s->tag, "sem.while") == 0) {
         if (!lower_sem_while_in_cfg_fn(p, fn, bid, si, sid)) return false;

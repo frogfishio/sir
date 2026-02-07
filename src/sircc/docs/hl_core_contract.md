@@ -262,7 +262,21 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
   - `sem.break` is a statement intent lowered to `term.ret i32 1` (used inside `bodyThunk`).
 - `sem.defer` (MVP):
   - function-level “defer” intent (no scopes yet): the lowerer injects deferred calls before each `return`/`term.ret`.
-  - current limitation: only supported in **body-form** functions (no CFG-form yet); `sem.scope` is the future design point for full structured cleanup.
+  - supported in **body-form** and **CFG-form** functions.
+  - limitation: it is function-level only; use `sem.scope` for scoped defers.
+- `sem.scope`:
+  - statement intent for scoped cleanup: it inlines `fields.body` (a structural `block`) and runs `fields.defers[]` on:
+    - fallthrough at the end of the body
+    - any `return`/`term.ret` executed from within the body
+  - current limitation: scope bodies are linear (no Core CFG terminators like `term.br`/`term.condbr`/`term.switch`); use `sem.while` and thunks for structured control.
+
+#### Integrator checklist: support table
+
+Use `sircc --print-support` to get an authoritative “what’s implemented” view (and what spec mnemonics are still missing), without running tests.
+
+- Text: `sircc --print-support`
+- JSON: `sircc --print-support --format json`
+- Full lists: add `--full`
 
 - [ ] Strict integration modes:
   - [x] `--verify-strict` exists

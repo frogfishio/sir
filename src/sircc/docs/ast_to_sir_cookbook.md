@@ -134,11 +134,12 @@ If you have AST-level intent and want to keep the producer dumb, emit:
 
 Use `term.switch` with const integer literals and explicit join blocks (`bparam`) for φ-like values.
 
-### Switch / loops / defer (recommended: `sem:v1`)
+### Switch / loops / defer / scope (recommended: `sem:v1`)
 
 - `sem.switch` lets you keep AST emitters dumb (sircc lowers to `term.switch` + join blocks).
 - `sem.while` + `sem.break` + `sem.continue` let you avoid building CFG for loops in the frontend.
-- `sem.defer` is supported as a **function-level** cleanup intent (MVP; body-form functions only).
+- `sem.defer` is supported as a **function-level** cleanup intent (MVP; body-form + CFG-form functions).
+- `sem.scope` is supported as a **scoped** cleanup intent using an inline structural block + `defers[]`.
 
 If you *want* to hand-lower to Core, these remain the primitives:
 
