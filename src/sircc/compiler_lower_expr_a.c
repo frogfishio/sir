@@ -87,7 +87,9 @@ static LLVMValueRef call_fun_value(FunctionCtx* f, int64_t callee_id, LLVMValueR
     free(params);
   }
 
-  LLVMValueRef out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
+  LLVMTypeRef ret_ty = LLVMGetReturnType(callee_fty);
+  const char* call_name = (ret_ty && LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind) ? "" : "call";
+  LLVMValueRef out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, call_name);
   if (out && want_ret && LLVMTypeOf(out) != want_ret) {
     char* w = LLVMPrintTypeToString(want_ret);
     char* g = LLVMPrintTypeToString(LLVMTypeOf(out));
@@ -167,7 +169,9 @@ static LLVMValueRef call_closure_value(FunctionCtx* f, int64_t callee_id, LLVMVa
     free(params);
   }
 
-  LLVMValueRef out = LLVMBuildCall2(f->builder, code_sig, code, argv, (unsigned)argc, "call");
+  LLVMTypeRef ret_ty = LLVMGetReturnType(code_sig);
+  const char* call_name = (ret_ty && LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind) ? "" : "call";
+  LLVMValueRef out = LLVMBuildCall2(f->builder, code_sig, code, argv, (unsigned)argc, call_name);
   free(argv);
   if (out && want_ret && LLVMTypeOf(out) != want_ret) {
     char* w = LLVMPrintTypeToString(want_ret);
@@ -1106,7 +1110,9 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       free(params);
     }
 
-    out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
+    LLVMTypeRef ret_ty = LLVMGetReturnType(callee_fty);
+    const char* call_name = (ret_ty && LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind) ? "" : "call";
+    out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, call_name);
     free(argv);
     if (out && n->type_ref) {
       LLVMTypeRef want = lower_type(f->p, f->ctx, n->type_ref);
@@ -1229,7 +1235,9 @@ LLVMValueRef lower_expr(FunctionCtx* f, int64_t node_id) {
       free(params);
     }
 
-    out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, "call");
+    LLVMTypeRef ret_ty = LLVMGetReturnType(callee_fty);
+    const char* call_name = (ret_ty && LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind) ? "" : "call";
+    out = LLVMBuildCall2(f->builder, callee_fty, callee, argv, (unsigned)argc, call_name);
     free(argv);
 
     if (out && n->type_ref) {

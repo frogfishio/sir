@@ -527,6 +527,72 @@ add_test(
 )
 
 add_test(
+  NAME sircc_lower_hl_sem_switch_thunk_to_cfg
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_switch_thunk_trap_not_taken.sir.jsonl
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_switch_thunk.core.sir.jsonl
+    -DCONTAINS=\\\"tag\\\":\\\"term.switch\\\"\\;\\\"tag\\\":\\\"bparam\\\"\\;\\\"tag\\\":\\\"call.fun\\\"
+    -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.switch\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
+)
+
+add_test(
+  NAME sircc_diff_hl_vs_core_sem_switch_thunk
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_switch_thunk_trap_not_taken.sir.jsonl
+    -DCORE_OUT=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_switch_thunk.core.sir.jsonl
+    -DEXE_HL=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_switch_thunk.hl.exe
+    -DEXE_CORE=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_switch_thunk.core.exe
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/diff_compile_run_hl_vs_core.cmake
+)
+
+add_test(
+  NAME sircc_lower_hl_sem_while_global_counter_to_cfg
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_while_global_counter.sir.jsonl
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_while_global_counter.core.sir.jsonl
+    -DCONTAINS=\\\"tag\\\":\\\"term.br\\\"\\;\\\"tag\\\":\\\"term.cbr\\\"\\;\\\"tag\\\":\\\"i32.cmp.eq\\\"\\;\\\"tag\\\":\\\"call.fun\\\"
+    -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.while\\\"\\;\\\"tag\\\":\\\"sem.continue\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
+)
+
+add_test(
+  NAME sircc_diff_hl_vs_core_sem_while_global_counter
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_while_global_counter.sir.jsonl
+    -DCORE_OUT=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_while_global_counter.core.sir.jsonl
+    -DEXE_HL=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_while_global_counter.hl.exe
+    -DEXE_CORE=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_while_global_counter.core.exe
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/diff_compile_run_hl_vs_core.cmake
+)
+
+add_test(
+  NAME sircc_lower_hl_sem_defer_increments_global_before_ret
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_defer_increments_global_before_ret.sir.jsonl
+    -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sem_defer_increments_global_before_ret.core.sir.jsonl
+    -DCONTAINS=\\\"tag\\\":\\\"call.fun\\\"
+    -DNOT_CONTAINS=\\\"tag\\\":\\\"sem.defer\\\"
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/lower_hl_emit_core_and_verify.cmake
+)
+
+add_test(
+  NAME sircc_diff_hl_vs_core_sem_defer_increments_global_before_ret
+  COMMAND ${CMAKE_COMMAND}
+    -DSIRCC=$<TARGET_FILE:sircc>
+    -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/sem_defer_increments_global_before_ret.sir.jsonl
+    -DCORE_OUT=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_defer_increments_global_before_ret.core.sir.jsonl
+    -DEXE_HL=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_defer_increments_global_before_ret.hl.exe
+    -DEXE_CORE=${CMAKE_CURRENT_BINARY_DIR}/diff_sem_defer_increments_global_before_ret.core.exe
+    -P ${CMAKE_CURRENT_LIST_DIR}/tests/diff_compile_run_hl_vs_core.cmake
+)
+
+add_test(
   NAME sircc_cinterop_export_add2
   COMMAND ${CMAKE_COMMAND}
     -DSIRCC=$<TARGET_FILE:sircc>

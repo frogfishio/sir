@@ -240,29 +240,29 @@ This checklist is the “hard contract” work needed to switch from MIR to **AS
 
 - [ ] Semantic “intent” constructs so AST emitters stay dumb:
   - [x] `sem:v1` deterministic desugaring (`sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.match_sum`)
-  - [ ] Fill the remaining “structured control” intent gaps (high ROI; prevents every frontend re-inventing CFG plumbing):
-    - [ ] loops: `sem.while` or `sem.loop` + `sem.break` + `sem.continue`
-      - [ ] Specify continue target (header vs latch) and any value-flow rules (if supported)
-    - [ ] expression-level conditional: `sem.cond(cond, then, else)` (ternary; guaranteed join)
-    - [ ] integer multi-way branch: `sem.switch(scrutinee, cases, default)` (intent; lowers to `term.switch`)
-    - [ ] scoped cleanup: `sem.defer` / `sem.scope(defers=[...])` (requires a precise lowering contract across all exits)
+  - [x] Structured control intents (prevents every frontend re-inventing CFG plumbing):
+    - [x] loops: `sem.while` + `sem.break` + `sem.continue`
+    - [x] expression-level conditional: `sem.cond(cond, then, else)` (ternary; fixed shape alias of `sem.if`)
+    - [x] integer multi-way branch: `sem.switch(scrutinee, cases, default)` (intent; lowers to `term.switch`)
+    - [x] function-level cleanup (MVP): `sem.defer`
+    - [ ] scoped cleanup (future): `sem.scope(defers=[...])` (requires a precise lowering contract across all exits)
 
-#### Proposed lowering contracts (draft, to be frozen before implementation)
+#### Lowering contracts (implemented)
 
-These are the “shape” rules we should commit to so producers can rely on them.
-
-- `sem.cond`: pure expression intent; equivalent to `sem.if` returning a value, but with a fixed ternary shape.
-- `sem.switch`: intent-level `switch`/`case` that lowers to Core `term.switch` + join block parameters (similar to `sem.match_sum` lowering).
+- `sem.cond`: fixed ternary shape; lowered as `sem.if` and then deterministically desugared.
+- `sem.switch`: value-level integer switch intent; lowered to Core `term.switch` with a join block param (like `sem.match_sum`).
 - loops:
-  - `sem.while(cond, body)` lowers to Core blocks:
-    - `header`: evaluates `cond` and `term.condbr` to `body` or `exit`
-    - `body`: executes body statements and `term.br` to `header` by default
-    - `exit`: loop exit
-  - `sem.continue` targets `header` (re-evaluates condition), not “latch” (unless a separate `sem.for`/`sem.loop` contract is introduced).
-  - `sem.break` targets `exit`.
-- `sem.defer`:
-  - requires a deterministic rewrite rule so defers run on: normal fallthrough/return, `break`, `continue`, and (later) unwind paths if `eh:*` exists.
-  - we should likely stage this after loops/switch/cond, because it needs the strongest invariants and best diagnostics.
+  - `sem.while(args:[condThunk, bodyThunk])` is a **statement intent** lowered to Core blocks:
+    - `header`: evaluates `condThunk()` and `term.condbr` to `loop` or `exit`
+    - `loop`: evaluates `bodyThunk()` (returns `i32 action`) and branches:
+      - `action == 0` → continue (back to `header`)
+      - `action != 0` → break (to `exit`)
+    - `exit`: continuation after the loop (suffix statements moved here by the lowerer)
+  - `sem.continue` is a statement intent lowered to `term.ret i32 0` (used inside `bodyThunk`).
+  - `sem.break` is a statement intent lowered to `term.ret i32 1` (used inside `bodyThunk`).
+- `sem.defer` (MVP):
+  - function-level “defer” intent (no scopes yet): the lowerer injects deferred calls before each `return`/`term.ret`.
+  - current limitation: only supported in **body-form** functions (no CFG-form yet); `sem.scope` is the future design point for full structured cleanup.
 
 - [ ] Strict integration modes:
   - [x] `--verify-strict` exists

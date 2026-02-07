@@ -17,6 +17,16 @@ static bool is_prim_named(SirProgram* p, int64_t type_id, const char* prim) {
   return t && t->kind == TYPE_PRIM && t->prim && strcmp(t->prim, prim) == 0;
 }
 
+static int64_t find_prim_type_id(SirProgram* p, const char* prim) {
+  if (!p || !prim) return 0;
+  for (size_t i = 0; i < p->types_cap; i++) {
+    TypeRec* t = p->types ? p->types[i] : NULL;
+    if (!t || t->kind != TYPE_PRIM || !t->prim) continue;
+    if (strcmp(t->prim, prim) == 0) return (int64_t)i;
+  }
+  return 0;
+}
+
 static const char* ptr_sym_name_from_node(SirProgram* p, NodeRec* n) {
   if (!p || !n) return NULL;
   if (!n->fields || n->fields->type != JSON_OBJECT) return NULL;
@@ -931,6 +941,14 @@ static bool validate_sem_node(SirProgram* p, NodeRec* n) {
 
   SirDiagSaved saved = sir_diag_push_node(p, n);
 
+  // sem.break/sem.continue are statement/terminator intents and accept no fields.
+  if (strcmp(n->tag, "sem.break") == 0 || strcmp(n->tag, "sem.continue") == 0) {
+    if (!n->fields) goto ok;
+    if (n->fields->type == JSON_OBJECT && n->fields->v.obj.len == 0) goto ok;
+    err_codef(p, "sircc.sem.loop_ctl.fields.unexpected", "sircc: %s does not accept fields", n->tag);
+    goto bad;
+  }
+
   if (!n->fields) {
     err_codef(p, "sircc.sem.missing_fields", "sircc: %s node %lld missing fields", n->tag, (long long)n->id);
     goto bad;
@@ -938,19 +956,22 @@ static bool validate_sem_node(SirProgram* p, NodeRec* n) {
 
   JsonValue* args = json_obj_get(n->fields, "args");
 
-  if (strcmp(n->tag, "sem.if") == 0) {
+  if (strcmp(n->tag, "sem.if") == 0 || strcmp(n->tag, "sem.cond") == 0) {
     if (!args || args->type != JSON_ARRAY || args->v.arr.len != 3) {
-      err_codef(p, "sircc.sem.if.args_bad", "sircc: sem.if node %lld requires args:[cond, thenBranch, elseBranch]", (long long)n->id);
+      const char* code = (strcmp(n->tag, "sem.cond") == 0) ? "sircc.sem.cond.args_bad" : "sircc.sem.if.args_bad";
+      err_codef(p, code, "sircc: %s node %lld requires args:[cond, thenBranch, elseBranch]", n->tag, (long long)n->id);
       goto bad;
     }
     int64_t cond_id = 0;
     if (!parse_node_ref_id(p, args->v.arr.items[0], &cond_id)) {
-      err_codef(p, "sircc.sem.if.cond_ref_bad", "sircc: sem.if node %lld cond must be node ref", (long long)n->id);
+      const char* code = (strcmp(n->tag, "sem.cond") == 0) ? "sircc.sem.cond.cond_ref_bad" : "sircc.sem.if.cond_ref_bad";
+      err_codef(p, code, "sircc: %s node %lld cond must be node ref", n->tag, (long long)n->id);
       goto bad;
     }
     NodeRec* cond = get_node(p, cond_id);
     if (!cond || cond->type_ref == 0 || !(is_prim_named(p, cond->type_ref, "bool") || is_prim_named(p, cond->type_ref, "i1"))) {
-      err_codef(p, "sircc.sem.if.cond_type_bad", "sircc: sem.if node %lld cond must be bool", (long long)n->id);
+      const char* code = (strcmp(n->tag, "sem.cond") == 0) ? "sircc.sem.cond.cond_type_bad" : "sircc.sem.if.cond_type_bad";
+      err_codef(p, code, "sircc: %s node %lld cond must be bool", n->tag, (long long)n->id);
       goto bad;
     }
     int64_t want = n->type_ref;
@@ -968,7 +989,8 @@ static bool validate_sem_node(SirProgram* p, NodeRec* n) {
       goto bad;
     }
     if (n->type_ref && want && n->type_ref != want) {
-      err_codef(p, "sircc.sem.if.ret_type_bad", "sircc: sem.if type_ref mismatch");
+      const char* code = (strcmp(n->tag, "sem.cond") == 0) ? "sircc.sem.cond.ret_type_bad" : "sircc.sem.if.ret_type_bad";
+      err_codef(p, code, "sircc: %s type_ref mismatch", n->tag);
       goto bad;
     }
     goto ok;
@@ -1063,6 +1085,138 @@ static bool validate_sem_node(SirProgram* p, NodeRec* n) {
       err_codef(p, "sircc.sem.match_sum.ret_type_bad", "sircc: sem.match_sum type_ref mismatch");
       goto bad;
     }
+    goto ok;
+  }
+
+  if (strcmp(n->tag, "sem.switch") == 0) {
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+      err_codef(p, "sircc.sem.switch.args_bad", "sircc: sem.switch node %lld requires args:[scrut]", (long long)n->id);
+      goto bad;
+    }
+    int64_t scrut_id = 0;
+    if (!parse_node_ref_id(p, args->v.arr.items[0], &scrut_id)) {
+      err_codef(p, "sircc.sem.switch.scrut_ref_bad", "sircc: sem.switch scrut must be node ref");
+      goto bad;
+    }
+    NodeRec* scrut = get_node(p, scrut_id);
+    if (!scrut || scrut->type_ref == 0) {
+      err_codef(p, "sircc.sem.switch.scrut_type_missing", "sircc: sem.switch scrut missing type_ref");
+      goto bad;
+    }
+    if (!is_prim_named(p, scrut->type_ref, "i32") && !is_prim_named(p, scrut->type_ref, "i64")) {
+      err_codef(p, "sircc.sem.switch.scrut_type_bad", "sircc: sem.switch scrut must be i32 or i64");
+      goto bad;
+    }
+
+    JsonValue* cases = json_obj_get(n->fields, "cases");
+    JsonValue* def = json_obj_get(n->fields, "default");
+    if (!cases || cases->type != JSON_ARRAY || !def || def->type != JSON_OBJECT) {
+      err_codef(p, "sircc.sem.switch.cases_bad", "sircc: sem.switch node %lld requires fields.cases array and fields.default branch",
+                (long long)n->id);
+      goto bad;
+    }
+
+    int64_t want = n->type_ref;
+    int64_t tmp = 0;
+    if (!branch_result_type(p, def, want, 0, false, &tmp)) goto bad;
+    if (want == 0) want = tmp;
+
+    for (size_t i = 0; i < cases->v.arr.len; i++) {
+      JsonValue* co = cases->v.arr.items[i];
+      if (!co || co->type != JSON_OBJECT) {
+        err_codef(p, "sircc.sem.switch.case_obj_bad", "sircc: sem.switch cases[%zu] must be object", i);
+        goto bad;
+      }
+      int64_t lit_id = 0;
+      if (!parse_node_ref_id(p, json_obj_get(co, "lit"), &lit_id)) {
+        err_codef(p, "sircc.sem.switch.case_lit.ref_bad", "sircc: sem.switch cases[%zu] missing lit ref", i);
+        goto bad;
+      }
+      NodeRec* lit = get_node(p, lit_id);
+      if (!lit || !lit->tag || strncmp(lit->tag, "const.", 6) != 0 || lit->type_ref == 0) {
+        err_codef(p, "sircc.sem.switch.case_lit.bad", "sircc: sem.switch cases[%zu] lit must be const.* node", i);
+        goto bad;
+      }
+      if (lit->type_ref != scrut->type_ref) {
+        err_codef(p, "sircc.sem.switch.case_lit.type_mismatch", "sircc: sem.switch cases[%zu] lit type mismatch", i);
+        goto bad;
+      }
+      JsonValue* body = json_obj_get(co, "body");
+      if (!body || body->type != JSON_OBJECT) {
+        err_codef(p, "sircc.sem.switch.case_body_missing", "sircc: sem.switch cases[%zu] missing body branch", i);
+        goto bad;
+      }
+      int64_t rty = 0;
+      if (!branch_result_type(p, body, want, 0, false, &rty)) goto bad;
+      if (want == 0) want = rty;
+    }
+
+    if (n->type_ref && want && n->type_ref != want) {
+      err_codef(p, "sircc.sem.switch.ret_type_bad", "sircc: sem.switch type_ref mismatch");
+      goto bad;
+    }
+    goto ok;
+  }
+
+  if (strcmp(n->tag, "sem.while") == 0) {
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 2) {
+      err_codef(p, "sircc.sem.while.args_bad", "sircc: sem.while node %lld requires args:[condThunk, bodyThunk]", (long long)n->id);
+      goto bad;
+    }
+    if (!args->v.arr.items[0] || args->v.arr.items[0]->type != JSON_OBJECT) {
+      err_codef(p, "sircc.sem.while.cond.kind_bad", "sircc: sem.while cond must be kind:'thunk'");
+      goto bad;
+    }
+    if (!args->v.arr.items[1] || args->v.arr.items[1]->type != JSON_OBJECT) {
+      err_codef(p, "sircc.sem.while.body.kind_bad", "sircc: sem.while body must be kind:'thunk'");
+      goto bad;
+    }
+    const char* ck = json_get_string(json_obj_get(args->v.arr.items[0], "kind"));
+    const char* bk = json_get_string(json_obj_get(args->v.arr.items[1], "kind"));
+    if (!ck || strcmp(ck, "thunk") != 0) {
+      err_codef(p, "sircc.sem.while.cond.kind_bad", "sircc: sem.while cond must be kind:'thunk'");
+      goto bad;
+    }
+    if (!bk || strcmp(bk, "thunk") != 0) {
+      err_codef(p, "sircc.sem.while.body.kind_bad", "sircc: sem.while body must be kind:'thunk'");
+      goto bad;
+    }
+    int64_t cond_rty = 0;
+    if (!branch_result_type(p, args->v.arr.items[0], 0, 0, false, &cond_rty)) goto bad;
+    if (!is_prim_named(p, cond_rty, "bool") && !is_prim_named(p, cond_rty, "i1")) {
+      err_codef(p, "sircc.sem.while.cond.ret_bad", "sircc: sem.while cond thunk must return bool");
+      goto bad;
+    }
+    int64_t body_rty = 0;
+    if (!branch_result_type(p, args->v.arr.items[1], 0, 0, false, &body_rty)) goto bad;
+    if (!is_prim_named(p, body_rty, "i32")) {
+      err_codef(p, "sircc.sem.while.body.ret_bad", "sircc: sem.while body thunk must return i32 action (0=continue, nonzero=break)");
+      goto bad;
+    }
+    goto ok;
+  }
+
+  if (strcmp(n->tag, "sem.defer") == 0) {
+    if (!args || args->type != JSON_ARRAY || args->v.arr.len != 1) {
+      err_codef(p, "sircc.sem.defer.args_bad", "sircc: sem.defer node %lld requires args:[thunk]", (long long)n->id);
+      goto bad;
+    }
+    if (!args->v.arr.items[0] || args->v.arr.items[0]->type != JSON_OBJECT) {
+      err_codef(p, "sircc.sem.defer.thunk.bad", "sircc: sem.defer thunk operand must be an object");
+      goto bad;
+    }
+    const char* k = json_get_string(json_obj_get(args->v.arr.items[0], "kind"));
+    if (!k || strcmp(k, "thunk") != 0) {
+      err_codef(p, "sircc.sem.defer.thunk.kind_bad", "sircc: sem.defer requires kind:'thunk'");
+      goto bad;
+    }
+    const int64_t void_ty = find_prim_type_id(p, "void");
+    if (!void_ty) {
+      err_codef(p, "sircc.sem.defer.need_void", "sircc: sem.defer requires a void primitive type in the module");
+      goto bad;
+    }
+    int64_t rty = 0;
+    if (!branch_result_type(p, args->v.arr.items[0], void_ty, 0, false, &rty)) goto bad;
     goto ok;
   }
 

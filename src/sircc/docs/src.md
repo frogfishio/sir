@@ -204,12 +204,17 @@ These feature gates are enabled via `meta.ext.features` (array of strings). If a
 
 - Nodes:
   - `sem.if` (value-level conditional): `args:[cond, thenBranch, elseBranch]`
+  - `sem.cond` (value-level ternary): same shape as `sem.if` (lowered as `sem.if`)
   - `sem.and_sc` / `sem.or_sc` (short-circuit)
   - `sem.match_sum` (sum matching): `fields.sum`, `args:[scrut]`, `fields.cases[]`, `fields.default`
+  - `sem.switch` (integer switch intent): `args:[scrut]`, `fields.cases[]`, `fields.default`
+  - `sem.while` (loop intent; statement): `args:[condThunk, bodyThunk]`
+  - `sem.break` / `sem.continue` (loop control; statement; no fields)
+  - `sem.defer` (function-level defer; statement): `args:[thunk]` (MVP: body-form functions only)
 - Branch operands are objects:
   - `{ "kind":"val", "v": <node-ref> }`
   - `{ "kind":"thunk", "f": <fun/closure node-ref> }`
-    - thunks are 0-arg for `sem.if/and_sc/or_sc`
+    - thunks are 0-arg for `sem.if/cond/and_sc/or_sc/switch/while/defer`
     - for `sem.match_sum`, case bodies may be 0-arg thunks or 1-arg thunks (payload passed); the thunk parameter type must match the payload type
 
 ## ZASM backend (zir) notes

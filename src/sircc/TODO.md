@@ -305,10 +305,11 @@ Each package must be fully skippable unless its `unit.features` gate is enabled.
 - [x] `sem.match_sum` (pattern match over sums)
 
 ### 4.11 Structured control intent (sem:v1) — roadmap
-- [ ] loops: `sem.while` / `sem.loop` + `sem.break` + `sem.continue` (define continue target + value flow rules)
-- [ ] expression-level conditional: `sem.cond` (ternary)
-- [ ] multi-way branch: `sem.switch` (integer switch intent; lowers to `term.switch`)
-- [ ] scoped cleanup: `sem.defer` / `sem.scope` (requires precise lowering across all exits)
+- [x] loops: `sem.while` + `sem.break` + `sem.continue` (continue targets the loop header; body thunk returns `i32 action`)
+- [x] expression-level conditional: `sem.cond` (ternary; lowered as `sem.if`)
+- [x] multi-way branch: `sem.switch` (integer switch intent; lowers to `term.switch`)
+- [x] function-level cleanup (MVP): `sem.defer` (injected before returns; currently supported for body-form functions)
+- [ ] scoped cleanup (future): `sem.scope` (requires precise lowering across all exits)
 
 ## Milestone 5 — Completeness: docs + conformance + examples
 
