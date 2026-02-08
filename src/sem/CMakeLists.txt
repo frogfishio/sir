@@ -428,6 +428,22 @@ target_compile_options(sem_unit_run_f64_cmp_olt_to_i32 PRIVATE -Wall -Wextra -Wp
 
 add_test(NAME sem_run_f64_cmp_olt_to_i32 COMMAND sem_unit_run_f64_cmp_olt_to_i32)
 
+add_executable(sem_unit_run_misaligned_load_traps
+  tests/test_run_misaligned_load_traps.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_misaligned_load_traps PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_misaligned_load_traps PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_misaligned_load_traps PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_misaligned_load_traps PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_misaligned_load_traps PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_misaligned_load_traps COMMAND sem_unit_run_misaligned_load_traps)
+
 add_executable(sem_unit_run_sem_i32_cmp_variants
   tests/test_run_sem_i32_cmp_variants.c
   sem_hosted.c

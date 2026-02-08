@@ -467,6 +467,10 @@ static bool parse_hex_u32(const char* s, uint32_t* out) {
   return true;
 }
 
+static bool is_pow2_u32(uint32_t x) {
+  return x != 0u && (x & (x - 1u)) == 0u;
+}
+
 static bool sem_f32_is_nan_bits(uint32_t bits) {
   const uint32_t exp = bits & 0x7F800000u;
   const uint32_t frac = bits & 0x007FFFFFu;
@@ -1090,8 +1094,28 @@ static bool eval_store_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info
     sirj_diag_setf(c, "sem.parse.store.value", c->cur_path, n->loc_line, node_id, n->tag, "%s value must be a ref", n->tag);
     return false;
   }
-  uint32_t align = 1;
-  (void)json_get_u32(json_obj_get(n->fields_obj, "align"), &align);
+  uint32_t align = 0;
+  const JsonValue* alignv = json_obj_get(n->fields_obj, "align");
+  if (alignv) {
+    if (!json_get_u32(alignv, &align) || align == 0) {
+      sirj_diag_setf(c, "sem.parse.store.align", c->cur_path, n->loc_line, node_id, n->tag, "%s align must be a positive integer", n->tag);
+      return false;
+    }
+  } else {
+    // Default alignment is the natural alignment of the stored width.
+    if (k == SIR_INST_STORE_I8) align = 1;
+    else if (k == SIR_INST_STORE_I16) align = 2;
+    else if (k == SIR_INST_STORE_I32) align = 4;
+    else if (k == SIR_INST_STORE_I64) align = 8;
+    else if (k == SIR_INST_STORE_PTR) align = 8;
+    else if (k == SIR_INST_STORE_F32) align = 4;
+    else if (k == SIR_INST_STORE_F64) align = 8;
+    else align = 1;
+  }
+  if (!is_pow2_u32(align)) {
+    sirj_diag_setf(c, "sem.parse.store.align", c->cur_path, n->loc_line, node_id, n->tag, "%s align must be a power of two", n->tag);
+    return false;
+  }
   sir_val_id_t addr_slot = 0, val_slot = 0;
   val_kind_t ak = VK_INVALID, vk = VK_INVALID;
   if (!eval_node(c, addr_id, &addr_slot, &ak)) return false;
@@ -1197,8 +1221,28 @@ static bool eval_load_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_
     sirj_diag_setf(c, "sem.parse.load.addr", c->cur_path, n->loc_line, node_id, n->tag, "%s addr must be a ref", n->tag);
     return false;
   }
-  uint32_t align = 1;
-  (void)json_get_u32(json_obj_get(n->fields_obj, "align"), &align);
+  uint32_t align = 0;
+  const JsonValue* alignv = json_obj_get(n->fields_obj, "align");
+  if (alignv) {
+    if (!json_get_u32(alignv, &align) || align == 0) {
+      sirj_diag_setf(c, "sem.parse.load.align", c->cur_path, n->loc_line, node_id, n->tag, "%s align must be a positive integer", n->tag);
+      return false;
+    }
+  } else {
+    // Default alignment is the natural alignment of the loaded width.
+    if (k == SIR_INST_LOAD_I8) align = 1;
+    else if (k == SIR_INST_LOAD_I16) align = 2;
+    else if (k == SIR_INST_LOAD_I32) align = 4;
+    else if (k == SIR_INST_LOAD_I64) align = 8;
+    else if (k == SIR_INST_LOAD_PTR) align = 8;
+    else if (k == SIR_INST_LOAD_F32) align = 4;
+    else if (k == SIR_INST_LOAD_F64) align = 8;
+    else align = 1;
+  }
+  if (!is_pow2_u32(align)) {
+    sirj_diag_setf(c, "sem.parse.load.align", c->cur_path, n->loc_line, node_id, n->tag, "%s align must be a power of two", n->tag);
+    return false;
+  }
   sir_val_id_t addr_slot = 0;
   val_kind_t ak = VK_INVALID;
   if (!eval_node(c, addr_id, &addr_slot, &ak)) return false;

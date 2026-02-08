@@ -6,6 +6,8 @@
 #include <string.h>
 #include <limits.h>
 
+static bool is_pow2_u32(uint32_t x);
+
 enum {
   ZI_E_INVALID = -1,
   ZI_E_BOUNDS = -2,
@@ -1731,6 +1733,10 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
             set_err(err, err_cap, "store operand out of range");
             return false;
           }
+          if (!is_pow2_u32(inst->u.store.align)) {
+            set_err(err, err_cap, "store align must be a power of two");
+            return false;
+          }
           break;
         case SIR_INST_LOAD_I8:
         case SIR_INST_LOAD_I16:
@@ -1741,6 +1747,10 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_LOAD_F64:
           if (inst->u.load.addr >= vc || inst->u.load.dst >= vc) {
             set_err(err, err_cap, "load operand out of range");
+            return false;
+          }
+          if (!is_pow2_u32(inst->u.load.align)) {
+            set_err(err, err_cap, "load align must be a power of two");
             return false;
           }
           break;
@@ -2014,6 +2024,10 @@ static bool f64_is_nan_bits(uint64_t bits) {
 
 static uint64_t f64_canon_bits(uint64_t bits) {
   return f64_is_nan_bits(bits) ? 0x7FF8000000000000ull : bits;
+}
+
+static bool is_pow2_u32(uint32_t x) {
+  return x != 0u && (x & (x - 1u)) == 0u;
 }
 
 static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
@@ -3006,6 +3020,18 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           free(vals);
           return ZI_E_INVALID;
         }
+        const uint32_t align = i->u.store.align ? i->u.store.align : 1u;
+        if (!is_pow2_u32(align)) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        if (align > 1u) {
+          const uint64_t addr = (uint64_t)av.u.ptr;
+          if ((addr & (uint64_t)(align - 1u)) != 0ull) {
+            free(vals);
+            return 256;
+          }
+        }
         uint32_t size = 0;
         if (i->k == SIR_INST_STORE_I8) size = 1;
         else if (i->k == SIR_INST_STORE_I16) size = 2;
@@ -3076,6 +3102,18 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           free(vals);
           return ZI_E_INVALID;
         }
+        const uint32_t align = i->u.store.align ? i->u.store.align : 1u;
+        if (!is_pow2_u32(align)) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        if (align > 1u) {
+          const uint64_t addr = (uint64_t)av.u.ptr;
+          if ((addr & (uint64_t)(align - 1u)) != 0ull) {
+            free(vals);
+            return 256;
+          }
+        }
         const uint32_t size = (i->k == SIR_INST_STORE_F32) ? 4u : 8u;
         uint8_t* w = NULL;
         if (!sem_guest_mem_map_rw(mem, av.u.ptr, (zi_size32_t)size, &w) || !w) {
@@ -3117,6 +3155,18 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         if (av.kind != SIR_VAL_PTR) {
           free(vals);
           return ZI_E_INVALID;
+        }
+        const uint32_t align = i->u.load.align ? i->u.load.align : 1u;
+        if (!is_pow2_u32(align)) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        if (align > 1u) {
+          const uint64_t addr = (uint64_t)av.u.ptr;
+          if ((addr & (uint64_t)(align - 1u)) != 0ull) {
+            free(vals);
+            return 256;
+          }
         }
         uint32_t size = 0;
         if (i->k == SIR_INST_LOAD_I8) size = 1;
@@ -3166,6 +3216,18 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         if (av.kind != SIR_VAL_PTR) {
           free(vals);
           return ZI_E_INVALID;
+        }
+        const uint32_t align = i->u.load.align ? i->u.load.align : 1u;
+        if (!is_pow2_u32(align)) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        if (align > 1u) {
+          const uint64_t addr = (uint64_t)av.u.ptr;
+          if ((addr & (uint64_t)(align - 1u)) != 0ull) {
+            free(vals);
+            return 256;
+          }
         }
         const uint32_t size = (i->k == SIR_INST_LOAD_F32) ? 4u : 8u;
         const uint8_t* r = NULL;

@@ -64,7 +64,7 @@ Work items:
   - [x] `load.i16` / `store.i16`
   - [x] `load.f32` / `store.f32`
   - [x] `load.f64` / `store.f64`
-  - [ ] Alignment rules and deterministic misalignment traps match the `sircc` contract
+  - [x] Alignment rules and deterministic misalignment traps match the `sircc` contract
 - [ ] Core calls parity (execution)
   - [ ] `call` (direct call) if required by producers (or document “use call.indirect only”)
 - [ ] Diagnostics parity (developer UX)
