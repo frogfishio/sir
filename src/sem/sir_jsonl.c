@@ -2827,7 +2827,8 @@ static const char* sem_zi_err_name(int32_t rc) {
 
 static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root,
                                            sem_diag_format_t diag_format, bool diag_all, bool do_run, int* out_prog_rc,
-                                           const sir_exec_event_sink_t* sink) {
+                                           const sir_exec_event_sink_t* sink, void (*post_run)(void* user, const sir_module_t* m, int32_t exec_rc),
+                                           void* post_user) {
   if (!path) return 2;
 
   sirj_ctx_t c;
@@ -3001,6 +3002,7 @@ static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* c
 
   const sir_host_t host = sem_hosted_make_host(&hz);
   const int32_t rc = sir_module_run_ex(m, hz.mem, host, sink);
+  if (post_run) post_run(post_user, m, rc);
 
   sir_hosted_zabi_dispose(&hz);
   sir_module_free(m);
@@ -3022,7 +3024,8 @@ static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* c
 
 int sem_run_sir_jsonl(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root) {
   int prog_rc = 0;
-  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, SEM_DIAG_TEXT, false, true, &prog_rc, NULL);
+  const int tool_rc =
+      sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, SEM_DIAG_TEXT, false, true, &prog_rc, NULL, NULL, NULL);
   if (tool_rc != 0) return tool_rc;
   return prog_rc;
 }
@@ -3030,7 +3033,7 @@ int sem_run_sir_jsonl(const char* path, const sem_cap_t* caps, uint32_t cap_coun
 int sem_run_sir_jsonl_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
                          bool diag_all) {
   int prog_rc = 0;
-  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc, NULL);
+  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc, NULL, NULL, NULL);
   if (tool_rc != 0) return tool_rc;
   return prog_rc;
 }
@@ -3038,7 +3041,7 @@ int sem_run_sir_jsonl_ex(const char* path, const sem_cap_t* caps, uint32_t cap_c
 int sem_run_sir_jsonl_capture_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
                                  bool diag_all, int* out_prog_rc) {
   int prog_rc = 0;
-  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc, NULL);
+  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc, NULL, NULL, NULL);
   if (tool_rc != 0) return tool_rc;
   if (out_prog_rc) *out_prog_rc = prog_rc;
   return 0;
@@ -3047,6 +3050,21 @@ int sem_run_sir_jsonl_capture_ex(const char* path, const sem_cap_t* caps, uint32
 typedef struct sem_trace_ctx {
   FILE* out;
 } sem_trace_ctx_t;
+
+typedef struct sem_cov_ctx {
+  FILE* out;
+  uint32_t* offsets; // len=func_count
+  uint32_t* counts;  // len=offsets[func_count-1] + inst_count[last]
+  uint32_t total_slots;
+  uint32_t unique_steps;
+  uint64_t total_steps;
+} sem_cov_ctx_t;
+
+typedef struct sem_events_ctx {
+  sem_trace_ctx_t* trace;
+  sem_cov_ctx_t* cov;
+  bool cov_inited;
+} sem_events_ctx_t;
 
 static const char* sem_trace_func_name(const sir_module_t* m, sir_func_id_t fid) {
   if (!m || fid == 0 || fid > m->func_count) return "";
@@ -3061,6 +3079,22 @@ static void sem_trace_on_step(void* user, const sir_module_t* m, sir_func_id_t f
   fprintf(t->out, "{\"tool\":\"sem\",\"k\":\"trace_step\",\"fid\":%u,\"func\":\"", (unsigned)fid);
   sem_json_write_escaped(t->out, fn);
   fprintf(t->out, "\",\"ip\":%u,\"op\":\"%s\"}\n", (unsigned)ip, sir_inst_kind_name(k));
+}
+
+static void sem_cov_on_step(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k) {
+  (void)k;
+  sem_cov_ctx_t* c = (sem_cov_ctx_t*)user;
+  if (!c || !m) return;
+  if (fid == 0 || fid > m->func_count) return;
+  const uint32_t fidx = fid - 1;
+  const sir_func_t* f = &m->funcs[fidx];
+  if (ip >= f->inst_count) return;
+  if (!c->offsets || !c->counts) return;
+  const uint32_t slot = c->offsets[fidx] + ip;
+  if (slot >= c->total_slots) return;
+  if (c->counts[slot] == 0) c->unique_steps++;
+  c->counts[slot]++;
+  c->total_steps++;
 }
 
 static void sem_trace_on_mem(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_mem_event_kind_t k, zi_ptr_t addr,
@@ -3085,31 +3119,140 @@ static void sem_trace_on_hostcall(void* user, const sir_module_t* m, sir_func_id
   fprintf(t->out, "\",\"rc\":%d}\n", (int)rc);
 }
 
+static void sem_events_on_step(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k) {
+  sem_events_ctx_t* e = (sem_events_ctx_t*)user;
+  if (!e) return;
+  if (e->trace) sem_trace_on_step(e->trace, m, fid, ip, k);
+  if (e->cov) {
+    if (!e->cov_inited && m && m->func_count) {
+      const uint32_t fn = m->func_count;
+      e->cov->offsets = (uint32_t*)calloc(fn ? fn : 1u, sizeof(uint32_t));
+      if (!e->cov->offsets) return;
+      uint32_t total = 0;
+      for (uint32_t i = 0; i < fn; i++) {
+        e->cov->offsets[i] = total;
+        const uint32_t n = m->funcs[i].inst_count;
+        if (UINT32_MAX - total < n) {
+          free(e->cov->offsets);
+          e->cov->offsets = NULL;
+          return;
+        }
+        total += n;
+      }
+      e->cov->counts = (uint32_t*)calloc(total ? total : 1u, sizeof(uint32_t));
+      if (!e->cov->counts) {
+        free(e->cov->offsets);
+        e->cov->offsets = NULL;
+        return;
+      }
+      e->cov->total_slots = total;
+      e->cov_inited = true;
+    }
+    sem_cov_on_step(e->cov, m, fid, ip, k);
+  }
+}
+
+static void sem_events_on_mem(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_mem_event_kind_t mk, zi_ptr_t addr,
+                              uint32_t size) {
+  sem_events_ctx_t* e = (sem_events_ctx_t*)user;
+  if (!e) return;
+  if (e->trace) sem_trace_on_mem(e->trace, m, fid, ip, mk, addr, size);
+}
+
+static void sem_events_on_hostcall(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, const char* callee, int32_t rc) {
+  sem_events_ctx_t* e = (sem_events_ctx_t*)user;
+  if (!e) return;
+  if (e->trace) sem_trace_on_hostcall(e->trace, m, fid, ip, callee, rc);
+}
+
+static void sem_events_post_run(void* user, const sir_module_t* m, int32_t exec_rc) {
+  sem_events_ctx_t* e = (sem_events_ctx_t*)user;
+  if (!e || !e->cov || !e->cov->out || !e->cov_inited || !m) return;
+
+  FILE* out = e->cov->out;
+  fprintf(out, "{\"tool\":\"sem\",\"k\":\"coverage\",\"format\":\"inst\",\"version\":1,\"exec_rc\":%d}\n", (int)exec_rc);
+  for (uint32_t i = 0; i < m->func_count; i++) {
+    const sir_func_t* f = &m->funcs[i];
+    const sir_func_id_t fid = i + 1;
+    const char* fn = f->name ? f->name : "";
+    const uint32_t base = e->cov->offsets ? e->cov->offsets[i] : 0;
+    for (uint32_t ip = 0; ip < f->inst_count; ip++) {
+      const uint32_t slot = base + ip;
+      if (!e->cov->counts || slot >= e->cov->total_slots) continue;
+      const uint32_t hit = e->cov->counts[slot];
+      if (!hit) continue;
+      const sir_inst_kind_t opk = f->insts[ip].k;
+      fprintf(out, "{\"tool\":\"sem\",\"k\":\"cov_step\",\"fid\":%u,\"func\":\"", (unsigned)fid);
+      sem_json_write_escaped(out, fn);
+      fprintf(out, "\",\"ip\":%u,\"op\":\"%s\",\"count\":%u}\n", (unsigned)ip, sir_inst_kind_name(opk), (unsigned)hit);
+    }
+  }
+  fprintf(out, "{\"tool\":\"sem\",\"k\":\"cov_summary\",\"unique_steps\":%u,\"total_steps\":%" PRIu64 "}\n", (unsigned)e->cov->unique_steps,
+          (uint64_t)e->cov->total_steps);
+}
+
+int sem_run_sir_jsonl_events_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
+                                bool diag_all, const char* trace_jsonl_out_path, const char* coverage_jsonl_out_path) {
+  FILE* trace_out = NULL;
+  FILE* cov_out = NULL;
+
+  if (trace_jsonl_out_path && trace_jsonl_out_path[0]) {
+    trace_out = fopen(trace_jsonl_out_path, "wb");
+    if (!trace_out) {
+      fprintf(stderr, "sem: failed to open trace output: %s\n", trace_jsonl_out_path);
+      return 2;
+    }
+  }
+  if (coverage_jsonl_out_path && coverage_jsonl_out_path[0]) {
+    cov_out = fopen(coverage_jsonl_out_path, "wb");
+    if (!cov_out) {
+      if (trace_out) fclose(trace_out);
+      fprintf(stderr, "sem: failed to open coverage output: %s\n", coverage_jsonl_out_path);
+      return 2;
+    }
+  }
+
+  sem_trace_ctx_t t = {.out = trace_out};
+  sem_cov_ctx_t cov = {.out = cov_out};
+
+  sem_events_ctx_t ev = {.trace = trace_out ? &t : NULL, .cov = cov_out ? &cov : NULL, .cov_inited = false};
+
+  const sir_exec_event_sink_t sink = {
+      .user = &ev,
+      .on_step = sem_events_on_step,
+      .on_mem = sem_events_on_mem,
+      .on_hostcall = sem_events_on_hostcall,
+  };
+
+  int prog_rc = 0;
+  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc,
+                                                       (trace_out || cov_out) ? &sink : NULL, cov_out ? sem_events_post_run : NULL, &ev);
+
+  if (trace_out) fclose(trace_out);
+  if (cov_out) fclose(cov_out);
+  free(cov.offsets);
+  free(cov.counts);
+
+  if (tool_rc != 0) return tool_rc;
+  return prog_rc;
+}
+
 int sem_run_sir_jsonl_trace_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
                                bool diag_all, const char* trace_jsonl_out_path) {
   if (!trace_jsonl_out_path || !trace_jsonl_out_path[0]) {
     fprintf(stderr, "sem: missing --trace-jsonl-out path\n");
     return 2;
   }
-  FILE* out = fopen(trace_jsonl_out_path, "wb");
-  if (!out) {
-    fprintf(stderr, "sem: failed to open trace output: %s\n", trace_jsonl_out_path);
+  return sem_run_sir_jsonl_events_ex(path, caps, cap_count, fs_root, diag_format, diag_all, trace_jsonl_out_path, NULL);
+}
+
+int sem_run_sir_jsonl_coverage_ex(const char* path, const sem_cap_t* caps, uint32_t cap_count, const char* fs_root, sem_diag_format_t diag_format,
+                                  bool diag_all, const char* coverage_jsonl_out_path) {
+  if (!coverage_jsonl_out_path || !coverage_jsonl_out_path[0]) {
+    fprintf(stderr, "sem: missing --coverage-jsonl-out path\n");
     return 2;
   }
-
-  sem_trace_ctx_t t = {.out = out};
-  const sir_exec_event_sink_t sink = {
-      .user = &t,
-      .on_step = sem_trace_on_step,
-      .on_mem = sem_trace_on_mem,
-      .on_hostcall = sem_trace_on_hostcall,
-  };
-
-  int prog_rc = 0;
-  const int tool_rc = sem_run_or_verify_sir_jsonl_impl(path, caps, cap_count, fs_root, diag_format, diag_all, true, &prog_rc, &sink);
-  fclose(out);
-  if (tool_rc != 0) return tool_rc;
-  return prog_rc;
+  return sem_run_sir_jsonl_events_ex(path, caps, cap_count, fs_root, diag_format, diag_all, NULL, coverage_jsonl_out_path);
 }
 
 int sem_verify_sir_jsonl(const char* path, sem_diag_format_t diag_format) {
@@ -3117,5 +3260,5 @@ int sem_verify_sir_jsonl(const char* path, sem_diag_format_t diag_format) {
 }
 
 int sem_verify_sir_jsonl_ex(const char* path, sem_diag_format_t diag_format, bool diag_all) {
-  return sem_run_or_verify_sir_jsonl_impl(path, NULL, 0, NULL, diag_format, diag_all, false, NULL, NULL);
+  return sem_run_or_verify_sir_jsonl_impl(path, NULL, 0, NULL, diag_format, diag_all, false, NULL, NULL, NULL, NULL);
 }

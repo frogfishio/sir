@@ -54,7 +54,7 @@ static void sem_print_help(FILE* out) {
           "  sem --cat GUEST_PATH --fs-root PATH\n"
           "  sem --sir-hello\n"
           "  sem --sir-module-hello\n"
-          "  sem --run FILE.sir.jsonl [--trace-jsonl-out PATH] [--diagnostics text|json] [--fs-root PATH] [--cap ...]\n"
+          "  sem --run FILE.sir.jsonl [--trace-jsonl-out PATH] [--coverage-jsonl-out PATH] [--diagnostics text|json] [--fs-root PATH] [--cap ...]\n"
           "  sem --verify FILE.sir.jsonl [--diagnostics text|json]\n"
           "\n"
           "Options:\n"
@@ -72,6 +72,7 @@ static void sem_print_help(FILE* out) {
           "  --run FILE    Run a small supported SIR subset (MVP)\n"
           "  --verify FILE Validate + lower (no execution)\n"
           "  --trace-jsonl-out PATH  Write execution trace JSONL to PATH (for --run)\n"
+          "  --coverage-jsonl-out PATH  Write execution coverage JSONL to PATH (for --run)\n"
           "  --json        Emit --caps output as JSON (stdout)\n"
           "  --diagnostics Emit --run/--verify diagnostics as: text (default) or json\n"
           "  --all         For --run/--verify, try to emit multiple diagnostics (best-effort)\n"
@@ -876,6 +877,7 @@ int main(int argc, char** argv) {
   sem_list_format_t list_format = SEM_LIST_TEXT;
   const char* format_opt = NULL;
   const char* trace_jsonl_out = NULL;
+  const char* coverage_jsonl_out = NULL;
 
   dyn_cap_t dyn_caps[64];
   uint32_t dyn_n = 0;
@@ -975,6 +977,10 @@ int main(int argc, char** argv) {
     }
     if (strcmp(a, "--trace-jsonl-out") == 0 && i + 1 < argc) {
       trace_jsonl_out = argv[++i];
+      continue;
+    }
+    if (strcmp(a, "--coverage-jsonl-out") == 0 && i + 1 < argc) {
+      coverage_jsonl_out = argv[++i];
       continue;
     }
     if (strcmp(a, "--cap") == 0 && i + 1 < argc) {
@@ -1132,8 +1138,8 @@ int main(int argc, char** argv) {
   }
   if (run_path) {
     int rc = 0;
-    if (trace_jsonl_out && trace_jsonl_out[0]) {
-      rc = sem_run_sir_jsonl_trace_ex(run_path, caps, cap_n, fs_root, diag_format, diag_all, trace_jsonl_out);
+    if ((trace_jsonl_out && trace_jsonl_out[0]) || (coverage_jsonl_out && coverage_jsonl_out[0])) {
+      rc = sem_run_sir_jsonl_events_ex(run_path, caps, cap_n, fs_root, diag_format, diag_all, trace_jsonl_out, coverage_jsonl_out);
     } else {
       rc = sem_run_sir_jsonl_ex(run_path, caps, cap_n, fs_root, diag_format, diag_all);
     }
