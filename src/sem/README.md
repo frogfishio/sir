@@ -93,27 +93,11 @@ sem --check src/sircc/examples/hello_zabi25_write.sir.jsonl src/sircc/examples/p
 
 The current `--run` MVP supports (growing over time):
 
-- types:
-  - `type.kind:"prim"` supports `prim:"void"` for signatures (no value / no storage)
-  - `type.kind:"ptr"` is treated as an untyped pointer (lowered as `ptr`)
-- `fn` in either form:
-  - single `body: block` form
-  - CFG form: `entry: block` + `blocks: [block...]`
-- statements: `let`, `term.ret` / `return`
-- expressions: `const.i32`, `const.i64`, `cstr`, `name`, `i32.add`, `binop.add`
-- comparisons: `i32.cmp.eq`
-- calls: `call.indirect` where callee is `decl.fn` (extern) or `ptr.sym` (in-module function)
-- globals: module-level `sym` records with init values; `ptr.sym` can name a `sym` to get a global address
-- structured constants (for global init): `const.array`, `const.repeat`
-- pointers: `ptr.add`, `ptr.sub`, `ptr.offset`, `ptr.cmp.eq`, `ptr.cmp.ne`, `load.ptr`, `store.ptr`
-- value-level: `select`
-- booleans: `const.bool`, `bool.not`, `bool.and`, `bool.or`, `bool.xor`
-- compares: `i32.cmp.*` (eq/ne, signed + unsigned)
-- integers: `i32.sub`, `i32.mul`, `i32.and`, `i32.or`, `i32.xor`, `i32.not`, `i32.neg`, `i32.shl`, `i32.shr.s`, `i32.shr.u`, `i32.div.*.sat`, `i32.rem.*.sat`, `i32.trunc.i64`
-- layout queries: `ptr.sizeof`, `ptr.alignof`
-- casts: `ptr.to_i64`, `ptr.from_i64`
-- control flow: `term.br` (including `fields.args` passing block params), `term.cbr` / `term.condbr`, `term.switch` (i32 scrut)
-- traps: `term.trap`, `term.unreachable` (SEM exits with code 255/254)
-- block params: `block.fields.params` with `bparam` nodes
-- memory: `alloca.i8/i32/i64`, `store.i8/i32/i64`, `load.i8/i32/i64`
-- bulk memory: `mem.copy`, `mem.fill` (MVP; overlap disallow traps)
+For an up-to-date list, use:
+
+- `sem --print-support`
+- `sem --print-support --json`
+
+We also keep a frozen “what runs today” doc for integrators:
+
+- `src/sem/core_subset.md`

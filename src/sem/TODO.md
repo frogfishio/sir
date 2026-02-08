@@ -51,14 +51,14 @@ Work items:
 **Goal:** SEM can execute essentially the same “SIR-Core compiler kit” surface that integrators will emit early on, with deterministic traps and stable diagnostics.
 
 Acceptance:
-- [ ] Document a blessed “SEM-runnable Core subset” (and keep it aligned with `sem --print-support`)
-- [ ] Add a small set of “Core runnable” examples that cover: CFG joins, memory, ptr math, extern calls, globals
+- [x] Document a blessed “SEM-runnable Core subset” (and keep it aligned with `sem --print-support`)
+- [x] Add a small set of “Core runnable” examples that cover: CFG joins, memory, ptr math, extern calls, globals
 
 Work items:
 - [ ] Core types parity (execution)
   - [x] `type.kind:"prim"`: `i8/i16/i32/i64/bool/i1/f32/f64/void` (execution rules, not just parsing)
-  - [ ] `type.kind:"ptr"` treated consistently (typed ptr, but no host pointers)
-  - [ ] `type.kind:"array"` basics (size/stride) for `ptr.offset` and init data
+  - [x] `type.kind:"ptr"` treated consistently (typed ptr, but no host pointers)
+  - [x] `type.kind:"array"` basics (size/stride) for `ptr.offset` and init data
   - [x] `type.kind:"struct"` (enough for by-pointer access; no “peek” contracts)
 - [ ] Core memory parity (execution)
   - [x] `load.i16` / `store.i16`
@@ -190,7 +190,7 @@ Work items:
   - [x] `const.array`
   - [x] `const.repeat`
   - [x] `const.struct`
-- [ ] `load.f32 / load.f64` and `store.f32 / store.f64` (needed once globals/constants include floats)
+- [x] `load.f32 / load.f64` and `store.f32 / store.f64` (needed once globals/constants include floats)
 
 ## P3 (language power): functions, closures, ADTs, and SEM intent nodes
 
