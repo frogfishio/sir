@@ -3011,10 +3011,19 @@ static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* c
     return 1;
   }
 
-  char verr[160];
-  if (!sir_module_validate(m, verr, sizeof(verr))) {
+  sir_validate_diag_t vd = {0};
+  if (!sir_module_validate_ex(m, &vd)) {
     sir_module_free(m);
-    sirj_diag_setf(&c, "sem.validate", path, 0, 0, NULL, "module validate failed: %s", verr[0] ? verr : "invalid");
+    const uint32_t diag_line = vd.src_line ? vd.src_line : 0;
+    const uint32_t diag_node = vd.src_node_id ? vd.src_node_id : 0;
+    if (vd.fid && vd.op != SIR_INST_INVALID) {
+      sirj_diag_setf(&c, vd.code ? vd.code : "sem.validate", path, diag_line, diag_node, NULL,
+                     "module validate failed at fid=%u ip=%u op=%s: %s", (unsigned)vd.fid, (unsigned)vd.ip, sir_inst_kind_name(vd.op),
+                     vd.message[0] ? vd.message : "invalid");
+    } else {
+      sirj_diag_setf(&c, vd.code ? vd.code : "sem.validate", path, diag_line, diag_node, NULL, "module validate failed: %s",
+                     vd.message[0] ? vd.message : "invalid");
+    }
     sem_print_diag(&c);
     ctx_dispose(&c);
     return 1;

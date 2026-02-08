@@ -17,6 +17,18 @@ static int expect_invalid(const sir_module_t* m) {
   if (err[0] == '\0') {
     return fail("expected non-empty validate error");
   }
+
+  sir_validate_diag_t d;
+  memset(&d, 0, sizeof(d));
+  if (sir_module_validate_ex(m, &d)) {
+    return fail("expected module_validate_ex to fail");
+  }
+  if (!d.code || !d.code[0]) {
+    return fail("expected non-empty validate_ex code");
+  }
+  if (d.message[0] == '\0') {
+    return fail("expected non-empty validate_ex message");
+  }
   return 0;
 }
 
@@ -69,4 +81,3 @@ int main(void) {
 
   return 0;
 }
-

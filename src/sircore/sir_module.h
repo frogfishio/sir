@@ -496,6 +496,22 @@ void sir_module_free(sir_module_t* m);
 // Returns true if valid; on failure, writes a short message into `err` when provided.
 bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap);
 
+// Structured validator output (preferred).
+// `src_node_id`/`src_line` come from instruction-level source mapping when available.
+typedef struct sir_validate_diag {
+  const char* code; // stable category/code string (e.g. "sir.validate.inst")
+  char message[256];
+  sir_func_id_t fid;      // 0 when unknown / not applicable
+  uint32_t ip;            // 0 when unknown / not applicable
+  sir_inst_kind_t op;     // SIR_INST_INVALID when not applicable
+  uint32_t src_node_id;   // 0 when unknown
+  uint32_t src_line;      // 0 when unknown
+} sir_validate_diag_t;
+
+// Validate a module for basic semantic/structural invariants.
+// Returns true if valid; on failure, fills `out` when provided.
+bool sir_module_validate_ex(const sir_module_t* m, sir_validate_diag_t* out);
+
 // Execution: run module entry function.
 // Returns exit code (>=0) or negative ZI_E_*.
 int32_t sir_module_run(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host);

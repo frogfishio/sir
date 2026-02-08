@@ -1,5 +1,6 @@
 #include "sir_module.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1149,19 +1150,76 @@ void sir_module_free(sir_module_t* m) {
   free(impl);
 }
 
+// Validator context for filling sir_module_validate_ex diagnostics.
+typedef struct sir__validate_ctx {
+  const char* code;
+  sir_func_id_t fid;
+  uint32_t ip;
+  const sir_inst_t* inst;
+} sir__validate_ctx_t;
+
+static sir_validate_diag_t* sir__validate_out_diag = NULL;
+static sir__validate_ctx_t sir__validate_ctx = {0};
+
+static void sir__validate_note(const char* code, sir_func_id_t fid, uint32_t ip, const sir_inst_t* inst) {
+  sir__validate_ctx.code = code;
+  sir__validate_ctx.fid = fid;
+  sir__validate_ctx.ip = ip;
+  sir__validate_ctx.inst = inst;
+}
+
 static bool set_err(char* err, size_t cap, const char* msg) {
-  if (!err || cap == 0) return false;
-  (void)snprintf(err, cap, "%s", msg ? msg : "invalid");
-  return true;
+  char tmp[256];
+  (void)snprintf(tmp, sizeof(tmp), "%s", msg ? msg : "invalid");
+
+  bool wrote = false;
+  if (err && cap) {
+    (void)snprintf(err, cap, "%s", tmp);
+    wrote = true;
+  }
+
+  if (sir__validate_out_diag) {
+    sir_validate_diag_t* d = sir__validate_out_diag;
+    memset(d, 0, sizeof(*d));
+    d->code = sir__validate_ctx.code ? sir__validate_ctx.code : "sir.validate";
+    (void)snprintf(d->message, sizeof(d->message), "%s", tmp);
+    d->fid = sir__validate_ctx.fid;
+    d->ip = sir__validate_ctx.ip;
+    d->op = sir__validate_ctx.inst ? sir__validate_ctx.inst->k : SIR_INST_INVALID;
+    d->src_node_id = sir__validate_ctx.inst ? sir__validate_ctx.inst->src_node_id : 0;
+    d->src_line = sir__validate_ctx.inst ? sir__validate_ctx.inst->src_line : 0;
+  }
+
+  return wrote;
 }
 
 static bool set_errf(char* err, size_t cap, const char* fmt, uint32_t a, uint32_t b) {
-  if (!err || cap == 0) return false;
-  (void)snprintf(err, cap, fmt, (unsigned)a, (unsigned)b);
-  return true;
+  char tmp[256];
+  (void)snprintf(tmp, sizeof(tmp), fmt ? fmt : "invalid", (unsigned)a, (unsigned)b);
+
+  bool wrote = false;
+  if (err && cap) {
+    (void)snprintf(err, cap, "%s", tmp);
+    wrote = true;
+  }
+
+  if (sir__validate_out_diag) {
+    sir_validate_diag_t* d = sir__validate_out_diag;
+    memset(d, 0, sizeof(*d));
+    d->code = sir__validate_ctx.code ? sir__validate_ctx.code : "sir.validate";
+    (void)snprintf(d->message, sizeof(d->message), "%s", tmp);
+    d->fid = sir__validate_ctx.fid;
+    d->ip = sir__validate_ctx.ip;
+    d->op = sir__validate_ctx.inst ? sir__validate_ctx.inst->k : SIR_INST_INVALID;
+    d->src_node_id = sir__validate_ctx.inst ? sir__validate_ctx.inst->src_node_id : 0;
+    d->src_line = sir__validate_ctx.inst ? sir__validate_ctx.inst->src_line : 0;
+  }
+
+  return wrote;
 }
 
 bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
+  sir__validate_note("sir.validate.module", 0, 0, NULL);
   if (!m) {
     set_err(err, err_cap, "module is null");
     return false;
@@ -1175,6 +1233,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
     return false;
   }
 
+  sir__validate_note("sir.validate.type", 0, 0, NULL);
   if (m->type_count && !m->types) {
     set_err(err, err_cap, "type_count set but types is null");
     return false;
@@ -1186,6 +1245,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
     }
   }
 
+  sir__validate_note("sir.validate.sym", 0, 0, NULL);
   if (m->sym_count && !m->syms) {
     set_err(err, err_cap, "sym_count set but syms is null");
     return false;
@@ -1224,6 +1284,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
     }
   }
 
+  sir__validate_note("sir.validate.global", 0, 0, NULL);
   if (m->global_count && !m->globals) {
     set_err(err, err_cap, "global_count set but globals is null");
     return false;
@@ -1254,6 +1315,8 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
 
   for (uint32_t fi = 0; fi < m->func_count; fi++) {
     const sir_func_t* f = &m->funcs[fi];
+    const sir_func_id_t fid = (sir_func_id_t)(fi + 1);
+    sir__validate_note("sir.validate.func", fid, 0, NULL);
     if (!f->name || f->name[0] == '\0') {
       set_errf(err, err_cap, "func name missing at index %u of %u", fi + 1, m->func_count);
       return false;
@@ -1265,6 +1328,7 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
     const uint32_t vc = f->value_count;
     for (uint32_t ii = 0; ii < f->inst_count; ii++) {
       const sir_inst_t* inst = &f->insts[ii];
+      sir__validate_note("sir.validate.inst", fid, ii, inst);
       switch (inst->k) {
         case SIR_INST_CONST_I8:
           if (inst->u.const_i8.dst >= vc) {
@@ -1637,6 +1701,16 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
 
   if (err && err_cap) err[0] = '\0';
   return true;
+}
+
+bool sir_module_validate_ex(const sir_module_t* m, sir_validate_diag_t* out) {
+  sir_validate_diag_t* prev = sir__validate_out_diag;
+  sir__validate_out_diag = out;
+  if (out) memset(out, 0, sizeof(*out));
+  const bool ok = sir_module_validate(m, NULL, 0);
+  sir__validate_out_diag = prev;
+  if (ok && out) memset(out, 0, sizeof(*out));
+  return ok;
 }
 
 static const sir_sym_t* sym_at(const sir_module_t* m, sir_sym_id_t id) {
