@@ -146,6 +146,8 @@ sirc_add_diag_expect_test(sirc_diag_bad_sem_if_branch_kind tests/fixtures/bad_se
 sirc_add_diag_expect_test(sirc_diag_bad_sem_scope_keys tests/fixtures/bad_sem_scope_keys.sir sirc.parse.syntax 7 6 "sem.scope: expected 'defers'")
 sirc_add_diag_expect_test(sirc_diag_bad_sem_switch_case_body_key tests/fixtures/bad_sem_switch_missing_body_key.sir sirc.parse.syntax 6 34 "sem.switch: expected 'body'")
 sirc_add_diag_expect_test(sirc_diag_bad_sem_match_sum_case_variant_key tests/fixtures/bad_sem_match_sum_case_key.sir sirc.parse.syntax 6 34 "sem.match_sum: expected 'variant'")
+sirc_add_diag_expect_test(sirc_diag_bad_type_unknown_name tests/fixtures/bad_type_unknown_name.sir sirc.type.unknown 5 13 "unknown type name")
+sirc_add_diag_expect_test(sirc_diag_bad_type_unknown_ctor tests/fixtures/bad_type_unknown_ctor.sir sirc.parse.syntax 3 17 "unknown type constructor")
 
 #
 # Tests (require sircc)

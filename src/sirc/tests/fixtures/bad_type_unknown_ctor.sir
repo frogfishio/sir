@@ -1,0 +1,8 @@
+unit bad_type_unknown_ctor target host
+
+type T = wat(i32)
+
+fn main() -> i32
+  return 0:i32
+end
+

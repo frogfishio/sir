@@ -981,9 +981,11 @@ static int64_t type_from_name(const char* name) {
     int64_t i8 = type_prim("i8");
     return type_ptr(i8);
   }
-  // named types not implemented yet
-  die_at_last("sirc: unknown type name '%s' (only prim/bool/ptr supported for now)", name);
-  return 0;
+  // Named/extended types must be introduced via `type <Name> = ...` aliases in .sir.
+  // (We keep the diagnostic code stable so integrators can match on it.)
+  diag_setf("sirc.type.unknown", "unknown type name '%s'", name);
+  diag_print_one();
+  exit(1);
 }
 
 static void fn_add_extern(const char* name, int64_t sig_ty, int64_t ret_ty) {

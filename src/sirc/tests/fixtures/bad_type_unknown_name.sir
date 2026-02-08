@@ -1,0 +1,8 @@
+unit bad_type_unknown_name target host
+
+fn main() -> i32
+  ;; Unknown type name should be a first-class diagnostic (not an internal error).
+  let x:u32 = 0:i32
+  return 0:i32
+end
+
