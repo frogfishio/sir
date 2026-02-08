@@ -82,6 +82,30 @@ target_compile_options(sirc PRIVATE
 )
 
 #
+# Tests (sirc-only)
+#
+function(sirc_add_golden_test name input_rel golden_rel)
+  add_test(
+    NAME ${name}
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRC=$<TARGET_FILE:sirc>
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/${input_rel}
+      -DEXPECT=${CMAKE_CURRENT_LIST_DIR}/${golden_rel}
+      -DOUT=${CMAKE_CURRENT_BINARY_DIR}/${name}.sir.jsonl
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_golden.cmake
+  )
+endfunction()
+
+sirc_add_golden_test(sirc_golden_sem_if_val_val examples/sem_if_val_val.sir tests/golden/sem_if_val_val.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_if_thunk_trap_not_taken examples/sem_if_thunk_trap_not_taken.sir tests/golden/sem_if_thunk_trap_not_taken.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_and_or_sc examples/sem_and_or_sc.sir tests/golden/sem_and_or_sc.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_switch_thunk examples/sem_switch_thunk.sir tests/golden/sem_switch_thunk.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_match_sum_payload_thunk examples/sem_match_sum_payload_thunk.sir tests/golden/sem_match_sum_payload_thunk.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_while_break examples/sem_while_break.sir tests/golden/sem_while_break.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_defer_void examples/sem_defer_void.sir tests/golden/sem_defer_void.sir.jsonl)
+sirc_add_golden_test(sirc_golden_sem_scope_cfg examples/sem_scope_cfg.sir tests/golden/sem_scope_cfg.sir.jsonl)
+
+#
 # Tests (require sircc)
 #
 if(TARGET sircc)

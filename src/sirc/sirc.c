@@ -555,7 +555,7 @@ static SrcMapEntry* src_get_or_create(int line, int col) {
   if (g_emit.ids_mode == SIRC_IDS_NUMERIC) {
     e->id_num = g_emit.next_src_id++;
   } else {
-    const char* file = g_emit.input_path ? g_emit.input_path : "<input>";
+    const char* file = path_basename(g_emit.input_path ? g_emit.input_path : "<input>");
     char buf[2048];
     snprintf(buf, sizeof(buf), "src:%s:%d:%d", file, line, col);
     e->id_str = xstrdup(buf);
@@ -580,9 +580,10 @@ static void emit_src_record_if_needed(void) {
 
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"src\",\"id\":");
   emit_src_id_value(e);
-  if (g_emit.input_path && strcmp(g_emit.input_path, "<input>") != 0) {
+  const char* bn = path_basename(g_emit.input_path);
+  if (bn && bn[0] && strcmp(bn, "<input>") != 0) {
     emitf(",\"file\":");
-    json_write_escaped(g_emit.out, g_emit.input_path);
+    json_write_escaped(g_emit.out, bn);
   }
   emitf(",\"line\":%d", e->line);
   if (e->col > 0) emitf(",\"col\":%d", e->col);

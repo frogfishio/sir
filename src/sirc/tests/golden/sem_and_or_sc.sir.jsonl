@@ -1,0 +1,26 @@
+{"ir":"sir-v1.0","k":"meta","producer":"sirc","unit":"u0","ext":{"features":["sem:v1"]}}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:3:19","file":"sem_and_or_sc.sir","line":3,"col":19,"text":"fn main() -> bool public"}
+{"ir":"sir-v1.0","k":"type","id":"prim:bool","kind":"prim","prim":"bool","loc":{"line":3,"col":19,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:3:19"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:4:17","file":"sem_and_or_sc.sir","line":4,"col":17,"text":"  let a: bool = true"}
+{"ir":"sir-v1.0","k":"node","id":"n:4:0","tag":"const.bool","type_ref":"prim:bool","fields":{"value":1},"loc":{"line":4,"col":17,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:4:17"}
+{"ir":"sir-v1.0","k":"node","id":"n:4:1","tag":"let","fields":{"name":"a","value":{"t":"ref","id":"n:4:0"}},"loc":{"line":4,"col":17,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:4:17"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:5:17","file":"sem_and_or_sc.sir","line":5,"col":17,"text":"  let b: bool = false"}
+{"ir":"sir-v1.0","k":"node","id":"n:5:0","tag":"const.bool","type_ref":"prim:bool","fields":{"value":0},"loc":{"line":5,"col":17,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:5:17"}
+{"ir":"sir-v1.0","k":"node","id":"n:5:1","tag":"let","fields":{"name":"b","value":{"t":"ref","id":"n:5:0"}},"loc":{"line":5,"col":17,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:5:17"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:6:29","file":"sem_and_or_sc.sir","line":6,"col":29,"text":"  let x: bool = sem.and_sc(a, val b)"}
+{"ir":"sir-v1.0","k":"node","id":"n:6:0","tag":"name","type_ref":"prim:bool","fields":{"name":"a"},"loc":{"line":6,"col":29,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:6:29"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:6:36","file":"sem_and_or_sc.sir","line":6,"col":36,"text":"  let x: bool = sem.and_sc(a, val b)"}
+{"ir":"sir-v1.0","k":"node","id":"n:6:1","tag":"name","type_ref":"prim:bool","fields":{"name":"b"},"loc":{"line":6,"col":36,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:6:36"}
+{"ir":"sir-v1.0","k":"node","id":"n:6:2","tag":"sem.and_sc","type_ref":"prim:bool","fields":{"args":[{"t":"ref","id":"n:6:0"},{"kind":"val","v":{"t":"ref","id":"n:6:1"}}]},"loc":{"line":6,"col":36,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:6:36"}
+{"ir":"sir-v1.0","k":"node","id":"n:6:3","tag":"let","fields":{"name":"x","value":{"t":"ref","id":"n:6:2"}},"loc":{"line":6,"col":36,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:6:36"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:7:21","file":"sem_and_or_sc.sir","line":7,"col":21,"text":"  return sem.or_sc(x, val true)"}
+{"ir":"sir-v1.0","k":"node","id":"n:7:0","tag":"name","type_ref":"prim:bool","fields":{"name":"x"},"loc":{"line":7,"col":21,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:7:21"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:7:27","file":"sem_and_or_sc.sir","line":7,"col":27,"text":"  return sem.or_sc(x, val true)"}
+{"ir":"sir-v1.0","k":"node","id":"n:7:1","tag":"const.bool","type_ref":"prim:bool","fields":{"value":1},"loc":{"line":7,"col":27,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:7:27"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:7:31","file":"sem_and_or_sc.sir","line":7,"col":31,"text":"  return sem.or_sc(x, val true)"}
+{"ir":"sir-v1.0","k":"node","id":"n:7:2","tag":"sem.or_sc","type_ref":"prim:bool","fields":{"args":[{"t":"ref","id":"n:7:0"},{"kind":"val","v":{"t":"ref","id":"n:7:1"}}]},"loc":{"line":7,"col":31,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:7:31"}
+{"ir":"sir-v1.0","k":"node","id":"n:7:3","tag":"term.ret","fields":{"value":{"t":"ref","id":"n:7:2"}},"loc":{"line":7,"col":31,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:7:31"}
+{"ir":"sir-v1.0","k":"src","id":"src:sem_and_or_sc.sir:8:1","file":"sem_and_or_sc.sir","line":8,"col":1,"text":"end"}
+{"ir":"sir-v1.0","k":"type","id":"fn()->prim:bool","kind":"fn","params":[],"ret":"prim:bool","loc":{"line":8,"col":1,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:8:1"}
+{"ir":"sir-v1.0","k":"node","id":"n:8:0","tag":"block","fields":{"stmts":[{"t":"ref","id":"n:4:1"},{"t":"ref","id":"n:5:1"},{"t":"ref","id":"n:6:3"},{"t":"ref","id":"n:7:3"}]},"loc":{"line":8,"col":1,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:8:1"}
+{"ir":"sir-v1.0","k":"node","id":"n:8:1","tag":"fn","type_ref":"fn()->prim:bool","fields":{"name":"main","params":[],"body":{"t":"ref","id":"n:8:0"}},"loc":{"line":8,"col":1,"unit":"sem_and_or_sc.sir"},"src_ref":"src:sem_and_or_sc.sir:8:1"}
