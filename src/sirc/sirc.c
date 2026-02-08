@@ -47,11 +47,27 @@ typedef enum sirc_ids_mode {
   SIRC_IDS_STRING = 1,
 } sirc_ids_mode_t;
 
+typedef enum sirc_emit_src_mode {
+  SIRC_EMIT_SRC_NONE = 0,
+  SIRC_EMIT_SRC_LOC = 1,
+  SIRC_EMIT_SRC_SRCREF = 2,
+  SIRC_EMIT_SRC_BOTH = 3,
+} sirc_emit_src_mode_t;
+
+typedef struct SrcMapEntry {
+  int line;
+  int col;
+  int64_t id_num;
+  char* id_str;
+  bool emitted;
+} SrcMapEntry;
+
 typedef struct Emitter {
   FILE* out;
   const char* input_path;
 
   sirc_ids_mode_t ids_mode;
+  sirc_emit_src_mode_t emit_src;
 
   int64_t next_type_id;
   int64_t next_node_id;
@@ -61,6 +77,12 @@ typedef struct Emitter {
   size_t node_id_cap;
   char** type_id_by_id;
   size_t type_id_cap;
+
+  // src records (only used when emit_src includes src_ref)
+  SrcMapEntry* srcs;
+  size_t srcs_len;
+  size_t srcs_cap;
+  int64_t next_src_id;
 
   // Source-scoped node-id generation (multiple emitted nodes can originate from one .sir line).
   int last_id_line;
@@ -114,6 +136,7 @@ static void emit_type_ref_obj(int64_t ty);
 static char* xstrdup(const char* s);
 static void json_write_escaped(FILE* out, const char* s);
 static void locals_clear(void);
+static void emit_record_src_loc_trailer(void);
 
 int sirc_last_line = 1;
 int sirc_last_col = 1;
@@ -138,15 +161,102 @@ typedef struct sirc_diag {
 
 static sirc_diag_t g_diag = {0};
 static sirc_diag_format_t g_diag_format = SIRC_DIAG_TEXT;
-static bool g_diag_all = false; // TODO: implement (collector + error recovery)
+static bool g_diag_all = false;
+
+typedef struct sirc_diag_entry {
+  const char* code;
+  char* path;
+  int line;
+  int col;
+  char* msg;
+  char tok[64];
+} sirc_diag_entry_t;
+
+static sirc_diag_entry_t* g_diags = NULL;
+static size_t g_diags_len = 0;
+static size_t g_diags_cap = 0;
 
 static void diag_reset(void) {
   free(g_diag.msg);
   memset(&g_diag, 0, sizeof(g_diag));
 }
 
+static void diags_clear(void) {
+  for (size_t i = 0; i < g_diags_len; i++) {
+    free(g_diags[i].path);
+    free(g_diags[i].msg);
+  }
+  free(g_diags);
+  g_diags = NULL;
+  g_diags_len = 0;
+  g_diags_cap = 0;
+  diag_reset();
+}
+
+static char* read_source_line(const char* path, int line_no) {
+  if (!path || !path[0]) return NULL;
+  if (strcmp(path, "<input>") == 0) return NULL;
+  if (line_no <= 0) return NULL;
+  FILE* f = fopen(path, "rb");
+  if (!f) return NULL;
+
+  char* line = NULL;
+  size_t cap = 0;
+  size_t len = 0;
+  int ch = 0;
+  int cur = 1;
+  while ((ch = fgetc(f)) != EOF) {
+    if (cur == line_no) {
+      if (ch == '\n') break;
+      if (cap < len + 2) {
+        size_t ncap = cap ? cap * 2 : 256;
+        char* np = (char*)realloc(line, ncap);
+        if (!np) break;
+        line = np;
+        cap = ncap;
+      }
+      line[len++] = (char)ch;
+    }
+    if (ch == '\n') {
+      if (cur >= line_no) break;
+      cur++;
+    }
+  }
+  if (line) line[len] = 0;
+  fclose(f);
+  return line;
+}
+
 static void diag_setf(const char* code, const char* fmt, ...) {
-  if (g_diag.set && !g_diag_all) return;
+  if (g_diag_all) {
+    if (g_diags_len == g_diags_cap) {
+      g_diags_cap = g_diags_cap ? g_diags_cap * 2 : 8;
+      g_diags = (sirc_diag_entry_t*)realloc(g_diags, g_diags_cap * sizeof(sirc_diag_entry_t));
+      if (!g_diags) {
+        // If we can't allocate, fall back to single-diag behavior.
+        g_diag_all = false;
+      }
+    }
+    if (g_diag_all) {
+      sirc_diag_entry_t* e = &g_diags[g_diags_len++];
+      memset(e, 0, sizeof(*e));
+      e->code = code ? code : "sirc.error";
+      e->path = xstrdup(sirc_input_path());
+      e->line = sirc_last_line;
+      e->col = sirc_last_col;
+      memcpy(e->tok, sirc_last_tok, sizeof(e->tok));
+
+      va_list ap;
+      va_start(ap, fmt);
+      char tmp[2048];
+      vsnprintf(tmp, sizeof(tmp), fmt, ap);
+      va_end(ap);
+      e->msg = xstrdup(tmp);
+      return;
+    }
+  }
+
+  if (g_diag.set) return;
   diag_reset();
   g_diag.set = true;
   g_diag.code = code ? code : "sirc.error";
@@ -163,23 +273,22 @@ static void diag_setf(const char* code, const char* fmt, ...) {
   g_diag.msg = xstrdup(tmp);
 }
 
-static void diag_print_one(void) {
-  if (!g_diag.set) return;
+static void diag_print_entry(const sirc_diag_entry_t* e) {
+  if (!e) return;
   if (g_diag_format == SIRC_DIAG_JSON) {
-    // JSONL on stderr.
     FILE* out = stderr;
     fputs("{\"k\":\"diag\",\"tool\":\"sirc\",\"code\":", out);
-    json_write_escaped(out, g_diag.code ? g_diag.code : "sirc.error");
+    json_write_escaped(out, e->code ? e->code : "sirc.error");
     fputs(",\"path\":", out);
-    json_write_escaped(out, g_diag.path ? g_diag.path : "<input>");
-    fprintf(out, ",\"line\":%d,\"col\":%d", g_diag.line, g_diag.col);
-    if (g_diag.msg) {
+    json_write_escaped(out, e->path ? e->path : "<input>");
+    fprintf(out, ",\"line\":%d,\"col\":%d", e->line, e->col);
+    if (e->msg) {
       fputs(",\"msg\":", out);
-      json_write_escaped(out, g_diag.msg);
+      json_write_escaped(out, e->msg);
     }
-    if (g_diag.tok[0]) {
+    if (e->tok[0]) {
       fputs(",\"near\":", out);
-      json_write_escaped(out, g_diag.tok);
+      json_write_escaped(out, e->tok);
     }
     fputs("}\n", out);
     return;
@@ -188,53 +297,44 @@ static void diag_print_one(void) {
   // Best-effort caret diagnostics (single line).
   // We keep this simple: show the source line if it can be read, then a caret at the column.
   // (Multi-line context and tab-aware caret alignment can be added later.)
-  if (g_diag.path && strcmp(g_diag.path, "<input>") != 0 && g_diag.line > 0) {
-    FILE* f = fopen(g_diag.path, "rb");
-    if (f) {
-      char* line = NULL;
-      size_t cap = 0;
-      size_t len = 0;
-      int ch = 0;
-      int cur = 1;
-      while ((ch = fgetc(f)) != EOF) {
-        if (cur == g_diag.line) {
-          if (ch == '\n') break;
-          if (cap < len + 2) {
-            size_t ncap = cap ? cap * 2 : 256;
-            char* np = (char*)realloc(line, ncap);
-            if (!np) break;
-            line = np;
-            cap = ncap;
-          }
-          line[len++] = (char)ch;
-        }
-        if (ch == '\n') {
-          if (cur >= g_diag.line) break;
-          cur++;
-        }
-      }
-      if (line) line[len] = 0;
-      fclose(f);
-      if (line) {
-        fprintf(stderr, "  |\n");
-        fprintf(stderr, "%4d | %s\n", g_diag.line, line);
-        fprintf(stderr, "  | ");
-        int caret_col = g_diag.col;
-        if (caret_col < 1) caret_col = 1;
-        for (int i = 1; i < caret_col; i++) fputc(' ', stderr);
-        fputc('^', stderr);
-        fputc('\n', stderr);
-      }
-      free(line);
-    }
+  char* line = read_source_line(e->path, e->line);
+  if (line) {
+    fprintf(stderr, "  |\n");
+    fprintf(stderr, "%4d | %s\n", e->line, line);
+    fprintf(stderr, "  | ");
+    int caret_col = e->col;
+    if (caret_col < 1) caret_col = 1;
+    for (int i = 1; i < caret_col; i++) fputc(' ', stderr);
+    fputc('^', stderr);
+    fputc('\n', stderr);
+    free(line);
   }
 
   // Text mode (current style).
-  fprintf(stderr, "%s:%d:%d: error: %s", g_diag.path ? g_diag.path : "<input>", g_diag.line, g_diag.col,
-          g_diag.msg ? g_diag.msg : "error");
-  if (g_diag.tok[0]) fprintf(stderr, " (near '%s')", g_diag.tok);
+  fprintf(stderr, "%s:%d:%d: error: %s", e->path ? e->path : "<input>", e->line, e->col, e->msg ? e->msg : "error");
+  if (e->tok[0]) fprintf(stderr, " (near '%s')", e->tok);
   fputc('\n', stderr);
-  if (g_diag.code) fprintf(stderr, "  code: %s\n", g_diag.code);
+  if (e->code) fprintf(stderr, "  code: %s\n", e->code);
+}
+
+static void diag_print_one(void) {
+  if (!g_diag.set) return;
+  sirc_diag_entry_t e = {0};
+  e.code = g_diag.code;
+  e.path = (char*)g_diag.path;
+  e.line = g_diag.line;
+  e.col = g_diag.col;
+  e.msg = g_diag.msg;
+  memcpy(e.tok, g_diag.tok, sizeof(e.tok));
+  diag_print_entry(&e);
+}
+
+static void diag_print_all(void) {
+  if (g_diag_all && g_diags_len) {
+    for (size_t i = 0; i < g_diags_len; i++) diag_print_entry(&g_diags[i]);
+    return;
+  }
+  diag_print_one();
 }
 
 void yyerror(const char* s) {
@@ -341,12 +441,20 @@ static void sirc_reset_compiler_state(void) {
   g_emit.unit = NULL;
   g_emit.target = NULL;
 
+  // Src map.
+  for (size_t i = 0; i < g_emit.srcs_len; i++) free(g_emit.srcs[i].id_str);
+  free(g_emit.srcs);
+  g_emit.srcs = NULL;
+  g_emit.srcs_len = 0;
+  g_emit.srcs_cap = 0;
+  g_emit.next_src_id = 1;
+
   g_emit.next_type_id = 1;
   g_emit.next_node_id = 10;
   g_emit.last_id_line = 0;
   g_emit.line_id_seq = 0;
 
-  diag_reset();
+  diags_clear();
 }
 
 static void json_write_escaped(FILE* out, const char* s) {
@@ -405,6 +513,112 @@ static void emit_meta(void) {
   emitf("}\n");
 }
 
+static const char* path_basename(const char* p) {
+  if (!p) return NULL;
+  const char* s = strrchr(p, '/');
+  return s ? (s + 1) : p;
+}
+
+static void emit_loc_obj(void) {
+  int line = sirc_last_line > 0 ? sirc_last_line : 1;
+  int col = sirc_last_col > 0 ? sirc_last_col : 1;
+  emitf("{\"line\":%d", line);
+  if (col > 0) emitf(",\"col\":%d", col);
+  const char* bn = path_basename(g_emit.input_path);
+  if (bn && bn[0] && strcmp(bn, "<input>") != 0) {
+    emitf(",\"unit\":");
+    json_write_escaped(g_emit.out, bn);
+  }
+  emitf("}");
+}
+
+static SrcMapEntry* src_lookup(int line, int col) {
+  for (size_t i = 0; i < g_emit.srcs_len; i++) {
+    if (g_emit.srcs[i].line == line && g_emit.srcs[i].col == col) return &g_emit.srcs[i];
+  }
+  return NULL;
+}
+
+static SrcMapEntry* src_get_or_create(int line, int col) {
+  if (line <= 0) line = 1;
+  if (col <= 0) col = 1;
+  SrcMapEntry* e = src_lookup(line, col);
+  if (e) return e;
+  if (g_emit.srcs_len == g_emit.srcs_cap) {
+    g_emit.srcs_cap = g_emit.srcs_cap ? g_emit.srcs_cap * 2 : 32;
+    g_emit.srcs = (SrcMapEntry*)xrealloc(g_emit.srcs, g_emit.srcs_cap * sizeof(SrcMapEntry));
+  }
+  e = &g_emit.srcs[g_emit.srcs_len++];
+  memset(e, 0, sizeof(*e));
+  e->line = line;
+  e->col = col;
+  if (g_emit.ids_mode == SIRC_IDS_NUMERIC) {
+    e->id_num = g_emit.next_src_id++;
+  } else {
+    const char* file = g_emit.input_path ? g_emit.input_path : "<input>";
+    char buf[2048];
+    snprintf(buf, sizeof(buf), "src:%s:%d:%d", file, line, col);
+    e->id_str = xstrdup(buf);
+  }
+  return e;
+}
+
+static void emit_src_id_value(const SrcMapEntry* e) {
+  if (!e) return;
+  if (g_emit.ids_mode == SIRC_IDS_NUMERIC) {
+    emitf("%lld", (long long)e->id_num);
+  } else {
+    json_write_escaped(g_emit.out, e->id_str ? e->id_str : "src");
+  }
+}
+
+static void emit_src_record_if_needed(void) {
+  if (!(g_emit.emit_src == SIRC_EMIT_SRC_SRCREF || g_emit.emit_src == SIRC_EMIT_SRC_BOTH)) return;
+  SrcMapEntry* e = src_get_or_create(sirc_last_line, sirc_last_col);
+  if (!e || e->emitted) return;
+  e->emitted = true;
+
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"src\",\"id\":");
+  emit_src_id_value(e);
+  if (g_emit.input_path && strcmp(g_emit.input_path, "<input>") != 0) {
+    emitf(",\"file\":");
+    json_write_escaped(g_emit.out, g_emit.input_path);
+  }
+  emitf(",\"line\":%d", e->line);
+  if (e->col > 0) emitf(",\"col\":%d", e->col);
+  char* text = read_source_line(g_emit.input_path, e->line);
+  if (text) {
+    emitf(",\"text\":");
+    json_write_escaped(g_emit.out, text);
+    free(text);
+  }
+  emitf("}\n");
+}
+
+static void emit_record_prepare(void) {
+  // If we are emitting src_ref, the referenced src record MUST appear earlier in the stream.
+  if (g_emit.emit_src == SIRC_EMIT_SRC_SRCREF || g_emit.emit_src == SIRC_EMIT_SRC_BOTH) {
+    emit_src_record_if_needed();
+  }
+}
+
+static void emit_record_src_loc_trailer(void) {
+  if (g_emit.emit_src == SIRC_EMIT_SRC_NONE) return;
+
+  if (g_emit.emit_src == SIRC_EMIT_SRC_LOC || g_emit.emit_src == SIRC_EMIT_SRC_BOTH) {
+    emitf(",\"loc\":");
+    emit_loc_obj();
+  }
+
+  if (g_emit.emit_src == SIRC_EMIT_SRC_SRCREF || g_emit.emit_src == SIRC_EMIT_SRC_BOTH) {
+    SrcMapEntry* e = src_get_or_create(sirc_last_line, sirc_last_col);
+    if (e) {
+      emitf(",\"src_ref\":");
+      emit_src_id_value(e);
+    }
+  }
+}
+
 static int64_t type_lookup(const char* key) {
   for (size_t i = 0; i < g_emit.types_len; i++) {
     if (strcmp(g_emit.types[i].key, key) == 0) return g_emit.types[i].id;
@@ -429,10 +643,12 @@ static int64_t type_prim(const char* prim) {
   int64_t id = type_lookup(key);
   if (id) return id;
   id = type_insert(key);
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"prim\",\"prim\":");
   json_write_escaped(g_emit.out, prim);
+  emit_record_src_loc_trailer();
   emitf("}\n");
   return id;
 }
@@ -465,10 +681,12 @@ static int64_t type_ptr(int64_t of) {
   }
   id = type_insert(key);
   free(key);
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"ptr\",\"of\":");
   emit_type_id_value(of);
+  emit_record_src_loc_trailer();
   emitf("}\n");
   return id;
 }
@@ -487,11 +705,14 @@ static int64_t type_array(int64_t of, int64_t len) {
   }
   id = type_insert(key);
   free(key);
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"array\",\"of\":");
   emit_type_id_value(of);
-  emitf(",\"len\":%lld}\n", (long long)len);
+  emitf(",\"len\":%lld", (long long)len);
+  emit_record_src_loc_trailer();
+  emitf("}\n");
   return id;
 }
 
@@ -546,6 +767,7 @@ static int64_t type_fn(const int64_t* params, size_t n, int64_t ret) {
   id = type_insert(key);
   free(key);
 
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"fn\",\"params\":[");
@@ -555,6 +777,7 @@ static int64_t type_fn(const int64_t* params, size_t n, int64_t ret) {
   }
   emitf("],\"ret\":");
   emit_type_id_value(ret);
+  emit_record_src_loc_trailer();
   emitf("}\n");
   return id;
 }
@@ -574,10 +797,12 @@ static int64_t type_fun(int64_t sig) {
   id = type_insert(key);
   free(key);
 
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"fun\",\"sig\":");
   emit_type_id_value(sig);
+  emit_record_src_loc_trailer();
   emitf("}\n");
   return id;
 }
@@ -600,12 +825,14 @@ static int64_t type_closure(int64_t call_sig, int64_t env) {
   id = type_insert(key);
   free(key);
 
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"closure\",\"callSig\":");
   emit_type_id_value(call_sig);
   emitf(",\"env\":");
   emit_type_id_value(env);
+  emit_record_src_loc_trailer();
   emitf("}\n");
   return id;
 }
@@ -717,6 +944,7 @@ static int64_t type_sum(const SircSumVariantList* v) {
   id = type_insert(key);
   free(key);
 
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
   emit_type_id_value(id);
   emitf(",\"kind\":\"sum\",\"variants\":[");
@@ -730,7 +958,9 @@ static int64_t type_sum(const SircSumVariantList* v) {
     }
     emitf("}");
   }
-  emitf("]}\n");
+  emitf("]");
+  emit_record_src_loc_trailer();
+  emitf("}\n");
   return id;
 }
 
@@ -929,6 +1159,7 @@ static const char* lookup_node_name(int64_t id) {
 
 static int64_t emit_node_with_fields_begin(const char* tag, int64_t type_ref) {
   int64_t id = next_node_id();
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":");
   emit_node_id_value(id);
   emitf(",\"tag\":");
@@ -941,7 +1172,11 @@ static int64_t emit_node_with_fields_begin(const char* tag, int64_t type_ref) {
   return id;
 }
 
-static void emit_fields_end(void) { emitf("}}\n"); }
+static void emit_fields_end(void) {
+  emitf("}");
+  emit_record_src_loc_trailer();
+  emitf("}\n");
+}
 
 static int64_t emit_param_node(const char* name, int64_t type_ref) {
   int64_t id = emit_node_with_fields_begin("param", type_ref);
@@ -953,10 +1188,12 @@ static int64_t emit_param_node(const char* name, int64_t type_ref) {
 
 static int64_t emit_bparam_node(int64_t type_ref) {
   int64_t id = next_node_id();
+  emit_record_prepare();
   emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":");
   emit_node_id_value(id);
   emitf(",\"tag\":\"bparam\",\"type_ref\":");
   emit_type_id_value(type_ref);
+  emit_record_src_loc_trailer();
   emitf("}\n");
   return id;
 }
@@ -1217,6 +1454,7 @@ static void params_add(SircParamList* p, char* name, int64_t ty) {
 
 static void nodelist_add(SircNodeList* l, int64_t n) {
   if (!l) return;
+  if (n == 0) return;
   if (l->len == l->cap) {
     l->cap = l->cap ? l->cap * 2 : 16;
     l->nodes = (int64_t*)xrealloc(l->nodes, l->cap * sizeof(int64_t));
@@ -2268,8 +2506,9 @@ static void usage(FILE* out) {
           "  --help, -h    Show this help message\n"
           "  --version     Show version information\n"
           "  --ids <mode>  Id mode: string (default) or numeric\n"
+          "  --emit-src <none|loc|src_ref|both>  Attach source mapping (default: loc)\n"
           "  --diagnostics <text|json>  Diagnostic output format (default: text)\n"
-          "  --all         Report all errors (TODO: collector)\n"
+          "  --all         Report all errors\n"
           "  --lint        Parse/validate only (no output)\n"
           "  --tool        Enable filelist + -o output mode\n"
           "  --print-support  Print supported syntax/features and exit\n"
@@ -2287,6 +2526,7 @@ static void print_support(FILE* out, bool as_json) {
     json_write_escaped(out, SIRC_VERSION);
     fputs(",\"ids_default\":\"string\",\"ids_modes\":[\"string\",\"numeric\"],\"features\":[", out);
     fputs("\"fun:v1\",\"closure:v1\",\"adt:v1\"", out);
+    fputs("],\"emit_src_default\":\"loc\",\"emit_src_modes\":[\"none\",\"loc\",\"src_ref\",\"both\"", out);
     fputs("],\"types\":[", out);
     fputs("\"prim(i8,i16,i32,i64,f32,f64,bool,ptr)\",\"^T\",\"array(T,N)\",\"fn(T,...)->R\",\"fun(Sig)\",\"closure(CallSig,EnvTy)\",\"sum{V, V:Ty,...}\"",
           out);
@@ -2325,13 +2565,13 @@ static void print_support(FILE* out, bool as_json) {
 static int compile_one(const char* in_path, FILE* out) {
   if (!in_path || !out) return 2;
 
-  diag_reset();
+  diags_clear();
 
   FILE* in = fopen(in_path, "rb");
   if (!in) {
     g_emit.input_path = in_path;
     diag_setf("sirc.io.open", "%s: %s", in_path, strerror(errno));
-    diag_print_one();
+    diag_print_all();
     return 2;
   }
 
@@ -2341,6 +2581,12 @@ static int compile_one(const char* in_path, FILE* out) {
   g_emit.next_node_id = 10;
   g_emit.last_id_line = 0;
   g_emit.line_id_seq = 0;
+  g_emit.next_src_id = 1;
+  for (size_t i = 0; i < g_emit.srcs_len; i++) free(g_emit.srcs[i].id_str);
+  free(g_emit.srcs);
+  g_emit.srcs = NULL;
+  g_emit.srcs_len = 0;
+  g_emit.srcs_cap = 0;
 
   yyin = in;
   yyrestart(in);
@@ -2348,12 +2594,12 @@ static int compile_one(const char* in_path, FILE* out) {
   fclose(in);
 
   if (rc != 0) {
-    if (!g_diag.set) diag_setf("sirc.parse", "parse failed");
-    diag_print_one();
+    if (!g_diag.set && !(g_diag_all && g_diags_len)) diag_setf("sirc.parse", "parse failed");
+    diag_print_all();
     return 1;
   }
-  if (g_diag.set) {
-    diag_print_one();
+  if (g_diag.set || (g_diag_all && g_diags_len)) {
+    diag_print_all();
     return 1;
   }
   return 0;
@@ -2372,6 +2618,7 @@ int main(int argc, char** argv) {
   size_t inputs_cap = 0;
 
   g_emit.ids_mode = SIRC_IDS_STRING;
+  g_emit.emit_src = SIRC_EMIT_SRC_LOC;
 
   for (int i = 1; i < argc; i++) {
     const char* a = argv[i];
@@ -2403,6 +2650,16 @@ int main(int argc, char** argv) {
       if (strcmp(f, "text") == 0) g_diag_format = SIRC_DIAG_TEXT;
       else if (strcmp(f, "json") == 0) g_diag_format = SIRC_DIAG_JSON;
       else die_at_last("sirc: unknown --diagnostics format: %s", f);
+      continue;
+    }
+    if (strcmp(a, "--emit-src") == 0) {
+      if (i + 1 >= argc) die_at_last("sirc: --emit-src requires none|loc|src_ref|both");
+      const char* m = argv[++i];
+      if (strcmp(m, "none") == 0) g_emit.emit_src = SIRC_EMIT_SRC_NONE;
+      else if (strcmp(m, "loc") == 0) g_emit.emit_src = SIRC_EMIT_SRC_LOC;
+      else if (strcmp(m, "src_ref") == 0) g_emit.emit_src = SIRC_EMIT_SRC_SRCREF;
+      else if (strcmp(m, "both") == 0) g_emit.emit_src = SIRC_EMIT_SRC_BOTH;
+      else die_at_last("sirc: unknown --emit-src mode: %s", m);
       continue;
     }
     if (strcmp(a, "--all") == 0) {

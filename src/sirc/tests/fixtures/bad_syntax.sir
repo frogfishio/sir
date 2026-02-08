@@ -1,0 +1,7 @@
+unit bad_syntax target host
+
+fn main() -> i32
+  let x:i32 = add(1, )  ;; missing arg triggers syntax error
+  return x
+end
+

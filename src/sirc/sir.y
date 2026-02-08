@@ -115,6 +115,7 @@ decl
   : fn_decl
   | extern_fn_decl
   | type_decl
+  | error nl_plus              { yyerrok; }
   ;
 
 type_decl
@@ -167,6 +168,7 @@ stmt
   | return_stmt nl_star       { $$ = $1; }
   | expr_stmt nl_star         { $$ = $1; }
   | term_stmt nl_star         { $$ = $1; }
+  | error nl_plus             { $$ = 0; yyerrok; }
   ;
 
 term_stmt
@@ -237,6 +239,8 @@ bparams
 block_decl
   : T_BLOCK T_ID bparams_opt nl_star stmt_list T_END nl_star
     { $$ = sirc_block_def($2, $3, $5); }
+  | error nl_plus
+    { $$ = 0; yyerrok; }
   ;
 
 let_stmt

@@ -119,6 +119,32 @@ if(TARGET sircc)
   sirc_add_verify_test(sirc_verify_sendloop_mono examples/sendloop_mono.sir)
   sirc_add_verify_test(sirc_verify_sendloop_uniform examples/sendloop_uniform.sir)
 
+  add_test(
+    NAME sirc_lint_add
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRC=$<TARGET_FILE:sirc>
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/examples/add.sir
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_lint.cmake
+  )
+
+  add_test(
+    NAME sirc_diag_json_bad_syntax
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRC=$<TARGET_FILE:sirc>
+      -DINPUT=${CMAKE_CURRENT_LIST_DIR}/tests/fixtures/bad_syntax.sir
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_diag_json.cmake
+  )
+
+  add_test(
+    NAME sirc_tool_multi_hello_add
+    COMMAND ${CMAKE_COMMAND}
+      -DSIRC=$<TARGET_FILE:sirc>
+      -DINPUT1=${CMAKE_CURRENT_LIST_DIR}/examples/hello.sir
+      -DINPUT2=${CMAKE_CURRENT_LIST_DIR}/examples/add.sir
+      -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sirc_tool_multi_hello_add.jsonl
+      -P ${CMAKE_CURRENT_LIST_DIR}/tests/run_sirc_tool_multi.cmake
+  )
+
   if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/zem" AND EXISTS "${CMAKE_SOURCE_DIR}/ext/integration-pack/macos-arm64/bin/ircheck")
     function(sirc_add_zem_test name input_rel expect_stdout)
       add_test(

@@ -9,17 +9,17 @@ Legend:
 ## P0 — Ship-worthy CLI + diagnostics
 
 - [x] Add `--diagnostics text|json` (JSONL on stderr) with stable diagnostic codes and a consistent record shape.
-- [ ] Add `--all` to continue after the first error (collect + print multiple diagnostics).
+- [x] Add `--all` to continue after the first error (collect + print multiple diagnostics).
   - [x] In `--tool` mode: continue compiling other files and don’t append partial output for failing inputs.
-  - [ ] Intra-file recovery + multi-diagnostic collection (Bison error recovery).
+  - [x] Intra-file recovery + multi-diagnostic collection (Bison error recovery).
 - [x] Add caret diagnostics in text mode (1–3 context lines with `^` under the span).
 - [x] Define and document exit codes: `0` success, `1` compile/verify error, `2` tool error (I/O, OOM, internal).
 
 ## P0 — Source mapping contract (output)
 
-- [ ] Emit `k:"src"` records and attach `src_ref`/`loc` to every emitted record (meta/type/node/sym/ext/diag).
-- [ ] Make source mapping deterministic (stable `src_ref` allocation; no dependence on hash iteration order).
-- [ ] Add `--emit-src {none|loc|src_ref|both}` (or similar) to control output size and determinism in fixtures.
+- [x] Emit `k:"src"` records and attach `src_ref`/`loc` to emitted semantic records (type/node; and later sym/ext/diag when sirc emits them).
+- [x] Make source mapping deterministic (stable `src_ref` allocation; no dependence on hash iteration order).
+- [x] Add `--emit-src {none|loc|src_ref|both}` (or similar) to control output size and determinism in fixtures.
 
 ## P0 — CLI parity / “tool mode”
 
@@ -34,6 +34,7 @@ Legend:
 - [ ] Golden fixtures: `.sir → .sir.jsonl` exact-match tests for core constructs (and for each supported pack).
 - [ ] Negative fixtures: assert diagnostic code + span for common failures (unknown type, wrong arg count, bad attrs).
 - [ ] Pipeline fixtures: `sirc` output must pass `sircc --verify-only` (already covered by existing tests; expand).
+- [x] Add minimal CLI regression tests: `--lint`, `--diagnostics json`, and `--tool` multi-input.
 - [ ] Optional runtime smoke: selected fixtures run via `sem` and assert exit code/stdout (when deterministic).
 
 ## P1 — Language usability + docs
