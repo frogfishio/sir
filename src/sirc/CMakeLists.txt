@@ -108,6 +108,15 @@ sirc_add_golden_test(sirc_golden_sem_scope_cfg examples/sem_scope_cfg.sir tests/
 sirc_add_golden_test(sirc_golden_hello examples/hello.sir tests/golden/hello.sir.jsonl)
 sirc_add_golden_test(sirc_golden_add examples/add.sir tests/golden/add.sir.jsonl)
 sirc_add_golden_test(sirc_golden_cfg_if examples/cfg_if.sir tests/golden/cfg_if.sir.jsonl)
+sirc_add_golden_test(sirc_golden_cfg_switch examples/cfg_switch.sir tests/golden/cfg_switch.sir.jsonl)
+sirc_add_golden_test(sirc_golden_cfg_join_phi examples/cfg_join_phi.sir tests/golden/cfg_join_phi.sir.jsonl)
+sirc_add_golden_test(sirc_golden_mem_stack examples/mem_stack.sir tests/golden/mem_stack.sir.jsonl)
+sirc_add_golden_test(sirc_golden_mem_copy_fill examples/mem_copy_fill.sir tests/golden/mem_copy_fill.sir.jsonl)
+sirc_add_golden_test(sirc_golden_ptr_layout examples/ptr_layout.sir tests/golden/ptr_layout.sir.jsonl)
+sirc_add_golden_test(sirc_golden_alloca_array examples/alloca_array.sir tests/golden/alloca_array.sir.jsonl)
+sirc_add_golden_test(sirc_golden_load_store_no_align examples/load_store_no_align.sir tests/golden/load_store_no_align.sir.jsonl)
+sirc_add_golden_test(sirc_golden_trap examples/trap.sir tests/golden/trap.sir.jsonl)
+sirc_add_golden_test(sirc_golden_call_indirect_ptrsym examples/call_indirect_ptrsym.sir tests/golden/call_indirect_ptrsym.sir.jsonl)
 
 function(sirc_add_diag_expect_test name input_rel expect_code expect_line expect_col expect_msg_substr)
   add_test(
