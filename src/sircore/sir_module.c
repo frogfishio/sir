@@ -68,6 +68,10 @@ struct sir_module_builder {
 
   sir_func_id_t entry;
   bool has_entry;
+
+  // Current source context applied to emitted instructions.
+  uint32_t cur_src_node_id;
+  uint32_t cur_src_line;
 };
 
 typedef struct sir_module_impl {
@@ -356,11 +360,25 @@ bool sir_mb_func_set_sig(sir_module_builder_t* b, sir_func_id_t f, sir_sig_t sig
   return true;
 }
 
+void sir_mb_set_src(sir_module_builder_t* b, uint32_t node_id, uint32_t line) {
+  if (!b) return;
+  b->cur_src_node_id = node_id;
+  b->cur_src_line = line;
+}
+
+void sir_mb_clear_src(sir_module_builder_t* b) {
+  if (!b) return;
+  b->cur_src_node_id = 0;
+  b->cur_src_line = 0;
+}
+
 static bool emit_inst(sir_module_builder_t* b, sir_func_id_t f, sir_inst_t inst) {
   if (!b) return false;
   if (f == 0 || f > b->funcs.n) return false;
   sir_dyn_insts_t* d = &b->func_insts[f - 1];
   if (!grow_insts(d, 1)) return false;
+  inst.src_node_id = b->cur_src_node_id;
+  inst.src_line = b->cur_src_line;
   d->p[d->n++] = inst;
   return true;
 }

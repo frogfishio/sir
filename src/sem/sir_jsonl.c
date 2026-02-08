@@ -693,6 +693,7 @@ static bool eval_const_i32(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
   if (!json_get_i64(vv, &i)) return false;
   if (i < INT32_MIN || i > INT32_MAX) return false;
   const sir_val_id_t slot = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_const_i32(c->mb, c->fn, slot, (int32_t)i)) return false;
   if (!set_node_val(c, node_id, slot, VK_I32)) return false;
   *out_slot = slot;
@@ -708,6 +709,7 @@ static bool eval_const_i8(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   if (!json_get_i64(vv, &i)) return false;
   if (i < 0 || i > 255) return false;
   const sir_val_id_t slot = alloc_slot(c, VK_I8);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_const_i8(c->mb, c->fn, slot, (uint8_t)i)) return false;
   if (!set_node_val(c, node_id, slot, VK_I8)) return false;
   *out_slot = slot;
@@ -722,6 +724,7 @@ static bool eval_const_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
   int64_t i = 0;
   if (!json_get_i64(vv, &i)) return false;
   const sir_val_id_t slot = alloc_slot(c, VK_I64);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_const_i64(c->mb, c->fn, slot, i)) return false;
   if (!set_node_val(c, node_id, slot, VK_I64)) return false;
   *out_slot = slot;
@@ -737,6 +740,7 @@ static bool eval_const_bool(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   if (!json_get_i64(vv, &i)) return false;
   if (i != 0 && i != 1) return false;
   const sir_val_id_t slot = alloc_slot(c, VK_BOOL);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_const_bool(c->mb, c->fn, slot, i == 1)) return false;
   if (!set_node_val(c, node_id, slot, VK_BOOL)) return false;
   *out_slot = slot;
@@ -748,6 +752,7 @@ static bool eval_alloca_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_inf
                                  val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
   const sir_val_id_t slot = alloc_slot(c, VK_PTR);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_alloca(c->mb, c->fn, slot, size, align)) return false;
   if (!set_node_val(c, node_id, slot, VK_PTR)) return false;
   *out_slot = slot;
@@ -781,6 +786,7 @@ static bool eval_store_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info
     return false;
   }
 
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (k == SIR_INST_STORE_I8) return sir_mb_emit_store_i8(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_I32) return sir_mb_emit_store_i32(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_I64) return sir_mb_emit_store_i64(c->mb, c->fn, addr_slot, val_slot, align);
@@ -826,6 +832,7 @@ static bool eval_mem_copy_stmt(sirj_ctx_t* c, uint32_t node_id, const node_info_
     }
   }
 
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   return sir_mb_emit_mem_copy(c->mb, c->fn, dst_slot, src_slot, len_slot, overlap_allow);
 }
 
@@ -856,6 +863,7 @@ static bool eval_mem_fill_stmt(sirj_ctx_t* c, uint32_t node_id, const node_info_
   const JsonValue* fv = json_obj_get(n->fields_obj, "flags");
   if (fv && !json_is_object(fv)) return false;
 
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   return sir_mb_emit_mem_fill(c->mb, c->fn, dst_slot, byte_slot, len_slot);
 }
 
@@ -882,6 +890,7 @@ static bool eval_load_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_
   }
   const sir_val_id_t dst = alloc_slot(c, outk);
   bool ok = false;
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (k == SIR_INST_LOAD_I8) ok = sir_mb_emit_load_i8(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_I32) ok = sir_mb_emit_load_i32(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_I64) ok = sir_mb_emit_load_i64(c->mb, c->fn, dst, addr_slot, align);
@@ -903,6 +912,7 @@ static bool eval_cstr(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir
   if (len != strlen(s)) return false;
   const sir_val_id_t ptr_slot = alloc_slot(c, VK_PTR);
   const sir_val_id_t len_slot = alloc_slot(c, VK_I64);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_const_bytes(c->mb, c->fn, ptr_slot, len_slot, (const uint8_t*)s, len)) return false;
   if (!set_node_val(c, node_id, ptr_slot, VK_PTR)) return false;
   *out_slot = ptr_slot;
@@ -958,6 +968,7 @@ static bool eval_i32_add_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
     return false;
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i32_add(c->mb, c->fn, dst, a_slot, b_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
@@ -996,6 +1007,7 @@ static bool eval_i32_bin_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
   bool ok = false;
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   switch (k) {
     case SIR_INST_I32_SUB:
       ok = sir_mb_emit_i32_sub(c->mb, c->fn, dst, a_slot, b_slot);
@@ -1070,6 +1082,7 @@ static bool eval_i32_zext_i8(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
     return false;
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i32_zext_i8(c->mb, c->fn, dst, x_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
@@ -1101,6 +1114,7 @@ static bool eval_i64_zext_i32(sirj_ctx_t* c, uint32_t node_id, const node_info_t
     return false;
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I64);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i64_zext_i32(c->mb, c->fn, dst, x_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I64)) return false;
   *out_slot = dst;
@@ -1134,6 +1148,7 @@ static bool eval_i32_un_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_inf
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
   bool ok = false;
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (k == SIR_INST_I32_NOT) ok = sir_mb_emit_i32_not(c->mb, c->fn, dst, x_slot);
   else if (k == SIR_INST_I32_NEG) ok = sir_mb_emit_i32_neg(c->mb, c->fn, dst, x_slot);
   else return false;
@@ -1168,6 +1183,7 @@ static bool eval_i32_trunc_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_
     return false;
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i32_trunc_i64(c->mb, c->fn, dst, x_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
@@ -1189,6 +1205,7 @@ static bool eval_i32_cmp_eq(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   if (!eval_node(c, b_id, &b_slot, &bk)) return false;
   if (ak != VK_I32 || bk != VK_I32) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i32_cmp_eq(c->mb, c->fn, dst, a_slot, b_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
   *out_slot = dst;
@@ -1208,6 +1225,7 @@ static bool eval_binop_add(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
   if (!eval_node(c, b_id, &b_slot, &bk)) return false;
   if (ak != VK_I32 || bk != VK_I32) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i32_add(c->mb, c->fn, dst, a_slot, b_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
@@ -1227,6 +1245,7 @@ static bool eval_ptr_to_i64_passthrough(sirj_ctx_t* c, uint32_t node_id, const n
   if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
   if (ak != VK_PTR) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_I64);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_ptr_to_i64(c->mb, c->fn, dst, arg_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I64)) return false;
   *out_slot = dst;
@@ -1246,6 +1265,7 @@ static bool eval_ptr_from_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t
   if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
   if (ak != VK_I64 && ak != VK_I32) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_ptr_from_i64(c->mb, c->fn, dst, arg_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
   *out_slot = dst;
@@ -1265,6 +1285,7 @@ static bool eval_bool_not(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   if (!eval_node(c, x_id, &x_slot, &xk)) return false;
   if (xk != VK_BOOL) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_bool_not(c->mb, c->fn, dst, x_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
   *out_slot = dst;
@@ -1288,6 +1309,7 @@ static bool eval_bool_bin(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   if (ak != VK_BOOL || bk != VK_BOOL) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
   bool ok = false;
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (k == SIR_INST_BOOL_AND) ok = sir_mb_emit_bool_and(c->mb, c->fn, dst, a_slot, b_slot);
   else if (k == SIR_INST_BOOL_OR) ok = sir_mb_emit_bool_or(c->mb, c->fn, dst, a_slot, b_slot);
   else ok = sir_mb_emit_bool_xor(c->mb, c->fn, dst, a_slot, b_slot);
@@ -1314,6 +1336,7 @@ static bool eval_i32_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   if (ak != VK_I32 || bk != VK_I32) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
   bool ok = false;
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   switch (k) {
     case SIR_INST_I32_CMP_NE:
       ok = sir_mb_emit_i32_cmp_ne(c->mb, c->fn, dst, a_slot, b_slot);
@@ -1368,6 +1391,7 @@ static bool eval_ptr_size_alignof(sirj_ctx_t* c, uint32_t node_id, const node_in
   }
   if (want_sizeof) {
     const sir_val_id_t dst = alloc_slot(c, VK_I64);
+    sir_mb_set_src(c->mb, node_id, n->loc_line);
     if (!sir_mb_emit_const_i64(c->mb, c->fn, dst, (int64_t)size)) return false;
     if (!set_node_val(c, node_id, dst, VK_I64)) return false;
     *out_slot = dst;
@@ -1375,6 +1399,7 @@ static bool eval_ptr_size_alignof(sirj_ctx_t* c, uint32_t node_id, const node_in
     return true;
   }
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_const_i32(c->mb, c->fn, dst, (int32_t)align)) return false;
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
@@ -1406,6 +1431,7 @@ static bool eval_ptr_sym(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   sir_global_id_t gid = 0;
   if (find_global_gid_by_name(c, nm, &gid)) {
     const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+    sir_mb_set_src(c->mb, node_id, n->loc_line);
     if (!sir_mb_emit_global_addr(c->mb, c->fn, dst, gid)) return false;
     if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
     *out_slot = dst;
@@ -1418,6 +1444,7 @@ static bool eval_ptr_sym(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
     const uint64_t tag = UINT64_C(0xF000000000000000);
     const zi_ptr_t p = (zi_ptr_t)(tag | (uint64_t)fid);
     const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+    sir_mb_set_src(c->mb, node_id, n->loc_line);
     if (!sir_mb_emit_const_ptr(c->mb, c->fn, dst, p)) return false;
     if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
     *out_slot = dst;
@@ -1465,6 +1492,7 @@ static bool eval_ptr_offset(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
     return false;
   }
   const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_ptr_offset(c->mb, c->fn, dst, base_slot, idx_slot, scale)) return false;
   if (!set_node_val(c, node_id, dst, VK_PTR)) return false;
   *out_slot = dst;
@@ -1522,6 +1550,7 @@ static bool eval_select(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
   if (ak != tk || bk != tk) return false;
 
   const sir_val_id_t dst = alloc_slot(c, tk);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_select(c->mb, c->fn, dst, cond_slot, a_slot, b_slot)) return false;
   if (!set_node_val(c, node_id, dst, tk)) return false;
   *out_slot = dst;
@@ -1544,6 +1573,7 @@ static bool eval_ptr_addsub(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   if (bk != VK_PTR) return false;
   if (ok != VK_I64 && ok != VK_I32) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_PTR);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   const bool ok_emit =
       is_sub ? sir_mb_emit_ptr_sub(c->mb, c->fn, dst, base_slot, off_slot) : sir_mb_emit_ptr_add(c->mb, c->fn, dst, base_slot, off_slot);
   if (!ok_emit) return false;
@@ -1567,6 +1597,7 @@ static bool eval_ptr_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   if (!eval_node(c, b_id, &b_slot, &bk)) return false;
   if (ak != VK_PTR || bk != VK_PTR) return false;
   const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   const bool ok_emit =
       is_ne ? sir_mb_emit_ptr_cmp_ne(c->mb, c->fn, dst, a_slot, b_slot) : sir_mb_emit_ptr_cmp_eq(c->mb, c->fn, dst, a_slot, b_slot);
   if (!ok_emit) return false;
@@ -1739,12 +1770,13 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
     else if (rp == SIR_PRIM_PTR) rk = VK_PTR;
     else if (rp == SIR_PRIM_BOOL) rk = VK_BOOL;
     else return false;
-    if (rk != VK_INVALID) {
+  if (rk != VK_INVALID) {
       res_slots[0] = alloc_slot(c, rk);
       result_count = 1;
     }
   }
 
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (result_count) {
     if (callee_sym) {
       if (!sir_mb_emit_call_extern_res(c->mb, c->fn, callee_sym, args_slots, argc, res_slots, result_count)) return false;
@@ -2168,6 +2200,10 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
           saw_term = true;
           if (si + 1 != a->len) return false; // no stmts after terminator (MVP)
 
+          if (sid < c->node_cap && c->nodes[sid].present) {
+            sir_mb_set_src(c->mb, sid, c->nodes[sid].loc_line);
+          }
+
           if (term.k == TERM_RETURN_SLOT) {
             if (is_entry) {
               if (!sir_mb_emit_exit_val(c->mb, c->fn, term.value_slot)) return false;
@@ -2226,6 +2262,9 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
             }
 
             uint32_t ip = 0;
+            if (sid < c->node_cap && c->nodes[sid].present) {
+              sir_mb_set_src(c->mb, sid, c->nodes[sid].loc_line);
+            }
             if (!sir_mb_emit_br_args(c->mb, c->fn, 0, src_slots, dst_slots, dst_count, &ip)) return false;
             if (patch_n >= (uint32_t)(sizeof(patches) / sizeof(patches[0]))) return false;
             patches[patch_n++] = (patch_rec_t){.k = 1, .ip = ip, .a = term.to_block, .b = 0};
@@ -2261,6 +2300,9 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
             }
 
             uint32_t ip = 0;
+            if (sid < c->node_cap && c->nodes[sid].present) {
+              sir_mb_set_src(c->mb, sid, c->nodes[sid].loc_line);
+            }
             if (!sir_mb_emit_switch(c->mb, c->fn, scrut_slot, case_lits, case_ip0, ncase, 0, &ip)) return false;
             if (patch_n >= (uint32_t)(sizeof(patches) / sizeof(patches[0]))) return false;
             patches[patch_n++] =
@@ -3074,6 +3116,16 @@ static const char* sem_trace_func_name(const sir_module_t* m, sir_func_id_t fid)
   return f->name ? f->name : "";
 }
 
+static void sem_trace_write_src(FILE* out, const sir_module_t* m, sir_func_id_t fid, uint32_t ip) {
+  if (!out || !m || fid == 0 || fid > m->func_count) return;
+  const sir_func_t* f = &m->funcs[fid - 1];
+  if (!f || ip >= f->inst_count) return;
+  const uint32_t node_id = f->insts[ip].src_node_id;
+  const uint32_t line = f->insts[ip].src_line;
+  if (!node_id && !line) return;
+  fprintf(out, ",\"node\":%u,\"line\":%u", (unsigned)node_id, (unsigned)line);
+}
+
 static void sem_trace_on_step(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k) {
   sem_trace_ctx_t* t = (sem_trace_ctx_t*)user;
   if (!t || !t->out) return;
@@ -3082,7 +3134,9 @@ static void sem_trace_on_step(void* user, const sir_module_t* m, sir_func_id_t f
   if (t->op_filter && t->op_filter[0] && strcmp(sir_inst_kind_name(k), t->op_filter) != 0) return;
   fprintf(t->out, "{\"tool\":\"sem\",\"k\":\"trace_step\",\"fid\":%u,\"func\":\"", (unsigned)fid);
   sem_json_write_escaped(t->out, fn);
-  fprintf(t->out, "\",\"ip\":%u,\"op\":\"%s\"}\n", (unsigned)ip, sir_inst_kind_name(k));
+  fprintf(t->out, "\",\"ip\":%u,\"op\":\"%s\"", (unsigned)ip, sir_inst_kind_name(k));
+  sem_trace_write_src(t->out, m, fid, ip);
+  fprintf(t->out, "}\n");
 }
 
 static void sem_cov_on_step(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k) {
@@ -3109,8 +3163,10 @@ static void sem_trace_on_mem(void* user, const sir_module_t* m, sir_func_id_t fi
   if (t->func_filter && t->func_filter[0] && strcmp(fn, t->func_filter) != 0) return;
   fprintf(t->out, "{\"tool\":\"sem\",\"k\":\"trace_mem\",\"fid\":%u,\"func\":\"", (unsigned)fid);
   sem_json_write_escaped(t->out, fn);
-  fprintf(t->out, "\",\"ip\":%u,\"kind\":\"%s\",\"addr\":%" PRIu64 ",\"size\":%u}\n", (unsigned)ip, (k == SIR_MEM_WRITE) ? "w" : "r",
+  fprintf(t->out, "\",\"ip\":%u,\"kind\":\"%s\",\"addr\":%" PRIu64 ",\"size\":%u", (unsigned)ip, (k == SIR_MEM_WRITE) ? "w" : "r",
           (uint64_t)addr, (unsigned)size);
+  sem_trace_write_src(t->out, m, fid, ip);
+  fprintf(t->out, "}\n");
 }
 
 static void sem_trace_on_hostcall(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, const char* callee, int32_t rc) {
@@ -3122,7 +3178,9 @@ static void sem_trace_on_hostcall(void* user, const sir_module_t* m, sir_func_id
   sem_json_write_escaped(t->out, fn);
   fprintf(t->out, "\",\"ip\":%u,\"callee\":\"", (unsigned)ip);
   sem_json_write_escaped(t->out, callee ? callee : "");
-  fprintf(t->out, "\",\"rc\":%d}\n", (int)rc);
+  fprintf(t->out, "\",\"rc\":%d", (int)rc);
+  sem_trace_write_src(t->out, m, fid, ip);
+  fprintf(t->out, "}\n");
 }
 
 static void sem_events_on_step(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k) {
@@ -3190,7 +3248,9 @@ static void sem_events_post_run(void* user, const sir_module_t* m, int32_t exec_
       const sir_inst_kind_t opk = f->insts[ip].k;
       fprintf(out, "{\"tool\":\"sem\",\"k\":\"cov_step\",\"fid\":%u,\"func\":\"", (unsigned)fid);
       sem_json_write_escaped(out, fn);
-      fprintf(out, "\",\"ip\":%u,\"op\":\"%s\",\"count\":%u}\n", (unsigned)ip, sir_inst_kind_name(opk), (unsigned)hit);
+      fprintf(out, "\",\"ip\":%u,\"op\":\"%s\",\"count\":%u", (unsigned)ip, sir_inst_kind_name(opk), (unsigned)hit);
+      sem_trace_write_src(out, m, fid, ip);
+      fprintf(out, "}\n");
     }
   }
   fprintf(out, "{\"tool\":\"sem\",\"k\":\"cov_summary\",\"unique_steps\":%u,\"total_steps\":%" PRIu64 "}\n", (unsigned)e->cov->unique_steps,

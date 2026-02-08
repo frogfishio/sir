@@ -161,6 +161,8 @@ typedef struct sir_inst {
   sir_inst_kind_t k;
   sir_val_id_t results[2];
   uint8_t result_count;
+  uint32_t src_node_id; // 0 when unknown
+  uint32_t src_line;    // 0 when unknown
 
   union {
     struct {
@@ -383,6 +385,11 @@ typedef struct sir_module_builder sir_module_builder_t;
 
 sir_module_builder_t* sir_mb_new(void);
 void sir_mb_free(sir_module_builder_t* b);
+
+// Set/clear the source context for subsequently emitted instructions.
+// This is a lightweight mapping hook used by SEM for trace/coverage back to SIR nodes.
+void sir_mb_set_src(sir_module_builder_t* b, uint32_t node_id, uint32_t line);
+void sir_mb_clear_src(sir_module_builder_t* b);
 
 sir_type_id_t sir_mb_type_prim(sir_module_builder_t* b, sir_prim_type_t prim);
 sir_sym_id_t sir_mb_sym_extern_fn(sir_module_builder_t* b, const char* name, sir_sig_t sig);

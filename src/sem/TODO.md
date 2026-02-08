@@ -113,6 +113,7 @@ Work items:
   - [x] coverage JSONL (instruction hits/counts)
   - [x] basic trace JSONL (`sem --run --trace-jsonl-out PATH`)
   - [x] trace filters (by fn / op)
+  - [x] source mapping in trace/coverage (include `node` + `line` when available)
   - [ ] replayable crash minimization hooks (longer-term)
 
 ---
