@@ -93,7 +93,7 @@ Work items:
 - [ ] `sem:v1` parity (avoid IR drift)
   - [x] Decide: implement lowering rules in SEM (MVP, inline control-flow in sircore bytecode)
   - [x] Support runnable intent set (MVP): `sem.if`, `sem.and_sc`, `sem.or_sc`, `sem.switch`, `sem.while`, `sem.continue`, `sem.defer`, `sem.scope`
-  - [ ] Remaining intent set: `sem.cond`, `sem.break`
+  - [ ] Remaining intent set: `sem.cond`
 
 ### Stage D — CI-grade emulator “superpowers” (optional, makes SEM a platform)
 
@@ -221,9 +221,10 @@ Work items:
 - [x] `sem.and_sc` (short-circuit)
 - [x] `sem.or_sc` (short-circuit)
 - [x] `sem.switch` (MVP: i32 scrutinee, const.i32 lits, thunk/val bodies)
-- [x] `sem.while` (MVP: thunk(cond)->bool + thunk(body)->any, lowered as loop in bytecode)
+- [x] `sem.while` (MVP: thunk(cond)->bool + thunk(body)->i32 control code 0=continue 1=break, lowered as loop in bytecode)
 - [x] `sem.defer` / `sem.scope` (MVP: stack of fun.sym thunks, runs on return + fallthrough)
-- [x] `sem.continue` (MVP: allowed in legacy thunk bodies; treated as `return 0`)
+- [x] `sem.continue` (MVP: allowed in legacy thunk bodies; treated as `return 0` from the thunk)
+- [x] `sem.break` (MVP: allowed in legacy thunk bodies; treated as `return 1` from the thunk)
 - [x] `sem.match_sum` (desugar to `adt.tag` + `term.switch` + join-args)
 
 ## P4 (later / optional packs)

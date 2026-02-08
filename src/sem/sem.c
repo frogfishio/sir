@@ -360,6 +360,7 @@ static void sem_print_support(FILE* out, bool json) {
       "sem.defer",
       "sem.scope",
       "sem.while",
+      "sem.break (MVP)",
       "sem.continue (MVP)",
 
       // statements

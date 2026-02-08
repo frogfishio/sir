@@ -572,6 +572,38 @@ target_compile_options(sem_unit_run_sem_match_sum_let_option_i32 PRIVATE -Wall -
 
 add_test(NAME sem_run_sem_match_sum_let_option_i32 COMMAND sem_unit_run_sem_match_sum_let_option_i32)
 
+add_executable(sem_unit_run_sem_break_exits_loop
+  tests/test_run_sem_break_exits_loop.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_break_exits_loop PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_break_exits_loop PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_break_exits_loop PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_break_exits_loop PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_break_exits_loop PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_break_exits_loop COMMAND sem_unit_run_sem_break_exits_loop)
+
+add_executable(sem_unit_run_sem_while_body_bad_code_traps
+  tests/test_run_sem_while_body_bad_code_traps.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_sem_while_body_bad_code_traps PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_sem_while_body_bad_code_traps PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_sem_while_body_bad_code_traps PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_sem_while_body_bad_code_traps PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_sem_while_body_bad_code_traps PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_sem_while_body_bad_code_traps COMMAND sem_unit_run_sem_while_body_bad_code_traps)
+
 add_executable(sem_unit_run_sem_while_global_counter
   tests/test_run_sem_while_global_counter.c
   sem_hosted.c

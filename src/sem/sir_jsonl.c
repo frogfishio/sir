@@ -4336,6 +4336,26 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     sir_mb_set_src(c->mb, stmt_id, n->loc_line);
     if (!sir_mb_emit_const_i32(c->mb, c->fn, slot, 0)) return false;
     sir_mb_clear_src(c->mb);
+    // End the thunk early: run any pending defers in this function.
+    if (!emit_run_defers(c, 0, stmt_id)) return false;
+    *out_did_return = true;
+    *out_exit_slot = slot;
+    if (out_exit_kind) *out_exit_kind = VK_I32;
+    return true;
+  }
+
+  if (strcmp(n->tag, "sem.break") == 0) {
+    // MVP: used inside thunk bodies for sem.while; treat as "return 1" from the thunk.
+    if (c->in_cfg) {
+      sirj_diag_setf(c, "sem.sem.break.cfg", c->cur_path, n->loc_line, stmt_id, n->tag, "sem.break not supported in CFG-form blocks (MVP)");
+      return false;
+    }
+    const sir_val_id_t slot = alloc_slot(c, VK_I32);
+    sir_mb_set_src(c->mb, stmt_id, n->loc_line);
+    if (!sir_mb_emit_const_i32(c->mb, c->fn, slot, 1)) return false;
+    sir_mb_clear_src(c->mb);
+    // End the thunk early: run any pending defers in this function.
+    if (!emit_run_defers(c, 0, stmt_id)) return false;
     *out_did_return = true;
     *out_exit_slot = slot;
     if (out_exit_kind) *out_exit_kind = VK_I32;
@@ -4355,8 +4375,8 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     //   cond = call cond_thunk()
     //   cbr cond, body_ip, exit_ip
     // body:
-    //   call body_thunk()
-    //   br header
+    //   code = call body_thunk()  // i32: 0=continue, 1=break
+    //   cbr (code==0), header, exit
     // exit:
     const uint32_t header_ip = sir_mb_func_ip(c->mb, c->fn);
 
@@ -4364,17 +4384,51 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     sir_val_id_t tmp = 0;
     val_kind_t tk = VK_INVALID;
     if (!emit_call_fun_sym(c, stmt_id, cond.node_id, NULL, 0, false, true, cond_slot, &tmp, &tk)) return false;
-    if (tk != VK_BOOL) return false;
+    if (tk != VK_BOOL) {
+      sirj_diag_setf(c, "sem.sem.while.cond_type", c->cur_path, n->loc_line, stmt_id, n->tag, "sem.while cond thunk must return bool");
+      return false;
+    }
 
     uint32_t ip_cbr = 0;
     sir_mb_set_src(c->mb, stmt_id, n->loc_line);
     if (!sir_mb_emit_cbr(c->mb, c->fn, cond_slot, 0, 0, &ip_cbr)) return false;
     const uint32_t body_ip = sir_mb_func_ip(c->mb, c->fn);
 
-    if (!emit_call_fun_sym(c, stmt_id, body.node_id, NULL, 0, true, false, 0, NULL, NULL)) return false;
-    if (!sir_mb_emit_br(c->mb, c->fn, header_ip, NULL)) return false;
+    // Body thunk must return i32 control code (0=continue,1=break). Anything else traps.
+    const sir_val_id_t code_slot = alloc_slot(c, VK_I32);
+    sir_val_id_t body_ret_slot = 0;
+    val_kind_t body_ret_kind = VK_INVALID;
+    if (!emit_call_fun_sym(c, stmt_id, body.node_id, NULL, 0, false, true, code_slot, &body_ret_slot, &body_ret_kind)) return false;
+    if (body_ret_kind != VK_I32) {
+      sirj_diag_setf(c, "sem.sem.while.body_type", c->cur_path, n->loc_line, stmt_id, n->tag, "sem.while body thunk must return i32 control code");
+      return false;
+    }
+
+    // if code==0 -> header
+    const sir_val_id_t zero = alloc_slot(c, VK_I32);
+    const sir_val_id_t is_zero = alloc_slot(c, VK_BOOL);
+    if (!sir_mb_emit_const_i32(c->mb, c->fn, zero, 0)) return false;
+    if (!sir_mb_emit_i32_cmp_eq(c->mb, c->fn, is_zero, code_slot, zero)) return false;
+    uint32_t ip_cbr_zero = 0;
+    if (!sir_mb_emit_cbr(c->mb, c->fn, is_zero, header_ip, 0, &ip_cbr_zero)) return false;
+
+    // else if code==1 -> exit
+    const uint32_t check_one_ip = sir_mb_func_ip(c->mb, c->fn);
+    const sir_val_id_t one = alloc_slot(c, VK_I32);
+    const sir_val_id_t is_one = alloc_slot(c, VK_BOOL);
+    if (!sir_mb_emit_const_i32(c->mb, c->fn, one, 1)) return false;
+    if (!sir_mb_emit_i32_cmp_eq(c->mb, c->fn, is_one, code_slot, one)) return false;
+    uint32_t ip_cbr_one = 0;
+    if (!sir_mb_emit_cbr(c->mb, c->fn, is_one, 0, 0, &ip_cbr_one)) return false;
+
+    // else trap
+    const uint32_t trap_ip = sir_mb_func_ip(c->mb, c->fn);
+    if (!sir_mb_emit_exit(c->mb, c->fn, 255)) return false;
+
     const uint32_t exit_ip = sir_mb_func_ip(c->mb, c->fn);
     if (!sir_mb_patch_cbr(c->mb, c->fn, ip_cbr, body_ip, exit_ip)) return false;
+    if (!sir_mb_patch_cbr(c->mb, c->fn, ip_cbr_zero, header_ip, check_one_ip)) return false;
+    if (!sir_mb_patch_cbr(c->mb, c->fn, ip_cbr_one, exit_ip, trap_ip)) return false;
     sir_mb_clear_src(c->mb);
     return true;
   }
