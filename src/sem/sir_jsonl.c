@@ -58,11 +58,15 @@ typedef struct node_info {
 
 typedef enum val_kind {
   VK_INVALID = 0,
+  VK_I1,
   VK_I8,
+  VK_I16,
   VK_I32,
   VK_I64,
   VK_PTR,
   VK_BOOL,
+  VK_F32,
+  VK_F64,
 } val_kind_t;
 
 typedef struct sirj_ctx {
@@ -94,11 +98,15 @@ typedef struct sirj_ctx {
   uint32_t func_by_node_cap;
 
   // Primitive module type ids
+  sir_type_id_t ty_i1;
   sir_type_id_t ty_i8;
+  sir_type_id_t ty_i16;
   sir_type_id_t ty_i32;
   sir_type_id_t ty_i64;
   sir_type_id_t ty_ptr;
   sir_type_id_t ty_bool;
+  sir_type_id_t ty_f32;
+  sir_type_id_t ty_f64;
 
   // Current-function param bindings (name -> slot).
   struct {
@@ -297,6 +305,51 @@ static void sem_print_diag(const sirj_ctx_t* c) {
                      c->diag.op);
 }
 
+typedef struct sem_last_step {
+  sir_func_id_t fid;
+  uint32_t ip;
+  sir_inst_kind_t op;
+  uint32_t node_id;
+  uint32_t line;
+} sem_last_step_t;
+
+typedef struct sem_wrap_sink {
+  const sir_exec_event_sink_t* inner;
+  sem_last_step_t last;
+} sem_wrap_sink_t;
+
+static void sem_wrap_on_step(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_inst_kind_t k) {
+  sem_wrap_sink_t* w = (sem_wrap_sink_t*)user;
+  if (!w) return;
+  if (w->inner && w->inner->on_step) w->inner->on_step(w->inner->user, m, fid, ip, k);
+
+  w->last.fid = fid;
+  w->last.ip = ip;
+  w->last.op = k;
+  w->last.node_id = 0;
+  w->last.line = 0;
+  if (m && fid && fid <= m->func_count) {
+    const sir_func_t* f = &m->funcs[fid - 1];
+    if (f && ip < f->inst_count) {
+      w->last.node_id = f->insts[ip].src_node_id;
+      w->last.line = f->insts[ip].src_line;
+    }
+  }
+}
+
+static void sem_wrap_on_mem(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, sir_mem_event_kind_t mk, zi_ptr_t addr,
+                            uint32_t size) {
+  sem_wrap_sink_t* w = (sem_wrap_sink_t*)user;
+  if (!w) return;
+  if (w->inner && w->inner->on_mem) w->inner->on_mem(w->inner->user, m, fid, ip, mk, addr, size);
+}
+
+static void sem_wrap_on_hostcall(void* user, const sir_module_t* m, sir_func_id_t fid, uint32_t ip, const char* callee, int32_t rc) {
+  sem_wrap_sink_t* w = (sem_wrap_sink_t*)user;
+  if (!w) return;
+  if (w->inner && w->inner->on_hostcall) w->inner->on_hostcall(w->inner->user, m, fid, ip, callee, rc);
+}
+
 static void ctx_dispose(sirj_ctx_t* c) {
   if (!c) return;
   if (c->mb) {
@@ -384,14 +437,68 @@ static bool parse_u32_array(const JsonValue* v, uint32_t** out, uint32_t* out_n,
   return true;
 }
 
+static bool parse_hex_u64(const char* s, uint64_t* out) {
+  if (!s || !out) return false;
+  if (s[0] != '0' || (s[1] != 'x' && s[1] != 'X')) return false;
+  uint64_t v = 0;
+  bool any = false;
+  for (const char* p = s + 2; *p; p++) {
+    unsigned d = 0;
+    const char ch = *p;
+    if (ch >= '0' && ch <= '9') d = (unsigned)(ch - '0');
+    else if (ch >= 'a' && ch <= 'f') d = 10u + (unsigned)(ch - 'a');
+    else if (ch >= 'A' && ch <= 'F') d = 10u + (unsigned)(ch - 'A');
+    else return false;
+    any = true;
+    if (v > (UINT64_MAX - d) / 16u) return false;
+    v = (v * 16u) + d;
+  }
+  if (!any) return false;
+  *out = v;
+  return true;
+}
+
+static bool parse_hex_u32(const char* s, uint32_t* out) {
+  if (!out) return false;
+  uint64_t v = 0;
+  if (!parse_hex_u64(s, &v)) return false;
+  if (v > UINT32_MAX) return false;
+  *out = (uint32_t)v;
+  return true;
+}
+
+static bool sem_f32_is_nan_bits(uint32_t bits) {
+  const uint32_t exp = bits & 0x7F800000u;
+  const uint32_t frac = bits & 0x007FFFFFu;
+  return exp == 0x7F800000u && frac != 0;
+}
+
+static uint32_t sem_f32_canon_bits(uint32_t bits) {
+  return sem_f32_is_nan_bits(bits) ? 0x7FC00000u : bits;
+}
+
+static bool sem_f64_is_nan_bits(uint64_t bits) {
+  const uint64_t exp = bits & 0x7FF0000000000000ull;
+  const uint64_t frac = bits & 0x000FFFFFFFFFFFFFull;
+  return exp == 0x7FF0000000000000ull && frac != 0;
+}
+
+static uint64_t sem_f64_canon_bits(uint64_t bits) {
+  return sem_f64_is_nan_bits(bits) ? 0x7FF8000000000000ull : bits;
+}
+
 static sir_prim_type_t prim_from_string(const char* s) {
   if (!s) return SIR_PRIM_INVALID;
   if (strcmp(s, "void") == 0) return SIR_PRIM_VOID;
+  if (strcmp(s, "i1") == 0) return SIR_PRIM_I1;
   if (strcmp(s, "i8") == 0) return SIR_PRIM_I8;
+  if (strcmp(s, "i16") == 0) return SIR_PRIM_I16;
   if (strcmp(s, "i32") == 0) return SIR_PRIM_I32;
   if (strcmp(s, "i64") == 0) return SIR_PRIM_I64;
   if (strcmp(s, "ptr") == 0) return SIR_PRIM_PTR;
   if (strcmp(s, "bool") == 0) return SIR_PRIM_BOOL;
+  if (strcmp(s, "f32") == 0) return SIR_PRIM_F32;
+  if (strcmp(s, "f64") == 0) return SIR_PRIM_F64;
   return SIR_PRIM_INVALID;
 }
 
@@ -400,8 +507,12 @@ static sir_type_id_t mod_ty_for_prim(sirj_ctx_t* c, sir_prim_type_t prim) {
   switch (prim) {
     case SIR_PRIM_VOID:
       return 0;
+    case SIR_PRIM_I1:
+      return c->ty_i1;
     case SIR_PRIM_I8:
       return c->ty_i8;
+    case SIR_PRIM_I16:
+      return c->ty_i16;
     case SIR_PRIM_I32:
       return c->ty_i32;
     case SIR_PRIM_I64:
@@ -410,6 +521,10 @@ static sir_type_id_t mod_ty_for_prim(sirj_ctx_t* c, sir_prim_type_t prim) {
       return c->ty_ptr;
     case SIR_PRIM_BOOL:
       return c->ty_bool;
+    case SIR_PRIM_F32:
+      return c->ty_f32;
+    case SIR_PRIM_F64:
+      return c->ty_f64;
     default:
       return 0;
   }
@@ -417,12 +532,16 @@ static sir_type_id_t mod_ty_for_prim(sirj_ctx_t* c, sir_prim_type_t prim) {
 
 static bool ensure_prim_types(sirj_ctx_t* c) {
   if (!c || !c->mb) return false;
+  if (!c->ty_i1) c->ty_i1 = sir_mb_type_prim(c->mb, SIR_PRIM_I1);
   if (!c->ty_i8) c->ty_i8 = sir_mb_type_prim(c->mb, SIR_PRIM_I8);
+  if (!c->ty_i16) c->ty_i16 = sir_mb_type_prim(c->mb, SIR_PRIM_I16);
   if (!c->ty_i32) c->ty_i32 = sir_mb_type_prim(c->mb, SIR_PRIM_I32);
   if (!c->ty_i64) c->ty_i64 = sir_mb_type_prim(c->mb, SIR_PRIM_I64);
   if (!c->ty_ptr) c->ty_ptr = sir_mb_type_prim(c->mb, SIR_PRIM_PTR);
   if (!c->ty_bool) c->ty_bool = sir_mb_type_prim(c->mb, SIR_PRIM_BOOL);
-  return c->ty_i8 && c->ty_i32 && c->ty_i64 && c->ty_ptr && c->ty_bool;
+  if (!c->ty_f32) c->ty_f32 = sir_mb_type_prim(c->mb, SIR_PRIM_F32);
+  if (!c->ty_f64) c->ty_f64 = sir_mb_type_prim(c->mb, SIR_PRIM_F64);
+  return c->ty_i1 && c->ty_i8 && c->ty_i16 && c->ty_i32 && c->ty_i64 && c->ty_ptr && c->ty_bool && c->ty_f32 && c->ty_f64;
 }
 
 static sir_val_id_t alloc_slot(sirj_ctx_t* c, val_kind_t k) {
@@ -527,8 +646,14 @@ static bool val_kind_for_type_ref(const sirj_ctx_t* c, uint32_t type_ref, val_ki
   switch (c->types[type_ref].prim) {
     case SIR_PRIM_VOID:
       return false;
+    case SIR_PRIM_I1:
+      *out = VK_I1;
+      return true;
     case SIR_PRIM_I8:
       *out = VK_I8;
+      return true;
+    case SIR_PRIM_I16:
+      *out = VK_I16;
       return true;
     case SIR_PRIM_I32:
       *out = VK_I32;
@@ -541,6 +666,12 @@ static bool val_kind_for_type_ref(const sirj_ctx_t* c, uint32_t type_ref, val_ki
       return true;
     case SIR_PRIM_BOOL:
       *out = VK_BOOL;
+      return true;
+    case SIR_PRIM_F32:
+      *out = VK_F32;
+      return true;
+    case SIR_PRIM_F64:
+      *out = VK_F64;
       return true;
     default:
       return false;
@@ -573,9 +704,17 @@ static bool type_layout(const sirj_ctx_t* c, uint32_t type_ref, uint32_t* out_si
       size = 0;
       align = 1;
       break;
+    case SIR_PRIM_I1:
+      size = 1;
+      align = 1;
+      break;
     case SIR_PRIM_I8:
       size = 1;
       align = 1;
+      break;
+    case SIR_PRIM_I16:
+      size = 2;
+      align = 2;
       break;
     case SIR_PRIM_I32:
       size = 4;
@@ -592,6 +731,14 @@ static bool type_layout(const sirj_ctx_t* c, uint32_t type_ref, uint32_t* out_si
     case SIR_PRIM_BOOL:
       size = 1;
       align = 1;
+      break;
+    case SIR_PRIM_F32:
+      size = 4;
+      align = 4;
+      break;
+    case SIR_PRIM_F64:
+      size = 8;
+      align = 8;
       break;
     default:
       return false;
@@ -627,6 +774,21 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
     return true;
   }
 
+  if (strcmp(n->tag, "const.i16") == 0) {
+    if (size != 2) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    int64_t v = 0;
+    if (!json_get_i64(json_obj_get(n->fields_obj, "value"), &v)) return false;
+    if (v < 0 || v > 65535) return false;
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 2);
+    if (!b) return false;
+    const uint16_t x = (uint16_t)v;
+    memcpy(b, &x, 2);
+    *out_bytes = b;
+    *out_len = 2;
+    return true;
+  }
+
   if (strcmp(n->tag, "const.i32") == 0) {
     if (size != 4) return false;
     int64_t v = 0;
@@ -650,6 +812,36 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
     uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 8);
     if (!b) return false;
     memcpy(b, &v, 8);
+    *out_bytes = b;
+    *out_len = 8;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.f32") == 0) {
+    if (size != 4) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    const char* bits_s = json_get_string(json_obj_get(n->fields_obj, "bits"));
+    uint32_t bits = 0;
+    if (!parse_hex_u32(bits_s, &bits)) return false;
+    bits = sem_f32_canon_bits(bits);
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 4);
+    if (!b) return false;
+    memcpy(b, &bits, 4);
+    *out_bytes = b;
+    *out_len = 4;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.f64") == 0) {
+    if (size != 8) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+    const char* bits_s = json_get_string(json_obj_get(n->fields_obj, "bits"));
+    uint64_t bits = 0;
+    if (!parse_hex_u64(bits_s, &bits)) return false;
+    bits = sem_f64_canon_bits(bits);
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, 8);
+    if (!b) return false;
+    memcpy(b, &bits, 8);
     *out_bytes = b;
     *out_len = 8;
     return true;
@@ -745,6 +937,21 @@ static bool eval_bparam(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
   return true;
 }
 
+static bool eval_const_i1(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  int64_t i = 0;
+  if (!json_get_i64(json_obj_get(n->fields_obj, "value"), &i)) return false;
+  if (i != 0 && i != 1) return false;
+  const sir_val_id_t slot = alloc_slot(c, VK_I1);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_const_i1(c->mb, c->fn, slot, i == 1)) return false;
+  if (!set_node_val(c, node_id, slot, VK_I1)) return false;
+  *out_slot = slot;
+  *out_kind = VK_I1;
+  return true;
+}
+
 static bool eval_const_i32(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
@@ -777,6 +984,22 @@ static bool eval_const_i8(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   return true;
 }
 
+static bool eval_const_i16(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* vv = json_obj_get(n->fields_obj, "value");
+  int64_t i = 0;
+  if (!json_get_i64(vv, &i)) return false;
+  if (i < 0 || i > 65535) return false;
+  const sir_val_id_t slot = alloc_slot(c, VK_I16);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_const_i16(c->mb, c->fn, slot, (uint16_t)i)) return false;
+  if (!set_node_val(c, node_id, slot, VK_I16)) return false;
+  *out_slot = slot;
+  *out_kind = VK_I16;
+  return true;
+}
+
 static bool eval_const_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
@@ -789,6 +1012,38 @@ static bool eval_const_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
   if (!set_node_val(c, node_id, slot, VK_I64)) return false;
   *out_slot = slot;
   *out_kind = VK_I64;
+  return true;
+}
+
+static bool eval_const_f32(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const char* bits_s = json_get_string(json_obj_get(n->fields_obj, "bits"));
+  uint32_t bits = 0;
+  if (!parse_hex_u32(bits_s, &bits)) return false;
+  bits = sem_f32_canon_bits(bits);
+  const sir_val_id_t slot = alloc_slot(c, VK_F32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_const_f32_bits(c->mb, c->fn, slot, bits)) return false;
+  if (!set_node_val(c, node_id, slot, VK_F32)) return false;
+  *out_slot = slot;
+  *out_kind = VK_F32;
+  return true;
+}
+
+static bool eval_const_f64(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const char* bits_s = json_get_string(json_obj_get(n->fields_obj, "bits"));
+  uint64_t bits = 0;
+  if (!parse_hex_u64(bits_s, &bits)) return false;
+  bits = sem_f64_canon_bits(bits);
+  const sir_val_id_t slot = alloc_slot(c, VK_F64);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_const_f64_bits(c->mb, c->fn, slot, bits)) return false;
+  if (!set_node_val(c, node_id, slot, VK_F64)) return false;
+  *out_slot = slot;
+  *out_kind = VK_F64;
   return true;
 }
 
@@ -848,9 +1103,12 @@ static bool eval_store_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info
 
   sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (k == SIR_INST_STORE_I8) return sir_mb_emit_store_i8(c->mb, c->fn, addr_slot, val_slot, align);
+  if (k == SIR_INST_STORE_I16) return sir_mb_emit_store_i16(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_I32) return sir_mb_emit_store_i32(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_I64) return sir_mb_emit_store_i64(c->mb, c->fn, addr_slot, val_slot, align);
   if (k == SIR_INST_STORE_PTR) return sir_mb_emit_store_ptr(c->mb, c->fn, addr_slot, val_slot, align);
+  if (k == SIR_INST_STORE_F32) return sir_mb_emit_store_f32(c->mb, c->fn, addr_slot, val_slot, align);
+  if (k == SIR_INST_STORE_F64) return sir_mb_emit_store_f64(c->mb, c->fn, addr_slot, val_slot, align);
   return false;
 }
 
@@ -952,9 +1210,12 @@ static bool eval_load_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_
   bool ok = false;
   sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (k == SIR_INST_LOAD_I8) ok = sir_mb_emit_load_i8(c->mb, c->fn, dst, addr_slot, align);
+  else if (k == SIR_INST_LOAD_I16) ok = sir_mb_emit_load_i16(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_I32) ok = sir_mb_emit_load_i32(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_I64) ok = sir_mb_emit_load_i64(c->mb, c->fn, dst, addr_slot, align);
   else if (k == SIR_INST_LOAD_PTR) ok = sir_mb_emit_load_ptr(c->mb, c->fn, dst, addr_slot, align);
+  else if (k == SIR_INST_LOAD_F32) ok = sir_mb_emit_load_f32(c->mb, c->fn, dst, addr_slot, align);
+  else if (k == SIR_INST_LOAD_F64) ok = sir_mb_emit_load_f64(c->mb, c->fn, dst, addr_slot, align);
   if (!ok) return false;
   if (!set_node_val(c, node_id, dst, outk)) return false;
   *out_slot = dst;
@@ -1144,6 +1405,38 @@ static bool eval_i32_zext_i8(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   const sir_val_id_t dst = alloc_slot(c, VK_I32);
   sir_mb_set_src(c->mb, node_id, n->loc_line);
   if (!sir_mb_emit_i32_zext_i8(c->mb, c->fn, dst, x_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_I32)) return false;
+  *out_slot = dst;
+  *out_kind = VK_I32;
+  return true;
+}
+
+static bool eval_i32_zext_i16(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) {
+    sirj_diag_setf(c, "sem.parse.i32.zext.i16.fields", c->cur_path, n->loc_line, node_id, n->tag, "i32.zext.i16 missing/invalid fields object");
+    return false;
+  }
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 1) {
+    sirj_diag_setf(c, "sem.parse.i32.zext.i16.args", c->cur_path, n->loc_line, node_id, n->tag, "i32.zext.i16 args must be [x]");
+    return false;
+  }
+  uint32_t x_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &x_id)) {
+    sirj_diag_setf(c, "sem.parse.i32.zext.i16.arg", c->cur_path, n->loc_line, node_id, n->tag, "i32.zext.i16 arg 0 must be a ref");
+    return false;
+  }
+  sir_val_id_t x_slot = 0;
+  val_kind_t xk = VK_INVALID;
+  if (!eval_node(c, x_id, &x_slot, &xk)) return false;
+  if (xk != VK_I16) {
+    sirj_diag_setf(c, "sem.i32.zext.i16.arg_type", c->cur_path, n->loc_line, node_id, n->tag, "i32.zext.i16 arg must be i16");
+    return false;
+  }
+  const sir_val_id_t dst = alloc_slot(c, VK_I32);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_i32_zext_i16(c->mb, c->fn, dst, x_slot)) return false;
   if (!set_node_val(c, node_id, dst, VK_I32)) return false;
   *out_slot = dst;
   *out_kind = VK_I32;
@@ -1435,6 +1728,50 @@ static bool eval_i32_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   return true;
 }
 
+static bool eval_f32_cmp_ueq(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 2) return false;
+  uint32_t a_id = 0, b_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  sir_val_id_t a_slot = 0, b_slot = 0;
+  val_kind_t ak = VK_INVALID, bk = VK_INVALID;
+  if (!eval_node(c, a_id, &a_slot, &ak)) return false;
+  if (!eval_node(c, b_id, &b_slot, &bk)) return false;
+  if (ak != VK_F32 || bk != VK_F32) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_f32_cmp_ueq(c->mb, c->fn, dst, a_slot, b_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
+  *out_slot = dst;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
+static bool eval_f64_cmp_olt(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, sir_val_id_t* out_slot, val_kind_t* out_kind) {
+  if (!c || !n || !out_slot || !out_kind) return false;
+  if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+  const JsonValue* av = json_obj_get(n->fields_obj, "args");
+  if (!json_is_array(av) || av->v.arr.len != 2) return false;
+  uint32_t a_id = 0, b_id = 0;
+  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  sir_val_id_t a_slot = 0, b_slot = 0;
+  val_kind_t ak = VK_INVALID, bk = VK_INVALID;
+  if (!eval_node(c, a_id, &a_slot, &ak)) return false;
+  if (!eval_node(c, b_id, &b_slot, &bk)) return false;
+  if (ak != VK_F64 || bk != VK_F64) return false;
+  const sir_val_id_t dst = alloc_slot(c, VK_BOOL);
+  sir_mb_set_src(c->mb, node_id, n->loc_line);
+  if (!sir_mb_emit_f64_cmp_olt(c->mb, c->fn, dst, a_slot, b_slot)) return false;
+  if (!set_node_val(c, node_id, dst, VK_BOOL)) return false;
+  *out_slot = dst;
+  *out_kind = VK_BOOL;
+  return true;
+}
+
 static bool eval_ptr_size_alignof(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, bool want_sizeof, sir_val_id_t* out_slot,
                                   val_kind_t* out_kind) {
   if (!c || !n || !out_slot || !out_kind) return false;
@@ -1578,6 +1915,15 @@ static bool eval_select(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
     case SIR_PRIM_VOID:
       sirj_diag_setf(c, "sem.select.void", c->cur_path, n->loc_line, node_id, n->tag, "select cannot produce void");
       return false;
+    case SIR_PRIM_I1:
+      tk = VK_I1;
+      break;
+    case SIR_PRIM_I8:
+      tk = VK_I8;
+      break;
+    case SIR_PRIM_I16:
+      tk = VK_I16;
+      break;
     case SIR_PRIM_I32:
       tk = VK_I32;
       break;
@@ -1589,6 +1935,12 @@ static bool eval_select(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
       break;
     case SIR_PRIM_BOOL:
       tk = VK_BOOL;
+      break;
+    case SIR_PRIM_F32:
+      tk = VK_F32;
+      break;
+    case SIR_PRIM_F64:
+      tk = VK_F64;
       break;
     default:
       sirj_diag_setf(c, "sem.select.bad_type", c->cur_path, n->loc_line, node_id, n->tag, "select has unsupported type");
@@ -1787,8 +2139,14 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
       }
       val_kind_t expect = VK_INVALID;
       switch (c->types[pid].prim) {
+        case SIR_PRIM_I1:
+          expect = VK_I1;
+          break;
         case SIR_PRIM_I8:
           expect = VK_I8;
+          break;
+        case SIR_PRIM_I16:
+          expect = VK_I16;
           break;
         case SIR_PRIM_I32:
           expect = VK_I32;
@@ -1801,6 +2159,12 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
           break;
         case SIR_PRIM_BOOL:
           expect = VK_BOOL;
+          break;
+        case SIR_PRIM_F32:
+          expect = VK_F32;
+          break;
+        case SIR_PRIM_F64:
+          expect = VK_F64;
           break;
         default:
           sirj_diag_setf(c, "sem.call.bad_sig", c->cur_path, n->loc_line, node_id, n->tag, "call.indirect sig has unsupported param type");
@@ -1824,13 +2188,17 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
     if (rp == SIR_PRIM_VOID) {
       // No return value.
       result_count = 0;
-    } else
-    if (rp == SIR_PRIM_I32) rk = VK_I32;
+    } else if (rp == SIR_PRIM_I1) rk = VK_I1;
+    else if (rp == SIR_PRIM_I8) rk = VK_I8;
+    else if (rp == SIR_PRIM_I16) rk = VK_I16;
+    else if (rp == SIR_PRIM_I32) rk = VK_I32;
     else if (rp == SIR_PRIM_I64) rk = VK_I64;
     else if (rp == SIR_PRIM_PTR) rk = VK_PTR;
     else if (rp == SIR_PRIM_BOOL) rk = VK_BOOL;
+    else if (rp == SIR_PRIM_F32) rk = VK_F32;
+    else if (rp == SIR_PRIM_F64) rk = VK_F64;
     else return false;
-  if (rk != VK_INVALID) {
+    if (rk != VK_INVALID) {
       res_slots[0] = alloc_slot(c, rk);
       result_count = 1;
     }
@@ -1874,9 +2242,13 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (!n->tag) return false;
 
   if (strcmp(n->tag, "bparam") == 0) return eval_bparam(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "const.i1") == 0) return eval_const_i1(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "const.i8") == 0) return eval_const_i8(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "const.i16") == 0) return eval_const_i16(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "const.i32") == 0) return eval_const_i32(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "const.i64") == 0) return eval_const_i64(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "const.f32") == 0) return eval_const_f32(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "const.f64") == 0) return eval_const_f64(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "const.bool") == 0) return eval_const_bool(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "cstr") == 0) return eval_cstr(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "name") == 0) return eval_name(c, node_id, n, out_slot, out_kind);
@@ -1912,6 +2284,7 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "i32.rem.s.sat") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_REM_S_SAT, out_slot, out_kind);
   if (strcmp(n->tag, "i32.rem.u.sat") == 0) return eval_i32_bin_mnemonic(c, node_id, n, SIR_INST_I32_REM_U_SAT, out_slot, out_kind);
   if (strcmp(n->tag, "i32.zext.i8") == 0) return eval_i32_zext_i8(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "i32.zext.i16") == 0) return eval_i32_zext_i16(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i64.zext.i32") == 0) return eval_i64_zext_i32(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.trunc.i64") == 0) return eval_i32_trunc_i64(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.eq") == 0) return eval_i32_cmp_eq(c, node_id, n, out_slot, out_kind);
@@ -1924,14 +2297,22 @@ static bool eval_node(sirj_ctx_t* c, uint32_t node_id, sir_val_id_t* out_slot, v
   if (strcmp(n->tag, "i32.cmp.ule") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_ULE, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.ugt") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_UGT, out_slot, out_kind);
   if (strcmp(n->tag, "i32.cmp.uge") == 0) return eval_i32_cmp(c, node_id, n, SIR_INST_I32_CMP_UGE, out_slot, out_kind);
+  if (strcmp(n->tag, "f32.cmp.ueq") == 0) return eval_f32_cmp_ueq(c, node_id, n, out_slot, out_kind);
+  if (strcmp(n->tag, "f64.cmp.olt") == 0) return eval_f64_cmp_olt(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "binop.add") == 0) return eval_binop_add(c, node_id, n, out_slot, out_kind);
   if (strcmp(n->tag, "alloca.i8") == 0) return eval_alloca_mnemonic(c, node_id, n, 1, 1, out_slot, out_kind);
+  if (strcmp(n->tag, "alloca.i16") == 0) return eval_alloca_mnemonic(c, node_id, n, 2, 2, out_slot, out_kind);
   if (strcmp(n->tag, "alloca.i32") == 0) return eval_alloca_mnemonic(c, node_id, n, 4, 4, out_slot, out_kind);
   if (strcmp(n->tag, "alloca.i64") == 0) return eval_alloca_mnemonic(c, node_id, n, 8, 8, out_slot, out_kind);
+  if (strcmp(n->tag, "alloca.f32") == 0) return eval_alloca_mnemonic(c, node_id, n, 4, 4, out_slot, out_kind);
+  if (strcmp(n->tag, "alloca.f64") == 0) return eval_alloca_mnemonic(c, node_id, n, 8, 8, out_slot, out_kind);
   if (strcmp(n->tag, "load.i8") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I8, VK_I8, out_slot, out_kind);
+  if (strcmp(n->tag, "load.i16") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I16, VK_I16, out_slot, out_kind);
   if (strcmp(n->tag, "load.i32") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I32, VK_I32, out_slot, out_kind);
   if (strcmp(n->tag, "load.i64") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_I64, VK_I64, out_slot, out_kind);
   if (strcmp(n->tag, "load.ptr") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_PTR, VK_PTR, out_slot, out_kind);
+  if (strcmp(n->tag, "load.f32") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_F32, VK_F32, out_slot, out_kind);
+  if (strcmp(n->tag, "load.f64") == 0) return eval_load_mnemonic(c, node_id, n, SIR_INST_LOAD_F64, VK_F64, out_slot, out_kind);
   if (strcmp(n->tag, "call.indirect") == 0) return eval_call_indirect(c, node_id, n, out_slot, out_kind);
 
   sirj_diag_setf(c, "sem.unsupported.node", c->cur_path, n->loc_line, node_id, n->tag, "unsupported node tag: %s", n->tag);
@@ -1960,9 +2341,12 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
   }
 
   if (strcmp(n->tag, "store.i8") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_I8);
+  if (strcmp(n->tag, "store.i16") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_I16);
   if (strcmp(n->tag, "store.i32") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_I32);
   if (strcmp(n->tag, "store.i64") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_I64);
   if (strcmp(n->tag, "store.ptr") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_PTR);
+  if (strcmp(n->tag, "store.f32") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_F32);
+  if (strcmp(n->tag, "store.f64") == 0) return eval_store_mnemonic(c, stmt_id, n, SIR_INST_STORE_F64);
   if (strcmp(n->tag, "mem.copy") == 0) return eval_mem_copy_stmt(c, stmt_id, n);
   if (strcmp(n->tag, "mem.fill") == 0) return eval_mem_fill_stmt(c, stmt_id, n);
   if (strcmp(n->tag, "call.indirect") == 0) {
@@ -2810,11 +3194,15 @@ static bool init_params_for_fn(sirj_ctx_t* c, uint32_t fn_node_id, uint32_t fn_t
     if (param_type_id == 0 || param_type_id >= c->type_cap) return false;
     const type_info_t* pt = &c->types[param_type_id];
     if (!pt->present || pt->is_fn) return false;
-    if (pt->prim == SIR_PRIM_I32) k = VK_I32;
+    if (pt->prim == SIR_PRIM_I1) k = VK_I1;
     else if (pt->prim == SIR_PRIM_I8) k = VK_I8;
+    else if (pt->prim == SIR_PRIM_I16) k = VK_I16;
+    else if (pt->prim == SIR_PRIM_I32) k = VK_I32;
     else if (pt->prim == SIR_PRIM_I64) k = VK_I64;
     else if (pt->prim == SIR_PRIM_PTR) k = VK_PTR;
     else if (pt->prim == SIR_PRIM_BOOL) k = VK_BOOL;
+    else if (pt->prim == SIR_PRIM_F32) k = VK_F32;
+    else if (pt->prim == SIR_PRIM_F64) k = VK_F64;
     else return false;
 
     c->params[i].name = nm;
@@ -2863,6 +3251,9 @@ static bool lower_globals(sirj_ctx_t* c) {
       const sir_prim_type_t p = c->types[s->type_ref].prim;
       if (p == SIR_PRIM_I8) {
         init_bytes[0] = (uint8_t)s->init_num;
+      } else if (p == SIR_PRIM_I16) {
+        const uint16_t x = (uint16_t)s->init_num;
+        memcpy(init_bytes, &x, 2);
       } else if (p == SIR_PRIM_I32) {
         const int32_t x = (int32_t)s->init_num;
         memcpy(init_bytes, &x, 4);
@@ -3112,7 +3503,15 @@ static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* c
   }
 
   const sir_host_t host = sem_hosted_make_host(&hz);
-  const int32_t rc = sir_module_run_ex(m, hz.mem, host, sink);
+  sem_wrap_sink_t wrap = {.inner = sink};
+  const sir_exec_event_sink_t wrap_sink = {
+      .user = &wrap,
+      .on_step = sem_wrap_on_step,
+      .on_mem = sem_wrap_on_mem,
+      .on_hostcall = sem_wrap_on_hostcall,
+  };
+  const sir_exec_event_sink_t* sink2 = (sink || diag_format == SEM_DIAG_JSON) ? &wrap_sink : NULL;
+  const int32_t rc = sir_module_run_ex(m, hz.mem, host, sink2);
   if (post_run) post_run(post_user, m, rc);
 
   sir_hosted_zabi_dispose(&hz);
@@ -3122,10 +3521,26 @@ static int sem_run_or_verify_sir_jsonl_impl(const char* path, const sem_cap_t* c
   if (rc < 0) {
     // Execution errors come from sircore (ZI_E_*).
     if (diag_format == SEM_DIAG_JSON) {
-      fprintf(stderr, "{\"tool\":\"sem\",\"code\":\"sem.exec\",\"message\":\"execution failed\",\"rc\":%d,\"rc_name\":\"%s\"}\n", (int)rc,
+      fprintf(stderr, "{\"tool\":\"sem\",\"code\":\"sem.exec\",\"message\":\"execution failed\",\"rc\":%d,\"rc_name\":\"%s\"", (int)rc,
               sem_zi_err_name(rc));
+      if (sink2) {
+        if (wrap.last.node_id) fprintf(stderr, ",\"node\":%u", (unsigned)wrap.last.node_id);
+        if (wrap.last.line) fprintf(stderr, ",\"line\":%u", (unsigned)wrap.last.line);
+        if (wrap.last.fid) {
+          fprintf(stderr, ",\"fid\":%u", (unsigned)wrap.last.fid);
+          fprintf(stderr, ",\"ip\":%u", (unsigned)wrap.last.ip);
+          fprintf(stderr, ",\"op\":\"%s\"", sir_inst_kind_name(wrap.last.op));
+        }
+      }
+      fprintf(stderr, "}\n");
     } else {
       fprintf(stderr, "sem: execution failed: %s (%d)\n", sem_zi_err_name(rc), (int)rc);
+      if (sink2 && wrap.last.fid) {
+        fprintf(stderr, "sem:   at fid=%u ip=%u op=%s\n", (unsigned)wrap.last.fid, (unsigned)wrap.last.ip, sir_inst_kind_name(wrap.last.op));
+      }
+      if (sink2 && (wrap.last.node_id || wrap.last.line)) {
+        fprintf(stderr, "sem:   at node=%u line=%u\n", (unsigned)wrap.last.node_id, (unsigned)wrap.last.line);
+      }
     }
     return 1;
   }

@@ -27,11 +27,15 @@ typedef uint32_t sir_global_id_t;
 typedef enum sir_prim_type {
   SIR_PRIM_INVALID = 0,
   SIR_PRIM_VOID,
+  SIR_PRIM_I1,
   SIR_PRIM_I8,
+  SIR_PRIM_I16,
   SIR_PRIM_I32,
   SIR_PRIM_I64,
   SIR_PRIM_PTR,
   SIR_PRIM_BOOL,
+  SIR_PRIM_F32,
+  SIR_PRIM_F64,
 } sir_prim_type_t;
 
 typedef struct sir_type {
@@ -66,30 +70,42 @@ typedef struct sir_global {
 
 typedef enum sir_val_kind {
   SIR_VAL_INVALID = 0,
+  SIR_VAL_I1,
   SIR_VAL_I8,
+  SIR_VAL_I16,
   SIR_VAL_I32,
   SIR_VAL_I64,
   SIR_VAL_PTR,
   SIR_VAL_BOOL,
+  SIR_VAL_F32,
+  SIR_VAL_F64,
 } sir_val_kind_t;
 
 typedef struct sir_value {
   sir_val_kind_t kind;
   union {
+    uint8_t u1;
     uint8_t u8;
+    uint16_t u16;
     int32_t i32;
     int64_t i64;
     zi_ptr_t ptr;
     uint8_t b;
+    uint32_t f32_bits;
+    uint64_t f64_bits;
   } u;
 } sir_value_t;
 
 typedef enum sir_inst_kind {
   SIR_INST_INVALID = 0,
+  SIR_INST_CONST_I1,
   SIR_INST_CONST_I8,
+  SIR_INST_CONST_I16,
   SIR_INST_CONST_I32,
   SIR_INST_CONST_I64,
   SIR_INST_CONST_BOOL,
+  SIR_INST_CONST_F32,
+  SIR_INST_CONST_F64,
   SIR_INST_CONST_PTR,
   SIR_INST_CONST_PTR_NULL,
   SIR_INST_CONST_BYTES, // yields {ptr, i64 len}
@@ -119,6 +135,8 @@ typedef enum sir_inst_kind {
   SIR_INST_I32_CMP_ULE,
   SIR_INST_I32_CMP_UGT,
   SIR_INST_I32_CMP_UGE,
+  SIR_INST_F32_CMP_UEQ,
+  SIR_INST_F64_CMP_OLT,
   SIR_INST_GLOBAL_ADDR, // yields ptr to module global
   SIR_INST_PTR_OFFSET,  // yields ptr = base + index*scale
   SIR_INST_PTR_ADD,     // yields ptr = base + off (bytes)
@@ -132,6 +150,7 @@ typedef enum sir_inst_kind {
   SIR_INST_BOOL_OR,
   SIR_INST_BOOL_XOR,
   SIR_INST_I32_ZEXT_I8,
+  SIR_INST_I32_ZEXT_I16,
   SIR_INST_I64_ZEXT_I32,
   SIR_INST_I32_TRUNC_I64,
   SIR_INST_SELECT,      // yields value: cond ? a : b
@@ -142,13 +161,19 @@ typedef enum sir_inst_kind {
   SIR_INST_MEM_FILL,
   SIR_INST_ALLOCA,
   SIR_INST_STORE_I8,
+  SIR_INST_STORE_I16,
   SIR_INST_STORE_I32,
   SIR_INST_STORE_I64,
   SIR_INST_STORE_PTR,
   SIR_INST_LOAD_I8,
+  SIR_INST_LOAD_I16,
   SIR_INST_LOAD_I32,
   SIR_INST_LOAD_I64,
   SIR_INST_LOAD_PTR,
+  SIR_INST_STORE_F32,
+  SIR_INST_STORE_F64,
+  SIR_INST_LOAD_F32,
+  SIR_INST_LOAD_F64,
   SIR_INST_CALL_EXTERN, // currently supports zi_write/zi_end/zi_alloc/zi_free/zi_telemetry
   SIR_INST_CALL_FUNC,
   SIR_INST_RET,
@@ -168,7 +193,15 @@ typedef struct sir_inst {
     struct {
       uint8_t v;
       sir_val_id_t dst;
+    } const_i1;
+    struct {
+      uint8_t v;
+      sir_val_id_t dst;
     } const_i8;
+    struct {
+      uint16_t v;
+      sir_val_id_t dst;
+    } const_i16;
     struct {
       int32_t v;
       sir_val_id_t dst;
@@ -181,6 +214,14 @@ typedef struct sir_inst {
       uint8_t v;
       sir_val_id_t dst;
     } const_bool;
+    struct {
+      uint32_t bits;
+      sir_val_id_t dst;
+    } const_f32;
+    struct {
+      uint64_t bits;
+      sir_val_id_t dst;
+    } const_f64;
     struct {
       zi_ptr_t v;
       sir_val_id_t dst;
@@ -208,6 +249,11 @@ typedef struct sir_inst {
       sir_val_id_t b;
       sir_val_id_t dst;
     } i32_cmp_eq;
+    struct {
+      sir_val_id_t a;
+      sir_val_id_t b;
+      sir_val_id_t dst;
+    } f_cmp;
     struct {
       sir_global_id_t gid;
       sir_val_id_t dst;
@@ -258,6 +304,10 @@ typedef struct sir_inst {
       sir_val_id_t x;
       sir_val_id_t dst;
     } i32_zext_i8;
+    struct {
+      sir_val_id_t x;
+      sir_val_id_t dst;
+    } i32_zext_i16;
     struct {
       sir_val_id_t x;
       sir_val_id_t dst;
@@ -401,10 +451,14 @@ bool sir_mb_func_set_entry(sir_module_builder_t* b, sir_func_id_t f);
 bool sir_mb_func_set_value_count(sir_module_builder_t* b, sir_func_id_t f, uint32_t value_count);
 bool sir_mb_func_set_sig(sir_module_builder_t* b, sir_func_id_t f, sir_sig_t sig);
 
+bool sir_mb_emit_const_i1(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, bool v);
 bool sir_mb_emit_const_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, int32_t v);
 bool sir_mb_emit_const_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, int64_t v);
 bool sir_mb_emit_const_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint8_t v);
+bool sir_mb_emit_const_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint16_t v);
 bool sir_mb_emit_const_bool(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, bool v);
+bool sir_mb_emit_const_f32_bits(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint32_t bits);
+bool sir_mb_emit_const_f64_bits(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint64_t bits);
 bool sir_mb_emit_const_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, zi_ptr_t v);
 bool sir_mb_emit_const_null_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst);
 bool sir_mb_emit_const_bytes(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst_ptr, sir_val_id_t dst_len, const uint8_t* bytes,
@@ -435,6 +489,8 @@ bool sir_mb_emit_i32_cmp_ult(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
 bool sir_mb_emit_i32_cmp_ule(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_cmp_ugt(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_cmp_uge(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_f32_cmp_ueq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
+bool sir_mb_emit_f64_cmp_olt(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_global_addr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_global_id_t gid);
 bool sir_mb_emit_ptr_offset(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t base, sir_val_id_t index, uint32_t scale);
 bool sir_mb_emit_ptr_add(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t base, sir_val_id_t off);
@@ -448,6 +504,7 @@ bool sir_mb_emit_bool_and(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t
 bool sir_mb_emit_bool_or(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_bool_xor(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_);
 bool sir_mb_emit_i32_zext_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
+bool sir_mb_emit_i32_zext_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
 bool sir_mb_emit_i64_zext_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
 bool sir_mb_emit_i32_trunc_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x);
 bool sir_mb_emit_select(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t cond, sir_val_id_t a, sir_val_id_t b_);
@@ -461,13 +518,19 @@ bool sir_mb_emit_mem_copy(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t
 bool sir_mb_emit_mem_fill(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t byte, sir_val_id_t len);
 bool sir_mb_emit_alloca(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint32_t size, uint32_t align);
 bool sir_mb_emit_store_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
+bool sir_mb_emit_store_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_store_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_store_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_store_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
+bool sir_mb_emit_store_f32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
+bool sir_mb_emit_store_f64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align);
 bool sir_mb_emit_load_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
+bool sir_mb_emit_load_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_load_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_load_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_load_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
+bool sir_mb_emit_load_f32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
+bool sir_mb_emit_load_f64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align);
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count);
 bool sir_mb_emit_call_extern_res(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count,
                                  const sir_val_id_t* results, uint8_t result_count);

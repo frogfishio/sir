@@ -56,20 +56,20 @@ Acceptance:
 
 Work items:
 - [ ] Core types parity (execution)
-  - [ ] `type.kind:"prim"`: `i8/i16/i32/i64/bool/i1/f32/f64/void` (execution rules, not just parsing)
+  - [x] `type.kind:"prim"`: `i8/i16/i32/i64/bool/i1/f32/f64/void` (execution rules, not just parsing)
   - [ ] `type.kind:"ptr"` treated consistently (typed ptr, but no host pointers)
   - [ ] `type.kind:"array"` basics (size/stride) for `ptr.offset` and init data
   - [ ] `type.kind:"struct"` (enough for by-pointer access; no “peek” contracts)
 - [ ] Core memory parity (execution)
-  - [ ] `load.i16` / `store.i16`
-  - [ ] `load.f32` / `store.f32`
-  - [ ] `load.f64` / `store.f64`
+  - [x] `load.i16` / `store.i16`
+  - [x] `load.f32` / `store.f32`
+  - [x] `load.f64` / `store.f64`
   - [ ] Alignment rules and deterministic misalignment traps match the `sircc` contract
 - [ ] Core calls parity (execution)
   - [ ] `call` (direct call) if required by producers (or document “use call.indirect only”)
 - [ ] Diagnostics parity (developer UX)
   - [ ] When unsupported: emit “what to do instead” hints (e.g. for extern calls, point to `decl.fn`)
-  - [ ] Ensure `--diagnostics json` includes stable fields for CI parsing (code/path/line/node/tag)
+  - [x] Ensure `--diagnostics json` includes stable fields for CI parsing (code/path/line/node/tag/fid/ip/op when available)
 
 ### Stage C — Pack parity (closes “split personality” for integrators)
 
@@ -124,6 +124,7 @@ Work items:
   - [x] Record first diagnostic (code + message + line + node id when available)
   - [x] Emit via `sem --diagnostics text|json`
   - [x] Optional: collect and emit multiple diagnostics (`--all`) (best-effort)
+  - [x] Include `fid`/`ip`/`op` in JSON diagnostics when available (validator + exec failures)
 - [ ] Tighten validation (SEM-side) with clear messages
   - [ ] Wrong mnemonic payload shape (missing fields, wrong types)
   - [x] Wrong arity/type for common op arguments (i32.* casts/binops/unops)

@@ -384,6 +384,16 @@ static bool emit_inst(sir_module_builder_t* b, sir_func_id_t f, sir_inst_t inst)
   return true;
 }
 
+bool sir_mb_emit_const_i1(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, bool v) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_CONST_I1;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.const_i1.v = v ? 1 : 0;
+  i.u.const_i1.dst = dst;
+  return emit_inst(b, f, i);
+}
+
 bool sir_mb_emit_const_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, int32_t v) {
   sir_inst_t i = {0};
   i.k = SIR_INST_CONST_I32;
@@ -431,6 +441,36 @@ bool sir_mb_emit_const_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t
   i.results[0] = dst;
   i.u.const_i8.v = v;
   i.u.const_i8.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_const_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint16_t v) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_CONST_I16;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.const_i16.v = v;
+  i.u.const_i16.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_const_f32_bits(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint32_t bits) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_CONST_F32;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.const_f32.bits = bits;
+  i.u.const_f32.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_const_f64_bits(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, uint64_t bits) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_CONST_F64;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.const_f64.bits = bits;
+  i.u.const_f64.dst = dst;
   return emit_inst(b, f, i);
 }
 
@@ -588,6 +628,25 @@ bool sir_mb_emit_i32_cmp_uge(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
   return emit_i32_cmp(b, f, SIR_INST_I32_CMP_UGE, dst, a, b_);
 }
 
+static bool emit_f_cmp(sir_module_builder_t* b, sir_func_id_t f, sir_inst_kind_t k, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  sir_inst_t i = {0};
+  i.k = k;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.f_cmp.a = a;
+  i.u.f_cmp.b = b_;
+  i.u.f_cmp.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_f32_cmp_ueq(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_f_cmp(b, f, SIR_INST_F32_CMP_UEQ, dst, a, b_);
+}
+
+bool sir_mb_emit_f64_cmp_olt(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t a, sir_val_id_t b_) {
+  return emit_f_cmp(b, f, SIR_INST_F64_CMP_OLT, dst, a, b_);
+}
+
 bool sir_mb_emit_i32_trunc_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
   sir_inst_t i = {0};
   i.k = SIR_INST_I32_TRUNC_I64;
@@ -605,6 +664,16 @@ bool sir_mb_emit_i32_zext_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_i
   i.results[0] = dst;
   i.u.i32_zext_i8.x = x;
   i.u.i32_zext_i8.dst = dst;
+  return emit_inst(b, f, i);
+}
+
+bool sir_mb_emit_i32_zext_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t x) {
+  sir_inst_t i = {0};
+  i.k = SIR_INST_I32_ZEXT_I16;
+  i.result_count = 1;
+  i.results[0] = dst;
+  i.u.i32_zext_i16.x = x;
+  i.u.i32_zext_i16.dst = dst;
   return emit_inst(b, f, i);
 }
 
@@ -885,6 +954,9 @@ static bool emit_load(sir_module_builder_t* b, sir_func_id_t f, sir_inst_kind_t 
 bool sir_mb_emit_store_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
   return emit_store(b, f, SIR_INST_STORE_I8, addr, value, align);
 }
+bool sir_mb_emit_store_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
+  return emit_store(b, f, SIR_INST_STORE_I16, addr, value, align);
+}
 bool sir_mb_emit_store_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
   return emit_store(b, f, SIR_INST_STORE_I32, addr, value, align);
 }
@@ -894,8 +966,17 @@ bool sir_mb_emit_store_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_
 bool sir_mb_emit_store_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
   return emit_store(b, f, SIR_INST_STORE_PTR, addr, value, align);
 }
+bool sir_mb_emit_store_f32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
+  return emit_store(b, f, SIR_INST_STORE_F32, addr, value, align);
+}
+bool sir_mb_emit_store_f64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t addr, sir_val_id_t value, uint32_t align) {
+  return emit_store(b, f, SIR_INST_STORE_F64, addr, value, align);
+}
 bool sir_mb_emit_load_i8(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
   return emit_load(b, f, SIR_INST_LOAD_I8, dst, addr, align);
+}
+bool sir_mb_emit_load_i16(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
+  return emit_load(b, f, SIR_INST_LOAD_I16, dst, addr, align);
 }
 bool sir_mb_emit_load_i32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
   return emit_load(b, f, SIR_INST_LOAD_I32, dst, addr, align);
@@ -905,6 +986,12 @@ bool sir_mb_emit_load_i64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t
 }
 bool sir_mb_emit_load_ptr(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
   return emit_load(b, f, SIR_INST_LOAD_PTR, dst, addr, align);
+}
+bool sir_mb_emit_load_f32(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
+  return emit_load(b, f, SIR_INST_LOAD_F32, dst, addr, align);
+}
+bool sir_mb_emit_load_f64(sir_module_builder_t* b, sir_func_id_t f, sir_val_id_t dst, sir_val_id_t addr, uint32_t align) {
+  return emit_load(b, f, SIR_INST_LOAD_F64, dst, addr, align);
 }
 
 bool sir_mb_emit_call_extern(sir_module_builder_t* b, sir_func_id_t f, sir_sym_id_t callee, const sir_val_id_t* args, uint32_t arg_count) {
@@ -1330,9 +1417,25 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
       const sir_inst_t* inst = &f->insts[ii];
       sir__validate_note("sir.validate.inst", fid, ii, inst);
       switch (inst->k) {
+        case SIR_INST_CONST_I1:
+          if (inst->u.const_i1.dst >= vc) {
+            set_errf(err, err_cap, "const_i1 dst out of range (%u >= %u)", inst->u.const_i1.dst, vc);
+            return false;
+          }
+          if (inst->u.const_i1.v > 1) {
+            set_err(err, err_cap, "const_i1 value must be 0 or 1");
+            return false;
+          }
+          break;
         case SIR_INST_CONST_I8:
           if (inst->u.const_i8.dst >= vc) {
             set_errf(err, err_cap, "const_i8 dst out of range (%u >= %u)", inst->u.const_i8.dst, vc);
+            return false;
+          }
+          break;
+        case SIR_INST_CONST_I16:
+          if (inst->u.const_i16.dst >= vc) {
+            set_errf(err, err_cap, "const_i16 dst out of range (%u >= %u)", inst->u.const_i16.dst, vc);
             return false;
           }
           break;
@@ -1355,6 +1458,18 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
           }
           if (inst->u.const_bool.v > 1) {
             set_err(err, err_cap, "const_bool value must be 0 or 1");
+            return false;
+          }
+          break;
+        case SIR_INST_CONST_F32:
+          if (inst->u.const_f32.dst >= vc) {
+            set_errf(err, err_cap, "const_f32 dst out of range (%u >= %u)", inst->u.const_f32.dst, vc);
+            return false;
+          }
+          break;
+        case SIR_INST_CONST_F64:
+          if (inst->u.const_f64.dst >= vc) {
+            set_errf(err, err_cap, "const_f64 dst out of range (%u >= %u)", inst->u.const_f64.dst, vc);
             return false;
           }
           break;
@@ -1428,6 +1543,13 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_I32_CMP_UGE:
           if (inst->u.i32_cmp_eq.dst >= vc || inst->u.i32_cmp_eq.a >= vc || inst->u.i32_cmp_eq.b >= vc) {
             set_err(err, err_cap, "i32_cmp operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_F32_CMP_UEQ:
+        case SIR_INST_F64_CMP_OLT:
+          if (inst->u.f_cmp.dst >= vc || inst->u.f_cmp.a >= vc || inst->u.f_cmp.b >= vc) {
+            set_err(err, err_cap, "f_cmp operand out of range");
             return false;
           }
           break;
@@ -1505,6 +1627,12 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
         case SIR_INST_I32_ZEXT_I8:
           if (inst->u.i32_zext_i8.dst >= vc || inst->u.i32_zext_i8.x >= vc) {
             set_err(err, err_cap, "i32_zext_i8 operand out of range");
+            return false;
+          }
+          break;
+        case SIR_INST_I32_ZEXT_I16:
+          if (inst->u.i32_zext_i16.dst >= vc || inst->u.i32_zext_i16.x >= vc) {
+            set_err(err, err_cap, "i32_zext_i16 operand out of range");
             return false;
           }
           break;
@@ -1593,18 +1721,24 @@ bool sir_module_validate(const sir_module_t* m, char* err, size_t err_cap) {
           }
           break;
         case SIR_INST_STORE_I8:
+        case SIR_INST_STORE_I16:
         case SIR_INST_STORE_I32:
         case SIR_INST_STORE_I64:
         case SIR_INST_STORE_PTR:
+        case SIR_INST_STORE_F32:
+        case SIR_INST_STORE_F64:
           if (inst->u.store.addr >= vc || inst->u.store.value >= vc) {
             set_err(err, err_cap, "store operand out of range");
             return false;
           }
           break;
         case SIR_INST_LOAD_I8:
+        case SIR_INST_LOAD_I16:
         case SIR_INST_LOAD_I32:
         case SIR_INST_LOAD_I64:
         case SIR_INST_LOAD_PTR:
+        case SIR_INST_LOAD_F32:
+        case SIR_INST_LOAD_F64:
           if (inst->u.load.addr >= vc || inst->u.load.dst >= vc) {
             set_err(err, err_cap, "load operand out of range");
             return false;
@@ -1862,6 +1996,26 @@ typedef struct sir_frame {
   sir_value_t* vals;
 } sir_frame_t;
 
+static bool f32_is_nan_bits(uint32_t bits) {
+  const uint32_t exp = bits & 0x7F800000u;
+  const uint32_t frac = bits & 0x007FFFFFu;
+  return exp == 0x7F800000u && frac != 0;
+}
+
+static uint32_t f32_canon_bits(uint32_t bits) {
+  return f32_is_nan_bits(bits) ? 0x7FC00000u : bits;
+}
+
+static bool f64_is_nan_bits(uint64_t bits) {
+  const uint64_t exp = bits & 0x7FF0000000000000ull;
+  const uint64_t frac = bits & 0x000FFFFFFFFFFFFFull;
+  return exp == 0x7FF0000000000000ull && frac != 0;
+}
+
+static uint64_t f64_canon_bits(uint64_t bits) {
+  return f64_is_nan_bits(bits) ? 0x7FF8000000000000ull : bits;
+}
+
 static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t host, const zi_ptr_t* globals, uint32_t global_count,
                          sir_func_id_t fid, const sir_value_t* args, uint32_t arg_count, sir_value_t* out_results, uint32_t out_result_count,
                          uint32_t depth, const sir_exec_event_sink_t* sink);
@@ -1930,8 +2084,14 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         case SIR_PRIM_VOID:
           free(vals);
           return ZI_E_INVALID;
+        case SIR_PRIM_I1:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_I1, .u.u1 = 0};
+          break;
         case SIR_PRIM_I8:
           vals[i] = (sir_value_t){.kind = SIR_VAL_I8, .u.u8 = 0};
+          break;
+        case SIR_PRIM_I16:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_I16, .u.u16 = 0};
           break;
         case SIR_PRIM_I32:
           vals[i] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = 0};
@@ -1944,6 +2104,12 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           break;
         case SIR_PRIM_BOOL:
           vals[i] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = 0};
+          break;
+        case SIR_PRIM_F32:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_F32, .u.f32_bits = 0};
+          break;
+        case SIR_PRIM_F64:
+          vals[i] = (sir_value_t){.kind = SIR_VAL_F64, .u.f64_bits = 0};
           break;
         default:
           free(vals);
@@ -1964,12 +2130,32 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
     const sir_inst_t* i = &f->insts[ip];
     if (sink && sink->on_step) sink->on_step(sink->user, m, fid, ip, i->k);
     switch (i->k) {
+      case SIR_INST_CONST_I1:
+        if (i->u.const_i1.dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        if (i->u.const_i1.v > 1) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[i->u.const_i1.dst] = (sir_value_t){.kind = SIR_VAL_I1, .u.u1 = i->u.const_i1.v};
+        ip++;
+        break;
       case SIR_INST_CONST_I8:
         if (i->u.const_i8.dst >= f->value_count) {
           free(vals);
           return ZI_E_BOUNDS;
         }
         vals[i->u.const_i8.dst] = (sir_value_t){.kind = SIR_VAL_I8, .u.u8 = i->u.const_i8.v};
+        ip++;
+        break;
+      case SIR_INST_CONST_I16:
+        if (i->u.const_i16.dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        vals[i->u.const_i16.dst] = (sir_value_t){.kind = SIR_VAL_I16, .u.u16 = i->u.const_i16.v};
         ip++;
         break;
       case SIR_INST_CONST_I32:
@@ -1998,6 +2184,22 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_INVALID;
         }
         vals[i->u.const_bool.dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = i->u.const_bool.v};
+        ip++;
+        break;
+      case SIR_INST_CONST_F32:
+        if (i->u.const_f32.dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        vals[i->u.const_f32.dst] = (sir_value_t){.kind = SIR_VAL_F32, .u.f32_bits = f32_canon_bits(i->u.const_f32.bits)};
+        ip++;
+        break;
+      case SIR_INST_CONST_F64:
+        if (i->u.const_f64.dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        vals[i->u.const_f64.dst] = (sir_value_t){.kind = SIR_VAL_F64, .u.f64_bits = f64_canon_bits(i->u.const_f64.bits)};
         ip++;
         break;
       case SIR_INST_CONST_PTR:
@@ -2260,6 +2462,54 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         ip++;
         break;
       }
+      case SIR_INST_F32_CMP_UEQ: {
+        const sir_val_id_t a = i->u.f_cmp.a;
+        const sir_val_id_t b = i->u.f_cmp.b;
+        const sir_val_id_t dst = i->u.f_cmp.dst;
+        if (a >= f->value_count || b >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t av = vals[a];
+        const sir_value_t bv = vals[b];
+        if (av.kind != SIR_VAL_F32 || bv.kind != SIR_VAL_F32) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const bool nan_a = f32_is_nan_bits(av.u.f32_bits);
+        const bool nan_b = f32_is_nan_bits(bv.u.f32_bits);
+        float af = 0.0f, bf = 0.0f;
+        memcpy(&af, &av.u.f32_bits, 4);
+        memcpy(&bf, &bv.u.f32_bits, 4);
+        const bool r = nan_a || nan_b || (af == bf);
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = (uint8_t)(r ? 1 : 0)};
+        ip++;
+        break;
+      }
+      case SIR_INST_F64_CMP_OLT: {
+        const sir_val_id_t a = i->u.f_cmp.a;
+        const sir_val_id_t b = i->u.f_cmp.b;
+        const sir_val_id_t dst = i->u.f_cmp.dst;
+        if (a >= f->value_count || b >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t av = vals[a];
+        const sir_value_t bv = vals[b];
+        if (av.kind != SIR_VAL_F64 || bv.kind != SIR_VAL_F64) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const bool nan_a = f64_is_nan_bits(av.u.f64_bits);
+        const bool nan_b = f64_is_nan_bits(bv.u.f64_bits);
+        double ad = 0.0, bd = 0.0;
+        memcpy(&ad, &av.u.f64_bits, 8);
+        memcpy(&bd, &bv.u.f64_bits, 8);
+        const bool r = (!nan_a && !nan_b) && (ad < bd);
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_BOOL, .u.b = (uint8_t)(r ? 1 : 0)};
+        ip++;
+        break;
+      }
       case SIR_INST_GLOBAL_ADDR: {
         const sir_global_id_t gid = i->u.global_addr.gid;
         const sir_val_id_t dst = i->u.global_addr.dst;
@@ -2481,6 +2731,22 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           return ZI_E_INVALID;
         }
         vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = (int32_t)(uint32_t)xv.u.u8};
+        ip++;
+        break;
+      }
+      case SIR_INST_I32_ZEXT_I16: {
+        const sir_val_id_t x = i->u.i32_zext_i16.x;
+        const sir_val_id_t dst = i->u.i32_zext_i16.dst;
+        if (x >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t xv = vals[x];
+        if (xv.kind != SIR_VAL_I16) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        vals[dst] = (sir_value_t){.kind = SIR_VAL_I32, .u.i32 = (int32_t)(uint32_t)xv.u.u16};
         ip++;
         break;
       }
@@ -2725,6 +2991,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         break;
       }
       case SIR_INST_STORE_I8:
+      case SIR_INST_STORE_I16:
       case SIR_INST_STORE_I32:
       case SIR_INST_STORE_I64:
       case SIR_INST_STORE_PTR: {
@@ -2741,6 +3008,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         }
         uint32_t size = 0;
         if (i->k == SIR_INST_STORE_I8) size = 1;
+        else if (i->k == SIR_INST_STORE_I16) size = 2;
         else if (i->k == SIR_INST_STORE_I32) size = 4;
         else if (i->k == SIR_INST_STORE_I64) size = 8;
         else size = (uint32_t)sizeof(zi_ptr_t);
@@ -2758,6 +3026,18 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
             return ZI_E_INVALID;
           }
           memcpy(w, &b, 1);
+        } else if (i->k == SIR_INST_STORE_I16) {
+          const sir_value_t vv = vals[v];
+          uint16_t x = 0;
+          if (vv.kind == SIR_VAL_I16) x = vv.u.u16;
+          else if (vv.kind == SIR_VAL_I8) x = (uint16_t)vv.u.u8;
+          else if (vv.kind == SIR_VAL_I32) x = (uint16_t)(uint32_t)vv.u.i32;
+          else if (vv.kind == SIR_VAL_I64) x = (uint16_t)(uint64_t)vv.u.i64;
+          else {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+          memcpy(w, &x, 2);
         } else if (i->k == SIR_INST_STORE_I32) {
           const sir_value_t vv = vals[v];
           if (vv.kind != SIR_VAL_I32) {
@@ -2783,7 +3063,47 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         ip++;
         break;
       }
+      case SIR_INST_STORE_F32:
+      case SIR_INST_STORE_F64: {
+        const sir_val_id_t a = i->u.store.addr;
+        const sir_val_id_t v = i->u.store.value;
+        if (a >= f->value_count || v >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t av = vals[a];
+        if (av.kind != SIR_VAL_PTR) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const uint32_t size = (i->k == SIR_INST_STORE_F32) ? 4u : 8u;
+        uint8_t* w = NULL;
+        if (!sem_guest_mem_map_rw(mem, av.u.ptr, (zi_size32_t)size, &w) || !w) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        if (sink && sink->on_mem) sink->on_mem(sink->user, m, fid, ip, SIR_MEM_WRITE, av.u.ptr, size);
+        const sir_value_t vv = vals[v];
+        if (i->k == SIR_INST_STORE_F32) {
+          if (vv.kind != SIR_VAL_F32) {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+          const uint32_t bits = f32_canon_bits(vv.u.f32_bits);
+          memcpy(w, &bits, 4);
+        } else {
+          if (vv.kind != SIR_VAL_F64) {
+            free(vals);
+            return ZI_E_INVALID;
+          }
+          const uint64_t bits = f64_canon_bits(vv.u.f64_bits);
+          memcpy(w, &bits, 8);
+        }
+        ip++;
+        break;
+      }
       case SIR_INST_LOAD_I8:
+      case SIR_INST_LOAD_I16:
       case SIR_INST_LOAD_I32:
       case SIR_INST_LOAD_I64:
       case SIR_INST_LOAD_PTR: {
@@ -2800,6 +3120,7 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
         }
         uint32_t size = 0;
         if (i->k == SIR_INST_LOAD_I8) size = 1;
+        else if (i->k == SIR_INST_LOAD_I16) size = 2;
         else if (i->k == SIR_INST_LOAD_I32) size = 4;
         else if (i->k == SIR_INST_LOAD_I64) size = 8;
         else size = (uint32_t)sizeof(zi_ptr_t);
@@ -2813,6 +3134,10 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           uint8_t b = 0;
           memcpy(&b, r, 1);
           vals[dst] = (sir_value_t){.kind = SIR_VAL_I8, .u.u8 = b};
+        } else if (i->k == SIR_INST_LOAD_I16) {
+          uint16_t x = 0;
+          memcpy(&x, r, 2);
+          vals[dst] = (sir_value_t){.kind = SIR_VAL_I16, .u.u16 = x};
         } else if (i->k == SIR_INST_LOAD_I32) {
           int32_t x = 0;
           memcpy(&x, r, 4);
@@ -2825,6 +3150,38 @@ static int32_t exec_func(const sir_module_t* m, sem_guest_mem_t* mem, sir_host_t
           zi_ptr_t x = 0;
           memcpy(&x, r, sizeof(x));
           vals[dst] = (sir_value_t){.kind = SIR_VAL_PTR, .u.ptr = x};
+        }
+        ip++;
+        break;
+      }
+      case SIR_INST_LOAD_F32:
+      case SIR_INST_LOAD_F64: {
+        const sir_val_id_t a = i->u.load.addr;
+        const sir_val_id_t dst = i->u.load.dst;
+        if (a >= f->value_count || dst >= f->value_count) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        const sir_value_t av = vals[a];
+        if (av.kind != SIR_VAL_PTR) {
+          free(vals);
+          return ZI_E_INVALID;
+        }
+        const uint32_t size = (i->k == SIR_INST_LOAD_F32) ? 4u : 8u;
+        const uint8_t* r = NULL;
+        if (!sem_guest_mem_map_ro(mem, av.u.ptr, (zi_size32_t)size, &r) || !r) {
+          free(vals);
+          return ZI_E_BOUNDS;
+        }
+        if (sink && sink->on_mem) sink->on_mem(sink->user, m, fid, ip, SIR_MEM_READ, av.u.ptr, size);
+        if (i->k == SIR_INST_LOAD_F32) {
+          uint32_t bits = 0;
+          memcpy(&bits, r, 4);
+          vals[dst] = (sir_value_t){.kind = SIR_VAL_F32, .u.f32_bits = f32_canon_bits(bits)};
+        } else {
+          uint64_t bits = 0;
+          memcpy(&bits, r, 8);
+          vals[dst] = (sir_value_t){.kind = SIR_VAL_F64, .u.f64_bits = f64_canon_bits(bits)};
         }
         ip++;
         break;
@@ -2914,14 +3271,22 @@ const char* sir_inst_kind_name(sir_inst_kind_t k) {
   switch (k) {
     case SIR_INST_INVALID:
       return "invalid";
+    case SIR_INST_CONST_I1:
+      return "const.i1";
     case SIR_INST_CONST_I8:
       return "const.i8";
+    case SIR_INST_CONST_I16:
+      return "const.i16";
     case SIR_INST_CONST_I32:
       return "const.i32";
     case SIR_INST_CONST_I64:
       return "const.i64";
     case SIR_INST_CONST_BOOL:
       return "const.bool";
+    case SIR_INST_CONST_F32:
+      return "const.f32";
+    case SIR_INST_CONST_F64:
+      return "const.f64";
     case SIR_INST_CONST_PTR:
       return "const.ptr";
     case SIR_INST_CONST_PTR_NULL:
@@ -2980,6 +3345,10 @@ const char* sir_inst_kind_name(sir_inst_kind_t k) {
       return "i32.cmp.ugt";
     case SIR_INST_I32_CMP_UGE:
       return "i32.cmp.uge";
+    case SIR_INST_F32_CMP_UEQ:
+      return "f32.cmp.ueq";
+    case SIR_INST_F64_CMP_OLT:
+      return "f64.cmp.olt";
     case SIR_INST_GLOBAL_ADDR:
       return "global.addr";
     case SIR_INST_PTR_OFFSET:
@@ -3006,6 +3375,8 @@ const char* sir_inst_kind_name(sir_inst_kind_t k) {
       return "bool.xor";
     case SIR_INST_I32_ZEXT_I8:
       return "i32.zext.i8";
+    case SIR_INST_I32_ZEXT_I16:
+      return "i32.zext.i16";
     case SIR_INST_I64_ZEXT_I32:
       return "i64.zext.i32";
     case SIR_INST_I32_TRUNC_I64:
@@ -3026,6 +3397,8 @@ const char* sir_inst_kind_name(sir_inst_kind_t k) {
       return "alloca";
     case SIR_INST_STORE_I8:
       return "store.i8";
+    case SIR_INST_STORE_I16:
+      return "store.i16";
     case SIR_INST_STORE_I32:
       return "store.i32";
     case SIR_INST_STORE_I64:
@@ -3034,12 +3407,22 @@ const char* sir_inst_kind_name(sir_inst_kind_t k) {
       return "store.ptr";
     case SIR_INST_LOAD_I8:
       return "load.i8";
+    case SIR_INST_LOAD_I16:
+      return "load.i16";
     case SIR_INST_LOAD_I32:
       return "load.i32";
     case SIR_INST_LOAD_I64:
       return "load.i64";
     case SIR_INST_LOAD_PTR:
       return "load.ptr";
+    case SIR_INST_STORE_F32:
+      return "store.f32";
+    case SIR_INST_STORE_F64:
+      return "store.f64";
+    case SIR_INST_LOAD_F32:
+      return "load.f32";
+    case SIR_INST_LOAD_F64:
+      return "load.f64";
     case SIR_INST_CALL_EXTERN:
       return "call.extern";
     case SIR_INST_CALL_FUNC:

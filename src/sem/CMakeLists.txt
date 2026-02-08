@@ -380,6 +380,54 @@ target_compile_options(sem_unit_run_sem_bool_ops PRIVATE -Wall -Wextra -Wpedanti
 
 add_test(NAME sem_run_sem_bool_ops COMMAND sem_unit_run_sem_bool_ops)
 
+add_executable(sem_unit_run_float_load_canon
+  tests/test_run_float_load_canon.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_float_load_canon PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_float_load_canon PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_float_load_canon PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_float_load_canon PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_float_load_canon PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_float_load_canon COMMAND sem_unit_run_float_load_canon)
+
+add_executable(sem_unit_run_i16_store_load_zext
+  tests/test_run_i16_store_load_zext.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_i16_store_load_zext PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_i16_store_load_zext PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_i16_store_load_zext PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_i16_store_load_zext PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_i16_store_load_zext PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_i16_store_load_zext COMMAND sem_unit_run_i16_store_load_zext)
+
+add_executable(sem_unit_run_f64_cmp_olt_to_i32
+  tests/test_run_f64_cmp_olt_to_i32.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_run_f64_cmp_olt_to_i32 PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_run_f64_cmp_olt_to_i32 PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_run_f64_cmp_olt_to_i32 PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_run_f64_cmp_olt_to_i32 PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_run_f64_cmp_olt_to_i32 PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_run_f64_cmp_olt_to_i32 COMMAND sem_unit_run_f64_cmp_olt_to_i32)
+
 add_executable(sem_unit_run_sem_i32_cmp_variants
   tests/test_run_sem_i32_cmp_variants.c
   sem_hosted.c
@@ -699,6 +747,22 @@ target_link_libraries(sem_unit_verify_validate_diag_fields_json PRIVATE sircore_
 target_compile_options(sem_unit_verify_validate_diag_fields_json PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME sem_verify_validate_diag_fields_json COMMAND sem_unit_verify_validate_diag_fields_json)
+
+add_executable(sem_unit_exec_failure_diag_fields_json
+  tests/test_exec_failure_diag_fields_json.c
+  sem_hosted.c
+  sir_jsonl.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/json.c
+  ${CMAKE_SOURCE_DIR}/src/sircc/sircc.c
+)
+
+target_compile_definitions(sem_unit_exec_failure_diag_fields_json PRIVATE SIR_VERSION="${SIR_VERSION}")
+target_compile_definitions(sem_unit_exec_failure_diag_fields_json PRIVATE SEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(sem_unit_exec_failure_diag_fields_json PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/src/sircore ${CMAKE_SOURCE_DIR}/src/sircc)
+target_link_libraries(sem_unit_exec_failure_diag_fields_json PRIVATE sircore_hosted_zabi sircore_module)
+target_compile_options(sem_unit_exec_failure_diag_fields_json PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME sem_exec_failure_diag_fields_json COMMAND sem_unit_exec_failure_diag_fields_json)
 
 add_test(
   NAME sem_check_smoke
