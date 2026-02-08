@@ -1,0 +1,11 @@
+unit bad_strict_direct_call_arity target host
+
+fn add2(a:i32, b:i32) -> i32 public
+  return i32.add(a, b)
+end
+
+fn main() -> i32
+  ;; Missing one arg for add2.
+  return add2(1:i32)
+end
+

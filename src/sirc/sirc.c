@@ -27,6 +27,7 @@ typedef struct FnEntry {
   char* name;
   int64_t sig_type; // type id of fn signature
   int64_t ret_type; // type id of return
+  size_t param_count;
   bool is_extern;
   bool is_defined;
   int64_t fn_node; // node id of "fn" node (when defined)
@@ -1016,7 +1017,7 @@ static void fn_add_extern(const char* name, int64_t sig_ty, int64_t ret_ty) {
     g_emit.fns = (FnEntry*)xrealloc(g_emit.fns, g_emit.fns_cap * sizeof(FnEntry));
   }
   g_emit.fns[g_emit.fns_len++] =
-      (FnEntry){.name = xstrdup(name), .sig_type = sig_ty, .ret_type = ret_ty, .is_extern = true, .is_defined = false, .fn_node = 0};
+      (FnEntry){.name = xstrdup(name), .sig_type = sig_ty, .ret_type = ret_ty, .param_count = 0, .is_extern = true, .is_defined = false, .fn_node = 0};
 }
 
 static const FnEntry* fn_find(const char* name) {
@@ -1743,6 +1744,46 @@ char* sirc_colon_join(char* a, char* b) {
 
 static bool has_dot(const char* s) { return s && strchr(s, '.') != NULL; }
 
+static int strict_mnemonic_arity(const char* name) {
+  if (!name || !name[0]) return -1;
+
+  if (strcmp(name, "ptr.sym") == 0) return 1;
+  if (strcmp(name, "mem.copy") == 0) return 3;
+  if (strcmp(name, "mem.fill") == 0) return 3;
+
+  const char* dot = strchr(name, '.');
+  if (!dot) return -1;
+  const size_t prefix_len = (size_t)(dot - name);
+  const char* op = dot + 1;
+  if (!op || !op[0]) return -1;
+  if (strchr(op, '.')) return -1; // avoid false positives for multi-dot ops (e.g. i32.zext.i8)
+
+  bool int_prefix = (prefix_len == 2 && strncmp(name, "i8", 2) == 0) || (prefix_len == 3 && strncmp(name, "i16", 3) == 0) ||
+                    (prefix_len == 3 && strncmp(name, "i32", 3) == 0) || (prefix_len == 3 && strncmp(name, "i64", 3) == 0);
+  if (!int_prefix) return -1;
+
+  if (strcmp(op, "add") == 0) return 2;
+  if (strcmp(op, "sub") == 0) return 2;
+  if (strcmp(op, "mul") == 0) return 2;
+  if (strcmp(op, "and") == 0) return 2;
+  if (strcmp(op, "or") == 0) return 2;
+  if (strcmp(op, "xor") == 0) return 2;
+  if (strcmp(op, "shl") == 0) return 2;
+  if (strcmp(op, "shr") == 0) return 2;
+  if (strcmp(op, "sar") == 0) return 2;
+  if (strcmp(op, "eq") == 0) return 2;
+  if (strcmp(op, "ne") == 0) return 2;
+  if (strcmp(op, "lt") == 0) return 2;
+  if (strcmp(op, "le") == 0) return 2;
+  if (strcmp(op, "gt") == 0) return 2;
+  if (strcmp(op, "ge") == 0) return 2;
+  if (strcmp(op, "abs") == 0) return 1;
+  if (strcmp(op, "neg") == 0) return 1;
+  if (strcmp(op, "not") == 0) return 1;
+
+  return -1;
+}
+
 static void emit_attr_scalar(const AttrScalar* s) {
   if (!s) {
     emitf("null");
@@ -2464,6 +2505,7 @@ void sirc_fn_def_cfg(char* name, SircParamList* params, int64_t ret, int64_t ent
   if (e) {
     e->sig_type = fn_ty;
     e->ret_type = ret;
+    e->param_count = nparams;
     e->is_defined = true;
     e->fn_node = id;
   } else {
@@ -2472,7 +2514,7 @@ void sirc_fn_def_cfg(char* name, SircParamList* params, int64_t ret, int64_t ent
       g_emit.fns = (FnEntry*)xrealloc(g_emit.fns, g_emit.fns_cap * sizeof(FnEntry));
     }
     g_emit.fns[g_emit.fns_len++] =
-        (FnEntry){.name = xstrdup(name), .sig_type = fn_ty, .ret_type = ret, .is_extern = false, .is_defined = true, .fn_node = id};
+        (FnEntry){.name = xstrdup(name), .sig_type = fn_ty, .ret_type = ret, .param_count = nparams, .is_extern = false, .is_defined = true, .fn_node = id};
   }
 
   free(name);
@@ -2592,6 +2634,10 @@ static int64_t sirc_call_impl(char* name, SircExprList* args, SircAttrList* attr
       if (acc.have_count) strict_failf("sirc.strict.attr.unsupported", "call.indirect: 'count' attribute is not supported");
       if (acc.root_len) strict_failf("sirc.strict.attr.unsupported", "call.indirect: extra attributes are not supported in --strict");
       if (acc.flags_len) strict_failf("sirc.strict.attr.unsupported", "call.indirect: flags are not supported in --strict");
+      const size_t want = 1 + fn->param_count;
+      if (fn->param_count && argc != want) {
+        strict_failf("sirc.strict.arity", "call.indirect: expected %zu args (fp + %zu params), got %zu", want, fn->param_count, argc);
+      }
     }
 
     int64_t id = emit_node_with_fields_begin("call.indirect", fn->ret_type);
@@ -2695,6 +2741,9 @@ static int64_t sirc_call_impl(char* name, SircExprList* args, SircAttrList* attr
     const FnEntry* fn = fn_find(name);
     if (!fn) die_at_last("sirc: unknown function '%s'", name);
     if (attrs_has_any(&acc)) die_at_last("sirc: attribute tail not supported on direct function calls");
+    if (g_strict && fn->param_count && argc != fn->param_count) {
+      strict_failf("sirc.strict.arity", "%s: expected %zu args, got %zu", name, fn->param_count, argc);
+    }
     int64_t call = 0;
     if (fn->is_extern) {
       int64_t callee = emit_decl_fn_node(name, fn->sig_type);
@@ -2712,6 +2761,10 @@ static int64_t sirc_call_impl(char* name, SircExprList* args, SircAttrList* attr
   if (g_strict) {
     if (acc.have_sig) strict_failf("sirc.strict.attr.unsupported", "%s: 'sig' attribute is not supported", name);
     if (acc.have_count) strict_failf("sirc.strict.attr.unsupported", "%s: 'count' attribute is not supported", name);
+    const int want = strict_mnemonic_arity(name);
+    if (want >= 0 && argc != (size_t)want) {
+      strict_failf("sirc.strict.arity", "%s: expected %d args, got %zu", name, want, argc);
+    }
     for (size_t i = 0; i < acc.root_len; i++) {
       AttrItem* it = &acc.root[i];
       if (!it->key) continue;
@@ -2781,6 +2834,8 @@ void sirc_extern_fn(char* name, SircParamList* params, int64_t ret) {
   }
   int64_t sig = type_fn(tys, n, ret);
   fn_add_extern(name, sig, ret);
+  FnEntry* e = fn_find_mut(name);
+  if (e) e->param_count = n;
   free(name);
   if (params) {
     for (size_t i = 0; i < params->len; i++) free(params->names[i]);
@@ -2809,6 +2864,7 @@ void sirc_fn_def(char* name, SircParamList* params, int64_t ret, SircNodeList* s
   if (e) {
     e->sig_type = fn_ty;
     e->ret_type = ret;
+    e->param_count = nparams;
     e->is_defined = true;
     e->is_extern = e->is_extern; // keep if previously declared extern (unusual but harmless)
     e->fn_node = fn_node;
@@ -2818,7 +2874,7 @@ void sirc_fn_def(char* name, SircParamList* params, int64_t ret, SircNodeList* s
       g_emit.fns = (FnEntry*)xrealloc(g_emit.fns, g_emit.fns_cap * sizeof(FnEntry));
     }
     g_emit.fns[g_emit.fns_len++] =
-        (FnEntry){.name = xstrdup(name), .sig_type = fn_ty, .ret_type = ret, .is_extern = false, .is_defined = true, .fn_node = fn_node};
+        (FnEntry){.name = xstrdup(name), .sig_type = fn_ty, .ret_type = ret, .param_count = nparams, .is_extern = false, .is_defined = true, .fn_node = fn_node};
   }
 
   if (params) {

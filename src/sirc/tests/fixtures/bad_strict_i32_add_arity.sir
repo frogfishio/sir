@@ -1,0 +1,6 @@
+unit bad_strict_i32_add_arity target host
+
+fn main() -> i32
+  return i32.add(1:i32)
+end
+

@@ -1,0 +1,11 @@
+unit bad_strict_call_indirect_arity target host
+
+extern fn add_sig(a:i32, b:i32) -> i32
+
+fn main() -> i32
+  let fp:ptr = ptr.sym(add2)
+  ;; Missing one arg (sig has 2 params).
+  let r:i32 = call.indirect(fp, 1:i32) sig add_sig
+  return r
+end
+

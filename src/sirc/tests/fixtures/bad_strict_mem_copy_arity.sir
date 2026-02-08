@@ -1,0 +1,9 @@
+unit bad_strict_mem_copy_arity target host
+
+fn main() -> i32
+  let src:ptr = ptr.sym(s)
+  let dst:ptr = ptr.sym(d)
+  mem.copy(dst, src)
+  return 0:i32
+end
+

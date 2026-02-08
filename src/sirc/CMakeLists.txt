@@ -172,6 +172,11 @@ sirc_add_diag_expect_strict_test(sirc_diag_strict_call_indirect_extra_attr tests
 sirc_add_diag_expect_strict_test(sirc_diag_strict_mnemonic_sig_ignored tests/fixtures/bad_strict_mnemonic_sig_ignored.sir sirc.strict.attr.unsupported 8 1 "i32.add: 'sig' attribute")
 sirc_add_diag_expect_strict_test(sirc_diag_strict_mnemonic_count_ignored tests/fixtures/bad_strict_mnemonic_count_ignored.sir sirc.strict.attr.unsupported 6 1 "i32.add: 'count' attribute")
 sirc_add_diag_expect_strict_test(sirc_diag_strict_mnemonic_ty_wrong_type tests/fixtures/bad_strict_mnemonic_ty_wrong_type.sir sirc.strict.attr.bad_type 6 1 "ty must be a type name string")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_ptr_sym_arity tests/fixtures/bad_strict_ptr_sym_arity.sir sirc.strict.arity 0 0 "ptr.sym: expected")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_i32_add_arity tests/fixtures/bad_strict_i32_add_arity.sir sirc.strict.arity 0 0 "i32.add: expected")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_mem_copy_arity tests/fixtures/bad_strict_mem_copy_arity.sir sirc.strict.arity 0 0 "mem.copy: expected")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_call_indirect_arity tests/fixtures/bad_strict_call_indirect_arity.sir sirc.strict.arity 0 0 "call.indirect: expected")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_direct_call_arity tests/fixtures/bad_strict_direct_call_arity.sir sirc.strict.arity 0 0 "add2: expected")
 
 #
 # Tests (require sircc)

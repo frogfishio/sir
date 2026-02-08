@@ -1,0 +1,7 @@
+unit bad_strict_ptr_sym_arity target host
+
+fn main() -> i32
+  let p:ptr = ptr.sym(a, b)
+  return 0:i32
+end
+
