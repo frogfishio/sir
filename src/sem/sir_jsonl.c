@@ -85,8 +85,29 @@ typedef enum val_kind {
   VK_F64,
 } val_kind_t;
 
+typedef struct sirj_idmap_entry {
+  uint64_t h;
+  uint32_t id;
+  bool is_num;
+  uint32_t num;
+  const char* str;
+} sirj_idmap_entry_t;
+
+typedef struct sirj_idmap {
+  sirj_idmap_entry_t* entries;
+  uint32_t cap; // power-of-two
+  uint32_t len;
+  uint32_t next_id;
+} sirj_idmap_t;
+
 typedef struct sirj_ctx {
   Arena arena;
+
+  // Global id interning for record ids and {"t":"ref","id":...} payloads.
+  // SIR ids are per-kind, but refs do not always carry an explicit kind; interning globally
+  // keeps SEM robust to both numeric and string ids without requiring producers to use
+  // huge sparse integer ranges.
+  sirj_idmap_t ids;
 
   type_info_t* types; // indexed by type id (0..cap-1)
   uint32_t type_cap;
@@ -401,6 +422,7 @@ static void ctx_dispose(sirj_ctx_t* c) {
     sir_mb_free(c->mb);
     c->mb = NULL;
   }
+  free(c->ids.entries);
   free(c->types);
   free(c->nodes);
   free(c->syms);
@@ -451,6 +473,120 @@ static bool json_get_u32(const JsonValue* v, uint32_t* out) {
   return true;
 }
 
+static uint64_t sirj_hash_bytes(const void* p, size_t n) {
+  // FNV-1a 64-bit
+  const uint8_t* b = (const uint8_t*)p;
+  uint64_t h = 1469598103934665603ull;
+  for (size_t i = 0; i < n; i++) {
+    h ^= (uint64_t)b[i];
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+static uint64_t sirj_hash_str(const char* s) {
+  if (!s) return 0;
+  return sirj_hash_bytes(s, strlen(s));
+}
+
+static uint64_t sirj_hash_num(uint32_t x) {
+  uint64_t v = (uint64_t)x;
+  v ^= v >> 33;
+  v *= 0xff51afd7ed558ccdull;
+  v ^= v >> 33;
+  v *= 0xc4ceb9fe1a85ec53ull;
+  v ^= v >> 33;
+  return v;
+}
+
+static bool sirj_ids_grow(sirj_idmap_t* m) {
+  if (!m) return false;
+  const uint32_t old_cap = m->cap;
+  const uint32_t new_cap = old_cap ? old_cap * 2u : 256u;
+  sirj_idmap_entry_t* ne = (sirj_idmap_entry_t*)calloc((size_t)new_cap, sizeof(sirj_idmap_entry_t));
+  if (!ne) return false;
+
+  for (uint32_t i = 0; i < old_cap; i++) {
+    const sirj_idmap_entry_t* e = &m->entries[i];
+    if (!e->id) continue;
+    const uint32_t mask = new_cap - 1u;
+    uint32_t idx = (uint32_t)e->h & mask;
+    for (;;) {
+      if (!ne[idx].id) {
+        ne[idx] = *e;
+        break;
+      }
+      idx = (idx + 1u) & mask;
+    }
+  }
+
+  free(m->entries);
+  m->entries = ne;
+  m->cap = new_cap;
+  return true;
+}
+
+static bool sirj_intern_id(sirj_ctx_t* c, const JsonValue* v, uint32_t* out_id) {
+  if (!c || !out_id) return false;
+  if (!v) return false;
+
+  if (!c->ids.next_id) c->ids.next_id = 1u;
+  if (!c->ids.cap) {
+    if (!sirj_ids_grow(&c->ids)) return false;
+  }
+
+  bool is_num = false;
+  uint32_t num = 0;
+  const char* str = NULL;
+  uint64_t h = 0;
+
+  if (v->type == JSON_STRING) {
+    str = v->v.s;
+    if (!str) return false;
+    h = sirj_hash_str(str);
+  } else {
+    if (!json_get_u32(v, &num)) return false;
+    if (num == 0) {
+      *out_id = 0;
+      return true;
+    }
+    is_num = true;
+    h = sirj_hash_num(num);
+  }
+
+  // grow at ~70% load
+  if ((c->ids.len + 1u) * 10u >= c->ids.cap * 7u) {
+    if (!sirj_ids_grow(&c->ids)) return false;
+  }
+
+  const uint32_t mask = c->ids.cap - 1u;
+  uint32_t idx = (uint32_t)h & mask;
+  for (;;) {
+    sirj_idmap_entry_t* e = &c->ids.entries[idx];
+    if (!e->id) {
+      const uint32_t nid = c->ids.next_id++;
+      *e = (sirj_idmap_entry_t){.h = h, .id = nid, .is_num = is_num, .num = num, .str = str};
+      c->ids.len++;
+      *out_id = nid;
+      return true;
+    }
+    if (e->h == h && e->is_num == is_num) {
+      if (is_num) {
+        if (e->num == num) {
+          *out_id = e->id;
+          return true;
+        }
+      } else {
+        if (e->str && str && strcmp(e->str, str) == 0) {
+          *out_id = e->id;
+          return true;
+        }
+      }
+    }
+    idx = (idx + 1u) & mask;
+  }
+}
+
 static bool json_get_bool(const JsonValue* v, bool* out) {
   if (!out) return false;
   if (!v || v->type != JSON_BOOL) return false;
@@ -463,14 +599,14 @@ static const JsonValue* obj_req(const JsonValue* obj, const char* key) {
   return v;
 }
 
-static bool parse_ref_id(const JsonValue* v, uint32_t* out_id) {
+static bool parse_ref_id(sirj_ctx_t* c, const JsonValue* v, uint32_t* out_id) {
   if (!out_id) return false;
   if (!json_is_object(v)) return false;
   const JsonValue* tv = json_obj_get(v, "t");
   const JsonValue* idv = json_obj_get(v, "id");
   const char* ts = json_get_string(tv);
   if (!ts || strcmp(ts, "ref") != 0) return false;
-  return json_get_u32(idv, out_id);
+  return sirj_intern_id(c, idv, out_id);
 }
 
 static bool parse_sym_value(const JsonValue* v, const char** out_name) {
@@ -485,8 +621,8 @@ static bool parse_sym_value(const JsonValue* v, const char** out_name) {
   return true;
 }
 
-static bool parse_u32_array(const JsonValue* v, uint32_t** out, uint32_t* out_n, Arena* arena) {
-  if (!out || !out_n || !arena) return false;
+static bool parse_u32_array(sirj_ctx_t* c, const JsonValue* v, uint32_t** out, uint32_t* out_n, Arena* arena) {
+  if (!c || !out || !out_n || !arena) return false;
   if (!json_is_array(v)) return false;
   const JsonArray* a = &v->v.arr;
   uint32_t n = (uint32_t)a->len;
@@ -494,7 +630,7 @@ static bool parse_u32_array(const JsonValue* v, uint32_t** out, uint32_t* out_n,
   uint32_t* ids = (uint32_t*)arena_alloc(arena, (size_t)n * sizeof(uint32_t));
   if (!ids && n) return false;
   for (uint32_t i = 0; i < n; i++) {
-    if (!json_get_u32(a->items[i], &ids[i])) return false;
+    if (!sirj_intern_id(c, a->items[i], &ids[i])) return false;
   }
   *out = ids;
   *out_n = n;
@@ -910,7 +1046,7 @@ typedef struct sem_branch {
   uint32_t node_id; // value node id when VAL; fun.sym node id when THUNK
 } sem_branch_t;
 
-static bool parse_sem_branch(const JsonValue* v, sem_branch_t* out) {
+static bool parse_sem_branch(sirj_ctx_t* c, const JsonValue* v, sem_branch_t* out) {
   if (!out) return false;
   memset(out, 0, sizeof(*out));
   if (!json_is_object(v)) return false;
@@ -918,14 +1054,14 @@ static bool parse_sem_branch(const JsonValue* v, sem_branch_t* out) {
   if (!k) return false;
   if (strcmp(k, "val") == 0) {
     uint32_t rid = 0;
-    if (!parse_ref_id(json_obj_get((JsonValue*)v, "v"), &rid)) return false;
+    if (!parse_ref_id(c, json_obj_get((JsonValue*)v, "v"), &rid)) return false;
     out->kind = SEM_BRANCH_VAL;
     out->node_id = rid;
     return true;
   }
   if (strcmp(k, "thunk") == 0) {
     uint32_t rid = 0;
-    if (!parse_ref_id(json_obj_get((JsonValue*)v, "f"), &rid)) return false;
+    if (!parse_ref_id(c, json_obj_get((JsonValue*)v, "f"), &rid)) return false;
     out->kind = SEM_BRANCH_THUNK;
     out->node_id = rid;
     return true;
@@ -1423,7 +1559,7 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
 
       const JsonValue* vv = json_obj_get(asn, "v");
       uint32_t rid = 0;
-      if (!parse_ref_id(vv, &rid)) return false;
+      if (!parse_ref_id(c, vv, &rid)) return false;
       uint8_t* eb = NULL;
       uint32_t elen = 0;
       if (!build_const_bytes(c, rid, t->struct_fields[fi], &eb, &elen)) return false;
@@ -1455,7 +1591,7 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
     uint32_t off = 0;
     for (uint32_t i = 0; i < t->array_len; i++) {
       uint32_t rid = 0;
-      if (!parse_ref_id(ev->v.arr.items[i], &rid)) return false;
+      if (!parse_ref_id(c, ev->v.arr.items[i], &rid)) return false;
       uint8_t* eb = NULL;
       uint32_t elen = 0;
       if (!build_const_bytes(c, rid, t->array_of, &eb, &elen)) return false;
@@ -1478,7 +1614,7 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
     if (!json_get_u32(json_obj_get(n->fields_obj, "count"), &count)) return false;
     if (count != t->array_len) return false;
     uint32_t elem_id = 0;
-    if (!parse_ref_id(json_obj_get(n->fields_obj, "elem"), &elem_id)) return false;
+    if (!parse_ref_id(c, json_obj_get(n->fields_obj, "elem"), &elem_id)) return false;
 
     uint32_t es = 0, ea = 0;
     if (!type_layout(c, t->array_of, &es, &ea)) return false;
@@ -1672,11 +1808,11 @@ static bool eval_store_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info
     return false;
   }
   uint32_t addr_id = 0, val_id = 0;
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "addr"), &addr_id)) {
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "addr"), &addr_id)) {
     sirj_diag_setf(c, "sem.parse.store.addr", c->cur_path, n->loc_line, node_id, n->tag, "%s addr must be a ref", n->tag);
     return false;
   }
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "value"), &val_id)) {
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "value"), &val_id)) {
     sirj_diag_setf(c, "sem.parse.store.value", c->cur_path, n->loc_line, node_id, n->tag, "%s value must be a ref", n->tag);
     return false;
   }
@@ -1732,9 +1868,9 @@ static bool eval_mem_copy_stmt(sirj_ctx_t* c, uint32_t node_id, const node_info_
   }
 
   uint32_t dst_id = 0, src_id = 0, len_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &dst_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &src_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[2], &len_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &dst_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &src_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[2], &len_id)) return false;
 
   sir_val_id_t dst_slot = 0, src_slot = 0, len_slot = 0;
   val_kind_t dk = VK_INVALID, sk = VK_INVALID, lk = VK_INVALID;
@@ -1774,9 +1910,9 @@ static bool eval_mem_fill_stmt(sirj_ctx_t* c, uint32_t node_id, const node_info_
   }
 
   uint32_t dst_id = 0, byte_id = 0, len_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &dst_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &byte_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[2], &len_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &dst_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &byte_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[2], &len_id)) return false;
 
   sir_val_id_t dst_slot = 0, byte_slot = 0, len_slot = 0;
   val_kind_t dk = VK_INVALID, bk = VK_INVALID, lk = VK_INVALID;
@@ -1803,7 +1939,7 @@ static bool eval_load_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_info_
     return false;
   }
   uint32_t addr_id = 0;
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "addr"), &addr_id)) {
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "addr"), &addr_id)) {
     sirj_diag_setf(c, "sem.parse.load.addr", c->cur_path, n->loc_line, node_id, n->tag, "%s addr must be a ref", n->tag);
     return false;
   }
@@ -1914,11 +2050,11 @@ static bool eval_i32_add_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
     return false;
   }
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) {
     sirj_diag_setf(c, "sem.parse.i32.add.arg", c->cur_path, n->loc_line, node_id, n->tag, "i32.add arg 0 must be a ref");
     return false;
   }
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) {
     sirj_diag_setf(c, "sem.parse.i32.add.arg", c->cur_path, n->loc_line, node_id, n->tag, "i32.add arg 1 must be a ref");
     return false;
   }
@@ -1952,11 +2088,11 @@ static bool eval_i32_bin_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_in
     return false;
   }
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) {
     sirj_diag_setf(c, "sem.parse.i32.bin.arg", c->cur_path, n->loc_line, node_id, n->tag, "%s arg 0 must be a ref", n->tag);
     return false;
   }
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) {
     sirj_diag_setf(c, "sem.parse.i32.bin.arg", c->cur_path, n->loc_line, node_id, n->tag, "%s arg 1 must be a ref", n->tag);
     return false;
   }
@@ -2033,7 +2169,7 @@ static bool eval_i32_zext_i8(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
     return false;
   }
   uint32_t x_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &x_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &x_id)) {
     sirj_diag_setf(c, "sem.parse.i32.zext.i8.arg", c->cur_path, n->loc_line, node_id, n->tag, "i32.zext.i8 arg 0 must be a ref");
     return false;
   }
@@ -2065,7 +2201,7 @@ static bool eval_i32_zext_i16(sirj_ctx_t* c, uint32_t node_id, const node_info_t
     return false;
   }
   uint32_t x_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &x_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &x_id)) {
     sirj_diag_setf(c, "sem.parse.i32.zext.i16.arg", c->cur_path, n->loc_line, node_id, n->tag, "i32.zext.i16 arg 0 must be a ref");
     return false;
   }
@@ -2097,7 +2233,7 @@ static bool eval_i64_zext_i32(sirj_ctx_t* c, uint32_t node_id, const node_info_t
     return false;
   }
   uint32_t x_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &x_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &x_id)) {
     sirj_diag_setf(c, "sem.parse.i64.zext.i32.arg", c->cur_path, n->loc_line, node_id, n->tag, "i64.zext.i32 arg 0 must be a ref");
     return false;
   }
@@ -2130,7 +2266,7 @@ static bool eval_i32_un_mnemonic(sirj_ctx_t* c, uint32_t node_id, const node_inf
     return false;
   }
   uint32_t x_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &x_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &x_id)) {
     sirj_diag_setf(c, "sem.parse.i32.un.arg", c->cur_path, n->loc_line, node_id, n->tag, "%s arg 0 must be a ref", n->tag);
     return false;
   }
@@ -2166,7 +2302,7 @@ static bool eval_i32_trunc_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_
     return false;
   }
   uint32_t x_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &x_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &x_id)) {
     sirj_diag_setf(c, "sem.parse.i32.trunc.i64.arg", c->cur_path, n->loc_line, node_id, n->tag, "i32.trunc.i64 arg 0 must be a ref");
     return false;
   }
@@ -2192,8 +2328,8 @@ static bool eval_i32_cmp_eq(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -2212,8 +2348,8 @@ static bool eval_binop_add(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n
   if (!c || !n || !out_slot || !out_kind) return false;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "lhs"), &a_id)) return false;
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "rhs"), &b_id)) return false;
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "lhs"), &a_id)) return false;
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "rhs"), &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -2234,7 +2370,7 @@ static bool eval_ptr_to_i64_passthrough(sirj_ctx_t* c, uint32_t node_id, const n
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t arg_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &arg_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &arg_id)) return false;
   sir_val_id_t arg_slot = 0;
   val_kind_t ak = VK_INVALID;
   if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
@@ -2259,7 +2395,7 @@ static bool eval_ptr_from_i64(sirj_ctx_t* c, uint32_t node_id, const node_info_t
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t arg_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &arg_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &arg_id)) return false;
   sir_val_id_t arg_slot = 0;
   val_kind_t ak = VK_INVALID;
   if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
@@ -2279,7 +2415,7 @@ static bool eval_bool_not(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t x_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &x_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &x_id)) return false;
   sir_val_id_t x_slot = 0;
   val_kind_t xk = VK_INVALID;
   if (!eval_node(c, x_id, &x_slot, &xk)) return false;
@@ -2300,8 +2436,8 @@ static bool eval_bool_bin(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -2327,8 +2463,8 @@ static bool eval_i32_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -2381,8 +2517,8 @@ static bool eval_f32_cmp_ueq(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -2403,8 +2539,8 @@ static bool eval_f64_cmp_olt(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -2424,7 +2560,7 @@ static bool eval_ptr_size_alignof(sirj_ctx_t* c, uint32_t node_id, const node_in
   if (!c || !n || !out_slot || !out_kind) return false;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
   uint32_t ty_id = 0;
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "ty"), &ty_id)) {
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "ty"), &ty_id)) {
     sirj_diag_setf(c, "sem.ptr.layout.bad_ty", c->cur_path, n->loc_line, node_id, n->tag, "missing/invalid ty ref");
     return false;
   }
@@ -2505,7 +2641,7 @@ static bool eval_ptr_offset(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   if (!c || !n || !out_slot || !out_kind) return false;
   if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
   uint32_t ty_id = 0;
-  if (!parse_ref_id(json_obj_get(n->fields_obj, "ty"), &ty_id)) {
+  if (!parse_ref_id(c, json_obj_get(n->fields_obj, "ty"), &ty_id)) {
     sirj_diag_setf(c, "sem.ptr.offset.bad_ty", c->cur_path, n->loc_line, node_id, n->tag, "missing/invalid ty ref");
     return false;
   }
@@ -2522,8 +2658,8 @@ static bool eval_ptr_offset(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t base_id = 0, idx_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &base_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &idx_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &base_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &idx_id)) return false;
   sir_val_id_t base_slot = 0, idx_slot = 0;
   val_kind_t bk = VK_INVALID, ik = VK_INVALID;
   if (!eval_node(c, base_id, &base_slot, &bk)) return false;
@@ -2598,9 +2734,9 @@ static bool eval_select(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 3) return false;
   uint32_t cond_id = 0, a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &cond_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[2], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &cond_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[2], &b_id)) return false;
   sir_val_id_t cond_slot = 0, a_slot = 0, b_slot = 0;
   val_kind_t ck = VK_INVALID, ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, cond_id, &cond_slot, &ck)) return false;
@@ -2665,9 +2801,9 @@ static bool eval_sem_if(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
   }
 
   uint32_t cond_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &cond_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &cond_id)) return false;
   sem_branch_t th = {0}, el = {0};
-  if (!parse_sem_branch(av->v.arr.items[1], &th) || !parse_sem_branch(av->v.arr.items[2], &el)) {
+  if (!parse_sem_branch(c, av->v.arr.items[1], &th) || !parse_sem_branch(c, av->v.arr.items[2], &el)) {
     sirj_diag_setf(c, "sem.sem.if.branch_kind", c->cur_path, n->loc_line, node_id, n->tag, "sem.if branch must be {kind:val|thunk,...}");
     return false;
   }
@@ -2740,9 +2876,9 @@ static bool eval_sem_and_or_sc(sirj_ctx_t* c, uint32_t node_id, const node_info_
   }
 
   uint32_t lhs_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &lhs_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &lhs_id)) return false;
   sem_branch_t rhs = {0};
-  if (!parse_sem_branch(av->v.arr.items[1], &rhs)) return false;
+  if (!parse_sem_branch(c, av->v.arr.items[1], &rhs)) return false;
 
   sir_val_id_t lhs_slot = 0;
   val_kind_t lk = VK_INVALID;
@@ -2797,7 +2933,7 @@ static bool eval_sem_switch(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len < 1) return false;
   uint32_t scrut_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &scrut_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &scrut_id)) return false;
   sir_val_id_t scrut_slot = 0;
   val_kind_t sk = VK_INVALID;
   if (!eval_node(c, scrut_id, &scrut_slot, &sk)) return false;
@@ -2821,13 +2957,13 @@ static bool eval_sem_switch(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   for (uint32_t i = 0; i < ncase; i++) {
     if (!json_is_object(ca->items[i])) return false;
     uint32_t lit_id = 0;
-    if (!parse_ref_id(json_obj_get(ca->items[i], "lit"), &lit_id)) return false;
+    if (!parse_ref_id(c, json_obj_get(ca->items[i], "lit"), &lit_id)) return false;
     if (!parse_const_i32_value(c, lit_id, &case_lits[i])) return false;
-    if (!parse_sem_branch(json_obj_get(ca->items[i], "body"), &case_body[i])) return false;
+    if (!parse_sem_branch(c, json_obj_get(ca->items[i], "body"), &case_body[i])) return false;
     case_target[i] = 0;
   }
   sem_branch_t defb = {0};
-  if (!parse_sem_branch(json_obj_get(n->fields_obj, "default"), &defb)) return false;
+  if (!parse_sem_branch(c, json_obj_get(n->fields_obj, "default"), &defb)) return false;
 
   const sir_val_id_t res = alloc_slot(c, rk);
   uint32_t ip_sw = 0;
@@ -2880,8 +3016,8 @@ static bool eval_ptr_addsub(sirj_ctx_t* c, uint32_t node_id, const node_info_t* 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t base_id = 0, off_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &base_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &off_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &base_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &off_id)) return false;
   sir_val_id_t base_slot = 0, off_slot = 0;
   val_kind_t bk = VK_INVALID, ok = VK_INVALID;
   if (!eval_node(c, base_id, &base_slot, &bk)) return false;
@@ -2905,8 +3041,8 @@ static bool eval_ptr_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   sir_val_id_t a_slot = 0, b_slot = 0;
   val_kind_t ak = VK_INVALID, bk = VK_INVALID;
   if (!eval_node(c, a_id, &a_slot, &ak)) return false;
@@ -3091,7 +3227,7 @@ static bool eval_adt_make(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
 
   if (payload_ty != 0) {
     uint32_t payload_node = 0;
-    if (!parse_ref_id(av->v.arr.items[0], &payload_node)) return false;
+    if (!parse_ref_id(c, av->v.arr.items[0], &payload_node)) return false;
     sir_val_id_t pv = 0;
     val_kind_t pk = VK_INVALID;
     if (!eval_node(c, payload_node, &pv, &pk)) return false;
@@ -3157,7 +3293,7 @@ static bool eval_adt_tag(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t vid = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &vid)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &vid)) return false;
   sir_val_id_t vslot = 0;
   val_kind_t vk = VK_INVALID;
   if (!eval_node(c, vid, &vslot, &vk)) return false;
@@ -3181,7 +3317,7 @@ static bool eval_adt_is(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, s
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t vid = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &vid)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &vid)) return false;
   sir_val_id_t vslot = 0;
   val_kind_t vk = VK_INVALID;
   if (!eval_node(c, vid, &vslot, &vk)) return false;
@@ -3225,7 +3361,7 @@ static bool eval_adt_get(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t vid = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &vid)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &vid)) return false;
   sir_val_id_t vslot = 0;
   val_kind_t vk = VK_INVALID;
   if (!eval_node(c, vid, &vslot, &vk)) return false;
@@ -3335,7 +3471,7 @@ static bool eval_sem_match_sum(sirj_ctx_t* c, uint32_t node_id, const node_info_
   // Sum type reference.
   uint32_t sum_ty = 0;
   const JsonValue* sumref = json_obj_get(n->fields_obj, "sum");
-  if (!parse_ref_id(sumref, &sum_ty)) {
+  if (!parse_ref_id(c, sumref, &sum_ty)) {
     sirj_diag_setf(c, "sem.sem.match_sum.bad_sum", c->cur_path, n->loc_line, node_id, n->tag, "sem.match_sum sum must be a type ref");
     return false;
   }
@@ -3351,7 +3487,7 @@ static bool eval_sem_match_sum(sirj_ctx_t* c, uint32_t node_id, const node_info_
     return false;
   }
   uint32_t scrut_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &scrut_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &scrut_id)) return false;
   if (scrut_id >= c->node_cap || !c->nodes[scrut_id].present) return false;
   const node_info_t* scrut_n = &c->nodes[scrut_id];
   if (scrut_n->type_ref != sum_ty) {
@@ -3395,7 +3531,7 @@ static bool eval_sem_match_sum(sirj_ctx_t* c, uint32_t node_id, const node_info_
 
     case_variant_u32[i] = variant;
     case_lits[i] = (int32_t)variant;
-    if (!parse_sem_branch(json_obj_get(ca->items[i], "body"), &case_body[i])) return false;
+    if (!parse_sem_branch(c, json_obj_get(ca->items[i], "body"), &case_body[i])) return false;
     case_target[i] = 0;
 
     // If it's a thunk branch, validate signature against variant payload and result type.
@@ -3423,7 +3559,7 @@ static bool eval_sem_match_sum(sirj_ctx_t* c, uint32_t node_id, const node_info_
   }
 
   sem_branch_t defb = {0};
-  if (!parse_sem_branch(json_obj_get(n->fields_obj, "default"), &defb)) return false;
+  if (!parse_sem_branch(c, json_obj_get(n->fields_obj, "default"), &defb)) return false;
   if (defb.kind == SEM_BRANCH_THUNK) {
     const uint32_t fun_node = defb.node_id;
     if (fun_node >= c->node_cap || !c->nodes[fun_node].present) return false;
@@ -3528,8 +3664,8 @@ static bool eval_fun_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n, 
   }
 
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   if (a_id >= c->node_cap || b_id >= c->node_cap) return false;
   if (!c->nodes[a_id].present || !c->nodes[b_id].present) return false;
 
@@ -3613,7 +3749,7 @@ static bool eval_call_fun(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   }
 
   uint32_t callee_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &callee_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &callee_id)) return false;
   if (callee_id >= c->node_cap || !c->nodes[callee_id].present) return false;
   const node_info_t* callee_n = &c->nodes[callee_id];
 
@@ -3653,7 +3789,7 @@ static bool eval_call_fun(sirj_ctx_t* c, uint32_t node_id, const node_info_t* n,
   val_kind_t args_kinds[16];
   for (uint32_t i = 0; i < argc; i++) {
     uint32_t arg_id = 0;
-    if (!parse_ref_id(av->v.arr.items[i + 1], &arg_id)) return false;
+    if (!parse_ref_id(c, av->v.arr.items[i + 1], &arg_id)) return false;
     sir_val_id_t arg_slot = 0;
     val_kind_t ak = VK_INVALID;
     if (!eval_node(c, arg_id, &arg_slot, &ak)) return false;
@@ -3960,8 +4096,8 @@ static bool eval_closure_make(sirj_ctx_t* c, uint32_t node_id, const node_info_t
     return false;
   }
   uint32_t code_id = 0, env_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &code_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &env_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &code_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &env_id)) return false;
   if (code_id >= c->node_cap || env_id >= c->node_cap) return false;
   if (!c->nodes[code_id].present || !c->nodes[env_id].present) return false;
 
@@ -4056,7 +4192,7 @@ static bool eval_closure_sym(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   }
 
   uint32_t env_id = 0;
-  if (!parse_ref_id(av->v.arr.items[1], &env_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &env_id)) return false;
   if (env_id >= c->node_cap || !c->nodes[env_id].present) return false;
   const node_info_t* env_n = &c->nodes[env_id];
   if (env_n->type_ref != c->types[closure_ty].closure_env) {
@@ -4155,7 +4291,7 @@ static bool eval_closure_code(sirj_ctx_t* c, uint32_t node_id, const node_info_t
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t cid = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &cid)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &cid)) return false;
   if (cid >= c->node_cap || !c->nodes[cid].present) return false;
   const node_info_t* cn = &c->nodes[cid];
   const uint32_t closure_ty = cn->type_ref;
@@ -4186,7 +4322,7 @@ static bool eval_closure_env(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 1) return false;
   uint32_t cid = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &cid)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &cid)) return false;
   if (cid >= c->node_cap || !c->nodes[cid].present) return false;
   const node_info_t* cn = &c->nodes[cid];
   const uint32_t closure_ty = cn->type_ref;
@@ -4229,8 +4365,8 @@ static bool eval_closure_cmp(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   const JsonValue* av = json_obj_get(n->fields_obj, "args");
   if (!json_is_array(av) || av->v.arr.len != 2) return false;
   uint32_t a_id = 0, b_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &a_id)) return false;
-  if (!parse_ref_id(av->v.arr.items[1], &b_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &a_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[1], &b_id)) return false;
   if (a_id >= c->node_cap || b_id >= c->node_cap) return false;
   if (!c->nodes[a_id].present || !c->nodes[b_id].present) return false;
   const node_info_t* an = &c->nodes[a_id];
@@ -4263,7 +4399,7 @@ static bool eval_call_closure(sirj_ctx_t* c, uint32_t node_id, const node_info_t
   if (!json_is_array(av) || av->v.arr.len < 1) return false;
 
   uint32_t callee_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &callee_id)) return false;
+  if (!parse_ref_id(c, av->v.arr.items[0], &callee_id)) return false;
   if (callee_id >= c->node_cap || !c->nodes[callee_id].present) return false;
   const node_info_t* cn = &c->nodes[callee_id];
   const uint32_t closure_ty = cn->type_ref;
@@ -4312,7 +4448,7 @@ static bool eval_call_closure(sirj_ctx_t* c, uint32_t node_id, const node_info_t
   val_kind_t args_kinds[16];
   for (uint32_t i = 0; i < argc; i++) {
     uint32_t arg_id = 0;
-    if (!parse_ref_id(av->v.arr.items[i + 1u], &arg_id)) return false;
+    if (!parse_ref_id(c, av->v.arr.items[i + 1u], &arg_id)) return false;
     sir_val_id_t s = 0;
     val_kind_t k = VK_INVALID;
     if (!eval_node(c, arg_id, &s, &k)) return false;
@@ -4384,7 +4520,7 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
   }
 
   uint32_t callee_id = 0;
-  if (!parse_ref_id(av->v.arr.items[0], &callee_id)) {
+  if (!parse_ref_id(c, av->v.arr.items[0], &callee_id)) {
     sirj_diag_setf(c, "sem.call.bad_callee", c->cur_path, n->loc_line, node_id, n->tag, "call.indirect callee is not a ref");
     return false;
   }
@@ -4431,7 +4567,7 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
 
   for (uint32_t i = 0; i < argc; i++) {
     uint32_t arg_node_id = 0;
-    if (!parse_ref_id(av->v.arr.items[i + 1], &arg_node_id)) {
+    if (!parse_ref_id(c, av->v.arr.items[i + 1], &arg_node_id)) {
       sirj_diag_setf(c, "sem.call.bad_arg", c->cur_path, n->loc_line, node_id, n->tag, "call.indirect arg %u is not a ref", (unsigned)i);
       return false;
     }
@@ -4452,7 +4588,7 @@ static bool eval_call_indirect(sirj_ctx_t* c, uint32_t node_id, const node_info_
   uint32_t sig_tid = 0;
   const JsonValue* sigv = json_obj_get(n->fields_obj, "sig");
   if (sigv) {
-    if (!parse_ref_id(sigv, &sig_tid)) {
+    if (!parse_ref_id(c, sigv, &sig_tid)) {
       sirj_diag_setf(c, "sem.call.bad_sig", c->cur_path, n->loc_line, node_id, n->tag, "call.indirect bad sig ref");
       return false;
     }
@@ -4578,7 +4714,7 @@ static bool eval_call_direct(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
   const JsonValue* args_v = json_obj_get(n->fields_obj, "args");
 
   if (callee_v) {
-    if (!parse_ref_id(callee_v, &callee_id)) {
+    if (!parse_ref_id(c, callee_v, &callee_id)) {
       sirj_diag_setf(c, "sem.call.bad_callee", c->cur_path, n->loc_line, node_id, n->tag, "call callee is not a ref");
       return false;
     }
@@ -4591,7 +4727,7 @@ static bool eval_call_direct(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
       sirj_diag_setf(c, "sem.call.bad_args", c->cur_path, n->loc_line, node_id, n->tag, "call requires callee and args");
       return false;
     }
-    if (!parse_ref_id(args_v->v.arr.items[0], &callee_id)) {
+    if (!parse_ref_id(c, args_v->v.arr.items[0], &callee_id)) {
       sirj_diag_setf(c, "sem.call.bad_callee", c->cur_path, n->loc_line, node_id, n->tag, "call callee is not a ref");
       return false;
     }
@@ -4616,7 +4752,7 @@ static bool eval_call_direct(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
       }
       for (uint32_t i = 0; i < argc; i++) {
         uint32_t rid = 0;
-        if (!parse_ref_id(a->items[i], &rid)) {
+        if (!parse_ref_id(c, a->items[i], &rid)) {
           sirj_diag_setf(c, "sem.call.bad_arg", c->cur_path, n->loc_line, node_id, n->tag, "call arg %u is not a ref", (unsigned)i);
           return false;
         }
@@ -4633,7 +4769,7 @@ static bool eval_call_direct(sirj_ctx_t* c, uint32_t node_id, const node_info_t*
     }
     for (size_t i = 1; i < a->len; i++) {
       uint32_t rid = 0;
-      if (!parse_ref_id(a->items[i], &rid)) {
+      if (!parse_ref_id(c, a->items[i], &rid)) {
         sirj_diag_setf(c, "sem.call.bad_arg", c->cur_path, n->loc_line, node_id, n->tag, "call arg %u is not a ref", (unsigned)(i - 1));
         return false;
       }
@@ -4931,7 +5067,7 @@ static bool exec_inline_block(sirj_ctx_t* c, uint32_t block_id, bool* out_did_re
   const JsonArray* a = &sv->v.arr;
   for (size_t i = 0; i < a->len; i++) {
     uint32_t sid = 0;
-    if (!parse_ref_id(a->items[i], &sid)) return false;
+    if (!parse_ref_id(c, a->items[i], &sid)) return false;
     bool did_ret = false;
     sir_val_id_t exit_slot = 0;
     val_kind_t exit_kind = VK_INVALID;
@@ -4961,7 +5097,7 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     if (!nm || nm[0] == '\0') return false;
     const JsonValue* vv = json_obj_get(n->fields_obj, "value");
     uint32_t vid = 0;
-    if (!parse_ref_id(vv, &vid)) return false;
+    if (!parse_ref_id(c, vv, &vid)) return false;
     sir_val_id_t tmp = 0;
     val_kind_t tk = VK_INVALID;
     if (!eval_node(c, vid, &tmp, &tk)) return false;
@@ -5018,7 +5154,7 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     const JsonValue* av = json_obj_get(n->fields_obj, "args");
     if (!json_is_array(av) || av->v.arr.len != 1) return false;
     sem_branch_t br = {0};
-    if (!parse_sem_branch(av->v.arr.items[0], &br) || br.kind != SEM_BRANCH_THUNK) return false;
+    if (!parse_sem_branch(c, av->v.arr.items[0], &br) || br.kind != SEM_BRANCH_THUNK) return false;
     if (c->defer_count >= (uint32_t)(sizeof(c->defers) / sizeof(c->defers[0]))) {
       sirj_diag_setf(c, "sem.defer.too_many", c->cur_path, n->loc_line, stmt_id, n->tag, "too many active defers");
       return false;
@@ -5033,13 +5169,13 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     const JsonValue* bodyv = json_obj_get(n->fields_obj, "body");
     if (!json_is_array(dv) || !json_is_object(bodyv)) return false;
     uint32_t body_id = 0;
-    if (!parse_ref_id(bodyv, &body_id)) return false;
+    if (!parse_ref_id(c, bodyv, &body_id)) return false;
 
     const uint32_t base = c->defer_count;
     const JsonArray* da = &dv->v.arr;
     for (size_t i = 0; i < da->len; i++) {
       sem_branch_t br = {0};
-      if (!parse_sem_branch(da->items[i], &br) || br.kind != SEM_BRANCH_THUNK) return false;
+      if (!parse_sem_branch(c, da->items[i], &br) || br.kind != SEM_BRANCH_THUNK) return false;
       if (c->defer_count >= (uint32_t)(sizeof(c->defers) / sizeof(c->defers[0]))) return false;
       c->defers[c->defer_count++] = br.node_id;
     }
@@ -5101,8 +5237,8 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     const JsonValue* av = json_obj_get(n->fields_obj, "args");
     if (!json_is_array(av) || av->v.arr.len != 2) return false;
     sem_branch_t cond = {0}, body = {0};
-    if (!parse_sem_branch(av->v.arr.items[0], &cond) || cond.kind != SEM_BRANCH_THUNK) return false;
-    if (!parse_sem_branch(av->v.arr.items[1], &body) || body.kind != SEM_BRANCH_THUNK) return false;
+    if (!parse_sem_branch(c, av->v.arr.items[0], &cond) || cond.kind != SEM_BRANCH_THUNK) return false;
+    if (!parse_sem_branch(c, av->v.arr.items[1], &body) || body.kind != SEM_BRANCH_THUNK) return false;
 
     // Inline loop in sircore bytecode:
     // header:
@@ -5194,7 +5330,7 @@ static bool exec_stmt(sirj_ctx_t* c, uint32_t stmt_id, bool* out_did_return, sir
     uint32_t rid = 0;
     if (n->fields_obj && n->fields_obj->type == JSON_OBJECT) {
       const JsonValue* vv = json_obj_get(n->fields_obj, "value");
-      if (vv && !parse_ref_id(vv, &rid)) return false;
+      if (vv && !parse_ref_id(c, vv, &rid)) return false;
     }
 
     sir_val_id_t slot = 0;
@@ -5256,7 +5392,7 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
     uint32_t rid = 0;
     if (n->fields_obj && n->fields_obj->type == JSON_OBJECT) {
       const JsonValue* vv = json_obj_get(n->fields_obj, "value");
-      if (vv && !parse_ref_id(vv, &rid)) return false;
+      if (vv && !parse_ref_id(c, vv, &rid)) return false;
     }
     sir_val_id_t slot = 0;
     val_kind_t k = VK_INVALID;
@@ -5277,7 +5413,7 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
     if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
     const JsonValue* tov = json_obj_get(n->fields_obj, "to");
     uint32_t bid = 0;
-    if (!parse_ref_id(tov, &bid)) return false;
+    if (!parse_ref_id(c, tov, &bid)) return false;
     out->k = TERM_BR;
     out->to_block = bid;
 
@@ -5291,7 +5427,7 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
     if (!arg_nodes) return false;
     for (size_t i = 0; i < a->len; i++) {
       uint32_t rid = 0;
-      if (!parse_ref_id(a->items[i], &rid)) return false;
+      if (!parse_ref_id(c, a->items[i], &rid)) return false;
       arg_nodes[i] = rid;
     }
     out->br_arg_nodes = arg_nodes;
@@ -5302,7 +5438,7 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
   if (strcmp(n->tag, "term.cbr") == 0 || strcmp(n->tag, "term.condbr") == 0) {
     if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
     uint32_t cond_id = 0;
-    if (!parse_ref_id(json_obj_get(n->fields_obj, "cond"), &cond_id)) return false;
+    if (!parse_ref_id(c, json_obj_get(n->fields_obj, "cond"), &cond_id)) return false;
     sir_val_id_t cond_slot = 0;
     val_kind_t ck = VK_INVALID;
     if (!eval_node(c, cond_id, &cond_slot, &ck)) return false;
@@ -5315,8 +5451,8 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
     const JsonValue* elto = json_obj_get(elsev, "to");
     if (!json_is_object(thto) || !json_is_object(elto)) return false;
     uint32_t then_bid = 0, else_bid = 0;
-    if (!parse_ref_id(thto, &then_bid)) return false;
-    if (!parse_ref_id(elto, &else_bid)) return false;
+    if (!parse_ref_id(c, thto, &then_bid)) return false;
+    if (!parse_ref_id(c, elto, &else_bid)) return false;
 
     out->k = TERM_CBR;
     out->cond_slot = cond_slot;
@@ -5328,7 +5464,7 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
   if (strcmp(n->tag, "term.switch") == 0) {
     if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
     uint32_t scrut_id = 0;
-    if (!parse_ref_id(json_obj_get(n->fields_obj, "scrut"), &scrut_id)) return false;
+    if (!parse_ref_id(c, json_obj_get(n->fields_obj, "scrut"), &scrut_id)) return false;
 
     const JsonValue* casesv = json_obj_get(n->fields_obj, "cases");
     if (!json_is_array(casesv)) {
@@ -5355,8 +5491,8 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
       const JsonValue* litv = json_obj_get(ca->items[i], "lit");
       const JsonValue* tov = json_obj_get(ca->items[i], "to");
       uint32_t lid = 0, bid = 0;
-      if (!parse_ref_id(litv, &lid)) return false;
-      if (!parse_ref_id(tov, &bid)) return false;
+      if (!parse_ref_id(c, litv, &lid)) return false;
+      if (!parse_ref_id(c, tov, &bid)) return false;
       lit_ids[i] = lid;
       to_ids[i] = bid;
     }
@@ -5368,7 +5504,7 @@ static bool lower_term_node(sirj_ctx_t* c, uint32_t term_id, term_info_t* out) {
     }
     const JsonValue* defto = json_obj_get(defv, "to");
     uint32_t def_bid = 0;
-    if (!parse_ref_id(defto, &def_bid)) return false;
+    if (!parse_ref_id(c, defto, &def_bid)) return false;
 
     out->k = TERM_SWITCH;
     out->switch_scrut = scrut_id;
@@ -5441,7 +5577,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
   if (entryv && blocksv) {
     c->in_cfg = true;
     uint32_t entry_block = 0;
-    if (!parse_ref_id(entryv, &entry_block)) return false;
+    if (!parse_ref_id(c, entryv, &entry_block)) return false;
     if (!json_is_array(blocksv)) return false;
     const JsonArray* blks = &blocksv->v.arr;
     if (blks->len == 0) return false;
@@ -5456,7 +5592,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
 
     // Ensure control enters entry block.
     uint32_t first_bid = 0;
-    if (!parse_ref_id(blks->items[0], &first_bid)) return false;
+    if (!parse_ref_id(c, blks->items[0], &first_bid)) return false;
     if (first_bid != entry_block) {
       uint32_t jip = 0;
       if (!sir_mb_emit_br(c->mb, c->fn, 0, &jip)) return false;
@@ -5467,7 +5603,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
     // Emit blocks in declared order.
     for (size_t bi = 0; bi < blks->len; bi++) {
       uint32_t bid = 0;
-      if (!parse_ref_id(blks->items[bi], &bid)) return false;
+      if (!parse_ref_id(c, blks->items[bi], &bid)) return false;
       if (bid >= c->node_cap || !c->nodes[bid].present) return false;
       const node_info_t* bn = &c->nodes[bid];
       if (!bn->tag || strcmp(bn->tag, "block") != 0) return false;
@@ -5482,7 +5618,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
       bool saw_term = false;
       for (size_t si = 0; si < a->len; si++) {
         uint32_t sid = 0;
-        if (!parse_ref_id(a->items[si], &sid)) return false;
+        if (!parse_ref_id(c, a->items[si], &sid)) return false;
 
         term_info_t term = {0};
         if (lower_term_node(c, sid, &term)) {
@@ -5525,7 +5661,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
                 if (!dst_slots) return false;
                 for (uint32_t pi = 0; pi < dst_count; pi++) {
                   uint32_t bpid = 0;
-                  if (!parse_ref_id(pa->items[pi], &bpid)) return false;
+                  if (!parse_ref_id(c, pa->items[pi], &bpid)) return false;
                   if (bpid >= c->node_cap || !c->nodes[bpid].present) return false;
                   if (!c->nodes[bpid].tag || strcmp(c->nodes[bpid].tag, "bparam") != 0) return false;
                   sir_val_id_t s = 0;
@@ -5671,7 +5807,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
   const JsonValue* bodyv = json_obj_get(fnn->fields_obj, "body");
   if (!bodyv) return false;
   uint32_t body_id = 0;
-  if (!parse_ref_id(bodyv, &body_id)) return false;
+  if (!parse_ref_id(c, bodyv, &body_id)) return false;
   if (body_id >= c->node_cap || !c->nodes[body_id].present) return false;
   const node_info_t* bn = &c->nodes[body_id];
   if (!bn->tag || strcmp(bn->tag, "block") != 0) return false;
@@ -5682,7 +5818,7 @@ static bool lower_fn_body(sirj_ctx_t* c, uint32_t fn_node_id, bool is_entry) {
   const JsonArray* a = &sv->v.arr;
   for (size_t i = 0; i < a->len; i++) {
     uint32_t sid = 0;
-    if (!parse_ref_id(a->items[i], &sid)) return false;
+    if (!parse_ref_id(c, a->items[i], &sid)) return false;
     bool did_ret = false;
     sir_val_id_t exit_slot = 0;
     val_kind_t exit_kind = VK_INVALID;
@@ -5801,7 +5937,7 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
       if (strcmp(k, "type") == 0) {
         const uint32_t loc_line = loc_line_from_root(root, rec_no);
         uint32_t id = 0;
-        if (!json_get_u32(json_obj_get(root, "id"), &id)) {
+        if (!sirj_intern_id(c, json_obj_get(root, "id"), &id) || id == 0) {
           sirj_diag_setf(c, "sem.parse.type.id", diag_path, loc_line, 0, NULL, "type.id missing/invalid");
           free(line);
           fclose(f);
@@ -5836,13 +5972,13 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
         } else if (strcmp(kind, "fn") == 0) {
           ti.is_fn = true;
           const JsonValue* pv = obj_req(root, "params");
-          if (!parse_u32_array(pv, &ti.params, &ti.param_count, &c->arena)) {
+          if (!parse_u32_array(c, pv, &ti.params, &ti.param_count, &c->arena)) {
             sirj_diag_setf(c, "sem.parse.type.fn.params", diag_path, loc_line, 0, NULL, "bad fn params array");
             free(line);
             fclose(f);
             return false;
           }
-          if (!json_get_u32(json_obj_get(root, "ret"), &ti.ret)) {
+          if (!sirj_intern_id(c, json_obj_get(root, "ret"), &ti.ret)) {
             sirj_diag_setf(c, "sem.parse.type.fn.ret", diag_path, loc_line, 0, NULL, "bad fn ret");
             free(line);
             fclose(f);
@@ -5851,7 +5987,7 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
         } else if (strcmp(kind, "fun") == 0) {
           ti.is_fun = true;
           uint32_t sig = 0;
-          if (!json_get_u32(json_obj_get(root, "sig"), &sig)) {
+          if (!sirj_intern_id(c, json_obj_get(root, "sig"), &sig)) {
             sirj_diag_setf(c, "sem.parse.type.fun.sig", diag_path, loc_line, 0, NULL, "bad fun.sig");
             free(line);
             fclose(f);
@@ -5862,13 +5998,13 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
           ti.is_closure = true;
           uint32_t call_sig = 0;
           uint32_t env = 0;
-          if (!json_get_u32(json_obj_get(root, "callSig"), &call_sig)) {
+          if (!sirj_intern_id(c, json_obj_get(root, "callSig"), &call_sig)) {
             sirj_diag_setf(c, "sem.parse.type.closure.callSig", diag_path, loc_line, 0, NULL, "bad closure.callSig");
             free(line);
             fclose(f);
             return false;
           }
-          if (!json_get_u32(json_obj_get(root, "env"), &env)) {
+          if (!sirj_intern_id(c, json_obj_get(root, "env"), &env)) {
             sirj_diag_setf(c, "sem.parse.type.closure.env", diag_path, loc_line, 0, NULL, "bad closure.env");
             free(line);
             fclose(f);
@@ -5914,12 +6050,20 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
             }
             uint32_t pty = 0;
             // payload type is optional.
-            (void)json_get_u32(json_obj_get((JsonValue*)vobj, "ty"), &pty);
+            const JsonValue* tyv = json_obj_get((JsonValue*)vobj, "ty");
+            if (tyv) {
+              if (!sirj_intern_id(c, tyv, &pty)) {
+                sirj_diag_setf(c, "sem.parse.type.sum.variant", diag_path, loc_line, 0, NULL, "sum.variants[%u].ty invalid", (unsigned)vi);
+                free(line);
+                fclose(f);
+                return false;
+              }
+            }
             ti.sum_payload_types[vi] = pty;
           }
         } else if (strcmp(kind, "array") == 0) {
           ti.is_array = true;
-          if (!json_get_u32(json_obj_get(root, "of"), &ti.array_of)) {
+          if (!sirj_intern_id(c, json_obj_get(root, "of"), &ti.array_of)) {
             sirj_diag_setf(c, "sem.parse.type.array.of", diag_path, loc_line, 0, NULL, "bad array.of");
             free(line);
             fclose(f);
@@ -5934,7 +6078,8 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
         } else if (strcmp(kind, "ptr") == 0) {
           ti.is_ptr = true;
           ti.prim = SIR_PRIM_PTR;
-          (void)json_get_u32(json_obj_get(root, "of"), &ti.ptr_of);
+          const JsonValue* ofv = json_obj_get(root, "of");
+          if (ofv) (void)sirj_intern_id(c, ofv, &ti.ptr_of);
         } else if (strcmp(kind, "struct") == 0) {
           ti.is_struct = true;
           const JsonValue* fv = json_obj_get(root, "fields");
@@ -5972,9 +6117,9 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
               return false;
             }
             uint32_t ty = 0;
-            if (!json_get_u32(json_obj_get(fobj, "type_ref"), &ty)) {
+            if (!sirj_intern_id(c, json_obj_get(fobj, "type_ref"), &ty)) {
               const JsonValue* tyv = json_obj_get(fobj, "ty");
-              if (!parse_ref_id(tyv, &ty)) {
+              if (!parse_ref_id(c, tyv, &ty)) {
                 sirj_diag_setf(c, "sem.parse.type.struct.field", diag_path, loc_line, 0, NULL, "struct field missing/invalid type_ref");
                 free(line);
                 fclose(f);
@@ -6036,7 +6181,7 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
       } else if (strcmp(k, "sym") == 0) {
         const uint32_t loc_line = loc_line_from_root(root, rec_no);
         uint32_t id = 0;
-        if (!json_get_u32(json_obj_get(root, "id"), &id)) {
+        if (!sirj_intern_id(c, json_obj_get(root, "id"), &id) || id == 0) {
           sirj_diag_setf(c, "sem.parse.sym.id", diag_path, loc_line, 0, NULL, "sym.id missing/invalid");
           free(line);
           fclose(f);
@@ -6054,7 +6199,8 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
         si.loc_line = loc_line;
         si.name = json_get_string(json_obj_get(root, "name"));
         si.kind = json_get_string(json_obj_get(root, "kind"));
-        (void)json_get_u32(json_obj_get(root, "type_ref"), &si.type_ref);
+        const JsonValue* trv = json_obj_get(root, "type_ref");
+        if (trv) (void)sirj_intern_id(c, trv, &si.type_ref);
         si.init_kind = SYM_INIT_NONE;
 
         const JsonValue* vv = json_obj_get(root, "value");
@@ -6072,7 +6218,7 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
             si.init_num = v;
           } else if (t && strcmp(t, "ref") == 0) {
             uint32_t rid = 0;
-            if (!parse_ref_id(vv, &rid)) {
+            if (!parse_ref_id(c, vv, &rid)) {
               sirj_diag_setf(c, "sem.parse.sym.value", diag_path, loc_line, id, "sym", "sym.value ref missing/invalid");
               free(line);
               fclose(f);
@@ -6087,7 +6233,7 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
       } else if (strcmp(k, "node") == 0) {
         const uint32_t loc_line = loc_line_from_root(root, rec_no);
         uint32_t id = 0;
-        if (!json_get_u32(json_obj_get(root, "id"), &id)) {
+        if (!sirj_intern_id(c, json_obj_get(root, "id"), &id) || id == 0) {
           sirj_diag_setf(c, "sem.parse.node.id", diag_path, loc_line, 0, NULL, "node.id missing/invalid");
           free(line);
           fclose(f);
@@ -6102,7 +6248,8 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
         node_info_t ni = {0};
         ni.present = true;
         ni.tag = json_get_string(json_obj_get(root, "tag"));
-        (void)json_get_u32(json_obj_get(root, "type_ref"), &ni.type_ref);
+        const JsonValue* trv = json_obj_get(root, "type_ref");
+        if (trv) (void)sirj_intern_id(c, trv, &ni.type_ref);
         const JsonValue* fv = json_obj_get(root, "fields");
         if (fv && json_is_object(fv)) ni.fields_obj = (JsonValue*)fv;
         ni.loc_line = loc_line;
@@ -6217,7 +6364,7 @@ static bool init_params_for_fn(sirj_ctx_t* c, uint32_t fn_node_id, uint32_t fn_t
 
   for (uint32_t i = 0; i < expected_n; i++) {
     uint32_t pid = 0;
-    if (!parse_ref_id(pv->v.arr.items[i], &pid)) return false;
+    if (!parse_ref_id(c, pv->v.arr.items[i], &pid)) return false;
     if (pid >= c->node_cap || !c->nodes[pid].present) return false;
     const node_info_t* pn = &c->nodes[pid];
     if (!pn->fields_obj || pn->fields_obj->type != JSON_OBJECT) return false;

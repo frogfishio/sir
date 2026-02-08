@@ -37,12 +37,34 @@ typedef struct NamedTypeEntry {
   int64_t type_id;
 } NamedTypeEntry;
 
+typedef struct LocalEntry {
+  char* name;
+  int64_t ty;
+} LocalEntry;
+
+typedef enum sirc_ids_mode {
+  SIRC_IDS_NUMERIC = 0,
+  SIRC_IDS_STRING = 1,
+} sirc_ids_mode_t;
+
 typedef struct Emitter {
   FILE* out;
   const char* input_path;
 
+  sirc_ids_mode_t ids_mode;
+
   int64_t next_type_id;
   int64_t next_node_id;
+
+  // For string-id output: internal numeric id -> stable-ish string id.
+  char** node_id_by_id;
+  size_t node_id_cap;
+  char** type_id_by_id;
+  size_t type_id_cap;
+
+  // Source-scoped node-id generation (multiple emitted nodes can originate from one .sir line).
+  int last_id_line;
+  uint32_t line_id_seq;
 
   char** node_name_by_id;
   size_t node_name_cap;
@@ -63,6 +85,11 @@ typedef struct Emitter {
   size_t features_len;
   size_t features_cap;
 
+  // Per-function locals: name -> type_ref for name nodes.
+  LocalEntry* locals;
+  size_t locals_len;
+  size_t locals_cap;
+
   // CFG block name -> reserved node id (function-local; reset via sirc_cfg_begin)
   struct {
     char* name;
@@ -78,6 +105,12 @@ typedef struct Emitter {
 } Emitter;
 
 static Emitter g_emit = {0};
+
+static void record_type_out_id(int64_t id, const char* key);
+static void emit_node_id_value(int64_t id);
+static void emit_type_id_value(int64_t id);
+static void emit_node_ref_obj(int64_t id);
+static void emit_type_ref_obj(int64_t ty);
 
 int sirc_last_line = 1;
 int sirc_last_col = 1;
@@ -186,6 +219,7 @@ static int64_t type_insert(const char* key) {
     g_emit.types = (TypeEntry*)xrealloc(g_emit.types, g_emit.types_cap * sizeof(TypeEntry));
   }
   g_emit.types[g_emit.types_len++] = (TypeEntry){.key = xstrdup(key), .id = id};
+  record_type_out_id(id, g_emit.types[g_emit.types_len - 1].key);
   return id;
 }
 
@@ -195,7 +229,9 @@ static int64_t type_prim(const char* prim) {
   int64_t id = type_lookup(key);
   if (id) return id;
   id = type_insert(key);
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":%lld,\"kind\":\"prim\",\"prim\":", (long long)id);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"prim\",\"prim\":");
   json_write_escaped(g_emit.out, prim);
   emitf("}\n");
   return id;
@@ -207,24 +243,55 @@ static int64_t prim_id_or_zero(const char* prim) {
   return type_lookup(key);
 }
 
+static const char* type_key_for_id(int64_t id) {
+  if (id <= 0) return NULL;
+  for (size_t i = 0; i < g_emit.types_len; i++) {
+    if (g_emit.types[i].id == id) return g_emit.types[i].key;
+  }
+  return NULL;
+}
+
 static int64_t type_ptr(int64_t of) {
-  char key[64];
-  snprintf(key, sizeof(key), "ptr:%lld", (long long)of);
+  const char* ofk = type_key_for_id(of);
+  if (!ofk) die_at_last("sirc: internal error: ptr(of) references unknown type id %lld", (long long)of);
+  const size_t cap = strlen(ofk) + 16;
+  char* key = (char*)xmalloc(cap);
+  snprintf(key, cap, "ptr(%s)", ofk);
+
   int64_t id = type_lookup(key);
-  if (id) return id;
+  if (id) {
+    free(key);
+    return id;
+  }
   id = type_insert(key);
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":%lld,\"kind\":\"ptr\",\"of\":%lld}\n", (long long)id, (long long)of);
+  free(key);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"ptr\",\"of\":");
+  emit_type_id_value(of);
+  emitf("}\n");
   return id;
 }
 
 static int64_t type_array(int64_t of, int64_t len) {
-  char key[96];
-  snprintf(key, sizeof(key), "array:%lld,%lld", (long long)of, (long long)len);
+  const char* ofk = type_key_for_id(of);
+  if (!ofk) die_at_last("sirc: internal error: array(of) references unknown type id %lld", (long long)of);
+  const size_t cap = strlen(ofk) + 64;
+  char* key = (char*)xmalloc(cap);
+  snprintf(key, cap, "array(%s,%lld)", ofk, (long long)len);
+
   int64_t id = type_lookup(key);
-  if (id) return id;
+  if (id) {
+    free(key);
+    return id;
+  }
   id = type_insert(key);
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":%lld,\"kind\":\"array\",\"of\":%lld,\"len\":%lld}\n", (long long)id, (long long)of,
-        (long long)len);
+  free(key);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"array\",\"of\":");
+  emit_type_id_value(of);
+  emitf(",\"len\":%lld}\n", (long long)len);
   return id;
 }
 
@@ -252,15 +319,24 @@ static void named_type_set(char* name, int64_t type_id) {
 }
 
 static int64_t type_fn(const int64_t* params, size_t n, int64_t ret) {
-  // canonical key: fn:p1,p2->r
-  size_t cap = 128 + n * 24;
+  // canonical key: fn(p1,p2)->r (in terms of other type keys)
+  const char* retk = type_key_for_id(ret);
+  if (!retk) die_at_last("sirc: internal error: fn(ret) references unknown type id %lld", (long long)ret);
+
+  size_t cap = 32 + strlen(retk);
+  for (size_t i = 0; i < n; i++) {
+    const char* pk = type_key_for_id(params[i]);
+    if (!pk) die_at_last("sirc: internal error: fn(params) references unknown type id %lld", (long long)params[i]);
+    cap += strlen(pk) + 2;
+  }
   char* key = (char*)xmalloc(cap);
   size_t off = 0;
-  off += (size_t)snprintf(key + off, cap - off, "fn:");
+  off += (size_t)snprintf(key + off, cap - off, "fn(");
   for (size_t i = 0; i < n; i++) {
-    off += (size_t)snprintf(key + off, cap - off, "%s%lld", (i ? "," : ""), (long long)params[i]);
+    const char* pk = type_key_for_id(params[i]);
+    off += (size_t)snprintf(key + off, cap - off, "%s%s", (i ? "," : ""), pk);
   }
-  off += (size_t)snprintf(key + off, cap - off, "->%lld", (long long)ret);
+  off += (size_t)snprintf(key + off, cap - off, ")->%s", retk);
 
   int64_t id = type_lookup(key);
   if (id) {
@@ -270,12 +346,191 @@ static int64_t type_fn(const int64_t* params, size_t n, int64_t ret) {
   id = type_insert(key);
   free(key);
 
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":%lld,\"kind\":\"fn\",\"params\":[", (long long)id);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"fn\",\"params\":[");
   for (size_t i = 0; i < n; i++) {
     if (i) emitf(",");
-    emitf("%lld", (long long)params[i]);
+    emit_type_id_value(params[i]);
   }
-  emitf("],\"ret\":%lld}\n", (long long)ret);
+  emitf("],\"ret\":");
+  emit_type_id_value(ret);
+  emitf("}\n");
+  return id;
+}
+
+static int64_t type_fun(int64_t sig) {
+  const char* sigk = type_key_for_id(sig);
+  if (!sigk) die_at_last("sirc: internal error: fun(sig) references unknown type id %lld", (long long)sig);
+  const size_t cap = strlen(sigk) + 16;
+  char* key = (char*)xmalloc(cap);
+  snprintf(key, cap, "fun(%s)", sigk);
+
+  int64_t id = type_lookup(key);
+  if (id) {
+    free(key);
+    return id;
+  }
+  id = type_insert(key);
+  free(key);
+
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"fun\",\"sig\":");
+  emit_type_id_value(sig);
+  emitf("}\n");
+  return id;
+}
+
+static int64_t type_closure(int64_t call_sig, int64_t env) {
+  const char* ck = type_key_for_id(call_sig);
+  const char* ek = type_key_for_id(env);
+  if (!ck) die_at_last("sirc: internal error: closure(callSig) references unknown type id %lld", (long long)call_sig);
+  if (!ek) die_at_last("sirc: internal error: closure(env) references unknown type id %lld", (long long)env);
+
+  const size_t cap = strlen(ck) + strlen(ek) + 32;
+  char* key = (char*)xmalloc(cap);
+  snprintf(key, cap, "closure(%s,%s)", ck, ek);
+
+  int64_t id = type_lookup(key);
+  if (id) {
+    free(key);
+    return id;
+  }
+  id = type_insert(key);
+  free(key);
+
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"closure\",\"callSig\":");
+  emit_type_id_value(call_sig);
+  emitf(",\"env\":");
+  emit_type_id_value(env);
+  emitf("}\n");
+  return id;
+}
+
+typedef struct SircTypeList {
+  int64_t* tys;
+  size_t len;
+  size_t cap;
+} SircTypeList;
+
+SircTypeList* sirc_types_empty(void) { return (SircTypeList*)calloc(1, sizeof(SircTypeList)); }
+
+SircTypeList* sirc_types_single(int64_t ty) {
+  SircTypeList* l = sirc_types_empty();
+  l->cap = 4;
+  l->tys = (int64_t*)xmalloc(l->cap * sizeof(int64_t));
+  l->tys[0] = ty;
+  l->len = 1;
+  return l;
+}
+
+SircTypeList* sirc_types_append(SircTypeList* l, int64_t ty) {
+  if (!l) l = sirc_types_empty();
+  if (l->len == l->cap) {
+    l->cap = l->cap ? l->cap * 2 : 4;
+    l->tys = (int64_t*)xrealloc(l->tys, l->cap * sizeof(int64_t));
+  }
+  l->tys[l->len++] = ty;
+  return l;
+}
+
+typedef struct SircSumVariantList {
+  char** names;
+  int64_t* payload_tys; // 0 means nullary
+  size_t len;
+  size_t cap;
+} SircSumVariantList;
+
+SircSumVariantList* sirc_sum_variants_empty(void) { return (SircSumVariantList*)calloc(1, sizeof(SircSumVariantList)); }
+
+SircSumVariantList* sirc_sum_variants_append(SircSumVariantList* l, char* name, int64_t payload_ty) {
+  if (!l) l = sirc_sum_variants_empty();
+  if (!name || !name[0]) {
+    free(name);
+    return l;
+  }
+  if (l->len == l->cap) {
+    l->cap = l->cap ? l->cap * 2 : 4;
+    l->names = (char**)xrealloc(l->names, l->cap * sizeof(char*));
+    l->payload_tys = (int64_t*)xrealloc(l->payload_tys, l->cap * sizeof(int64_t));
+  }
+  l->names[l->len] = name;
+  l->payload_tys[l->len] = payload_ty;
+  l->len++;
+  return l;
+}
+
+SircSumVariantList* sirc_sum_variants_merge(SircSumVariantList* a, SircSumVariantList* b) {
+  if (!a) a = sirc_sum_variants_empty();
+  if (!b || !b->len) {
+    if (b) {
+      free(b->names);
+      free(b->payload_tys);
+      free(b);
+    }
+    return a;
+  }
+  for (size_t i = 0; i < b->len; i++) {
+    a = sirc_sum_variants_append(a, b->names[i], b->payload_tys[i]);
+    b->names[i] = NULL;
+  }
+  free(b->names);
+  free(b->payload_tys);
+  free(b);
+  return a;
+}
+
+static int64_t type_sum(const SircSumVariantList* v) {
+  if (!v || !v->len) die_at_last("sirc: sum(...) requires at least one variant");
+
+  // canonical key: sum{A,B:ty,...} (in terms of type keys)
+  size_t cap = 32;
+  for (size_t i = 0; i < v->len; i++) {
+    cap += strlen(v->names[i]) + 2;
+    if (v->payload_tys[i]) {
+      const char* pk = type_key_for_id(v->payload_tys[i]);
+      if (!pk) die_at_last("sirc: internal error: sum variant '%s' references unknown type id %lld", v->names[i], (long long)v->payload_tys[i]);
+      cap += strlen(pk) + 1;
+    }
+  }
+  char* key = (char*)xmalloc(cap);
+  size_t off = 0;
+  off += (size_t)snprintf(key + off, cap - off, "sum{");
+  for (size_t i = 0; i < v->len; i++) {
+    if (i) off += (size_t)snprintf(key + off, cap - off, ",");
+    off += (size_t)snprintf(key + off, cap - off, "%s", v->names[i]);
+    if (v->payload_tys[i]) {
+      const char* pk = type_key_for_id(v->payload_tys[i]);
+      off += (size_t)snprintf(key + off, cap - off, ":%s", pk);
+    }
+  }
+  (void)snprintf(key + off, cap - off, "}");
+
+  int64_t id = type_lookup(key);
+  if (id) {
+    free(key);
+    return id;
+  }
+  id = type_insert(key);
+  free(key);
+
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(id);
+  emitf(",\"kind\":\"sum\",\"variants\":[");
+  for (size_t i = 0; i < v->len; i++) {
+    if (i) emitf(",");
+    emitf("{\"name\":");
+    json_write_escaped(g_emit.out, v->names[i]);
+    if (v->payload_tys[i]) {
+      emitf(",\"ty\":");
+      emit_type_id_value(v->payload_tys[i]);
+    }
+    emitf("}");
+  }
+  emitf("]}\n");
   return id;
 }
 
@@ -332,7 +587,120 @@ static FnEntry* fn_find_mut(const char* name) {
   return NULL;
 }
 
-static int64_t next_node_id(void) { return g_emit.next_node_id++; }
+static void locals_clear(void) {
+  for (size_t i = 0; i < g_emit.locals_len; i++) free(g_emit.locals[i].name);
+  g_emit.locals_len = 0;
+}
+
+static void locals_set(const char* name, int64_t ty) {
+  if (!name || !name[0] || ty == 0) return;
+  for (size_t i = 0; i < g_emit.locals_len; i++) {
+    if (strcmp(g_emit.locals[i].name, name) == 0) {
+      g_emit.locals[i].ty = ty;
+      return;
+    }
+  }
+  if (g_emit.locals_len == g_emit.locals_cap) {
+    g_emit.locals_cap = g_emit.locals_cap ? g_emit.locals_cap * 2 : 32;
+    g_emit.locals = xrealloc(g_emit.locals, g_emit.locals_cap * sizeof(*g_emit.locals));
+  }
+  g_emit.locals[g_emit.locals_len++] = (LocalEntry){.name = xstrdup(name), .ty = ty};
+}
+
+static int64_t locals_get(const char* name) {
+  if (!name || !name[0]) return 0;
+  for (size_t i = 0; i < g_emit.locals_len; i++) {
+    if (strcmp(g_emit.locals[i].name, name) == 0) return g_emit.locals[i].ty;
+  }
+  return 0;
+}
+
+static void ensure_node_id_slot(int64_t id) {
+  if (id < 0) return;
+  const size_t need = (size_t)id + 1;
+  if (need <= g_emit.node_id_cap) return;
+  size_t cap = g_emit.node_id_cap ? g_emit.node_id_cap : 256;
+  while (cap < need) cap *= 2;
+  g_emit.node_id_by_id = (char**)xrealloc(g_emit.node_id_by_id, cap * sizeof(char*));
+  for (size_t i = g_emit.node_id_cap; i < cap; i++) g_emit.node_id_by_id[i] = NULL;
+  g_emit.node_id_cap = cap;
+}
+
+static void ensure_type_id_slot(int64_t id) {
+  if (id < 0) return;
+  const size_t need = (size_t)id + 1;
+  if (need <= g_emit.type_id_cap) return;
+  size_t cap = g_emit.type_id_cap ? g_emit.type_id_cap : 128;
+  while (cap < need) cap *= 2;
+  g_emit.type_id_by_id = (char**)xrealloc(g_emit.type_id_by_id, cap * sizeof(char*));
+  for (size_t i = g_emit.type_id_cap; i < cap; i++) g_emit.type_id_by_id[i] = NULL;
+  g_emit.type_id_cap = cap;
+}
+
+static void record_node_out_id(int64_t id) {
+  if (g_emit.ids_mode != SIRC_IDS_STRING) return;
+  if (id <= 0) return;
+  ensure_node_id_slot(id);
+  if ((size_t)id < g_emit.node_id_cap && g_emit.node_id_by_id[id]) return;
+
+  const int line = sirc_last_line;
+  if (g_emit.last_id_line != line) {
+    g_emit.last_id_line = line;
+    g_emit.line_id_seq = 0;
+  }
+  const uint32_t seq = g_emit.line_id_seq++;
+
+  char buf[64];
+  snprintf(buf, sizeof(buf), "n:%d:%u", line, (unsigned)seq);
+  g_emit.node_id_by_id[id] = xstrdup(buf);
+}
+
+static void record_type_out_id(int64_t id, const char* key) {
+  if (g_emit.ids_mode != SIRC_IDS_STRING) return;
+  if (id <= 0 || !key) return;
+  ensure_type_id_slot(id);
+  if ((size_t)id < g_emit.type_id_cap) g_emit.type_id_by_id[id] = (char*)key; // owned by TypeEntry
+}
+
+static void emit_node_id_value(int64_t id) {
+  if (g_emit.ids_mode == SIRC_IDS_STRING) {
+    ensure_node_id_slot(id);
+    const char* s = ((size_t)id < g_emit.node_id_cap) ? g_emit.node_id_by_id[id] : NULL;
+    if (!s) die_at_last("sirc: internal error: missing string id for node %lld", (long long)id);
+    json_write_escaped(g_emit.out, s);
+  } else {
+    emitf("%lld", (long long)id);
+  }
+}
+
+static void emit_type_id_value(int64_t id) {
+  if (g_emit.ids_mode == SIRC_IDS_STRING) {
+    ensure_type_id_slot(id);
+    const char* s = ((size_t)id < g_emit.type_id_cap) ? g_emit.type_id_by_id[id] : NULL;
+    if (!s) die_at_last("sirc: internal error: missing string id for type %lld", (long long)id);
+    json_write_escaped(g_emit.out, s);
+  } else {
+    emitf("%lld", (long long)id);
+  }
+}
+
+static void emit_node_ref_obj(int64_t id) {
+  emitf("{\"t\":\"ref\",\"id\":");
+  emit_node_id_value(id);
+  emitf("}");
+}
+
+static void emit_type_ref_obj(int64_t ty) {
+  emitf("{\"t\":\"ref\",\"k\":\"type\",\"id\":");
+  emit_type_id_value(ty);
+  emitf("}");
+}
+
+static int64_t next_node_id(void) {
+  int64_t id = g_emit.next_node_id++;
+  record_node_out_id(id);
+  return id;
+}
 
 static void ensure_node_name_slot(int64_t id) {
   if (id < 0) return;
@@ -361,9 +729,14 @@ static const char* lookup_node_name(int64_t id) {
 
 static int64_t emit_node_with_fields_begin(const char* tag, int64_t type_ref) {
   int64_t id = next_node_id();
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":%lld,\"tag\":", (long long)id);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":");
+  emit_node_id_value(id);
+  emitf(",\"tag\":");
   json_write_escaped(g_emit.out, tag);
-  if (type_ref) emitf(",\"type_ref\":%lld", (long long)type_ref);
+  if (type_ref) {
+    emitf(",\"type_ref\":");
+    emit_type_id_value(type_ref);
+  }
   emitf(",\"fields\":{");
   return id;
 }
@@ -380,12 +753,17 @@ static int64_t emit_param_node(const char* name, int64_t type_ref) {
 
 static int64_t emit_bparam_node(int64_t type_ref) {
   int64_t id = next_node_id();
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":%lld,\"tag\":\"bparam\",\"type_ref\":%lld}\n", (long long)id, (long long)type_ref);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":");
+  emit_node_id_value(id);
+  emitf(",\"tag\":\"bparam\",\"type_ref\":");
+  emit_type_id_value(type_ref);
+  emitf("}\n");
   return id;
 }
 
 static int64_t emit_name_node(const char* name) {
-  int64_t id = emit_node_with_fields_begin("name", 0);
+  const int64_t ty = locals_get(name);
+  int64_t id = emit_node_with_fields_begin("name", ty);
   emitf("\"name\":");
   json_write_escaped(g_emit.out, name);
   emit_fields_end();
@@ -420,9 +798,13 @@ static int64_t emit_decl_fn_node(const char* name, int64_t sig_type) {
 
 static int64_t emit_call_indirect(int64_t ret_type, int64_t sig_type, int64_t callee_node, const int64_t* args, size_t argc) {
   int64_t id = emit_node_with_fields_begin("call.indirect", ret_type);
-  emitf("\"sig\":{\"t\":\"ref\",\"id\":%lld},\"args\":[{\"t\":\"ref\",\"id\":%lld}", (long long)sig_type, (long long)callee_node);
+  emitf("\"sig\":");
+  emit_type_ref_obj(sig_type);
+  emitf(",\"args\":[");
+  emit_node_ref_obj(callee_node);
   for (size_t i = 0; i < argc; i++) {
-    emitf(",{\"t\":\"ref\",\"id\":%lld}", (long long)args[i]);
+    emitf(",");
+    emit_node_ref_obj(args[i]);
   }
   emitf("]");
   emit_fields_end();
@@ -431,10 +813,12 @@ static int64_t emit_call_indirect(int64_t ret_type, int64_t sig_type, int64_t ca
 
 static int64_t emit_call_direct(int64_t ret_type, int64_t callee_fn_node, const int64_t* args, size_t argc) {
   int64_t id = emit_node_with_fields_begin("call", ret_type);
-  emitf("\"callee\":{\"t\":\"ref\",\"id\":%lld},\"args\":[", (long long)callee_fn_node);
+  emitf("\"callee\":");
+  emit_node_ref_obj(callee_fn_node);
+  emitf(",\"args\":[");
   for (size_t i = 0; i < argc; i++) {
     if (i) emitf(",");
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)args[i]);
+    emit_node_ref_obj(args[i]);
   }
   emitf("]");
   emit_fields_end();
@@ -445,14 +829,16 @@ static int64_t emit_let_node(const char* name, int64_t value_node) {
   int64_t id = emit_node_with_fields_begin("let", 0);
   emitf("\"name\":");
   json_write_escaped(g_emit.out, name);
-  emitf(",\"value\":{\"t\":\"ref\",\"id\":%lld}", (long long)value_node);
+  emitf(",\"value\":");
+  emit_node_ref_obj(value_node);
   emit_fields_end();
   return id;
 }
 
 static int64_t emit_term_ret_node(int64_t value_node) {
   int64_t id = emit_node_with_fields_begin("term.ret", 0);
-  emitf("\"value\":{\"t\":\"ref\",\"id\":%lld}", (long long)value_node);
+  emitf("\"value\":");
+  emit_node_ref_obj(value_node);
   emit_fields_end();
   return id;
 }
@@ -462,7 +848,7 @@ static int64_t emit_block_node(const int64_t* stmts, size_t n) {
   emitf("\"stmts\":[");
   for (size_t i = 0; i < n; i++) {
     if (i) emitf(",");
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)stmts[i]);
+    emit_node_ref_obj(stmts[i]);
   }
   emitf("]");
   emit_fields_end();
@@ -476,9 +862,10 @@ static int64_t emit_fn_node(const char* name, int64_t fn_type, const int64_t* pa
   emitf(",\"params\":[");
   for (size_t i = 0; i < nparams; i++) {
     if (i) emitf(",");
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)params[i]);
+    emit_node_ref_obj(params[i]);
   }
-  emitf("],\"body\":{\"t\":\"ref\",\"id\":%lld}", (long long)body_block);
+  emitf("],\"body\":");
+  emit_node_ref_obj(body_block);
   emit_fields_end();
   return id;
 }
@@ -487,8 +874,6 @@ static int64_t emit_fn_node(const char* name, int64_t fn_type, const int64_t* pa
 void sirc_emit_unit(char* unit, char* target) {
   if (g_emit.unit) free(g_emit.unit);
   if (g_emit.target) free(g_emit.target);
-  for (size_t i = 0; i < g_emit.features_len; i++) free(g_emit.features[i]);
-  g_emit.features_len = 0;
   g_emit.unit = unit;
   if (target && strcmp(target, "host") == 0) {
     free(target);
@@ -519,6 +904,32 @@ int64_t sirc_type_ptr_of(int64_t of) { return type_ptr(of); }
 int64_t sirc_type_array_of(int64_t of, long long len) {
   if (len < 0) die_at_last("sirc: array length must be >= 0");
   return type_array(of, (int64_t)len);
+}
+
+int64_t sirc_type_fn_of(SircTypeList* params, int64_t ret) {
+  const int64_t* p = params ? params->tys : NULL;
+  const size_t n = params ? params->len : 0;
+  int64_t id = type_fn(p, n, ret);
+  if (params) {
+    free(params->tys);
+    free(params);
+  }
+  return id;
+}
+
+int64_t sirc_type_fun_of(int64_t sig) { return type_fun(sig); }
+
+int64_t sirc_type_closure_of(int64_t call_sig, int64_t env) { return type_closure(call_sig, env); }
+
+int64_t sirc_type_sum_of(SircSumVariantList* variants) {
+  const int64_t id = type_sum(variants);
+  if (variants) {
+    for (size_t i = 0; i < variants->len; i++) free(variants->names[i]);
+    free(variants->names);
+    free(variants->payload_tys);
+    free(variants);
+  }
+  return id;
 }
 
 void sirc_type_alias(char* name, int64_t ty) { named_type_set(name, ty); }
@@ -597,6 +1008,7 @@ static void params_add(SircParamList* p, char* name, int64_t ty) {
     p->nodes = (int64_t*)xrealloc(p->nodes, p->cap * sizeof(int64_t));
   }
   int64_t pn = p->is_block ? emit_bparam_node(ty) : emit_param_node(name, ty);
+  locals_set(name, ty);
   p->names[p->len] = name;
   p->types[p->len] = ty;
   p->nodes[p->len] = pn;
@@ -877,8 +1289,6 @@ char* sirc_colon_join(char* a, char* b) {
 
 static bool has_dot(const char* s) { return s && strchr(s, '.') != NULL; }
 
-static void emit_type_ref_obj(int64_t ty) { emitf("{\"t\":\"ref\",\"k\":\"type\",\"id\":%lld}", (long long)ty); }
-
 static void emit_attr_scalar(const AttrScalar* s) {
   if (!s) {
     emitf("null");
@@ -1008,13 +1418,15 @@ static bool block_has_params(int64_t id) {
 }
 
 static void emit_block_node_at(int64_t id, const int64_t* params, size_t nparams, const int64_t* stmts, size_t nstmts) {
-  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":%lld,\"tag\":\"block\",\"fields\":{", (long long)id);
+  emitf("{\"ir\":\"sir-v1.0\",\"k\":\"node\",\"id\":");
+  emit_node_id_value(id);
+  emitf(",\"tag\":\"block\",\"fields\":{");
   bool any = false;
   if (params && nparams) {
     emitf("\"params\":[");
     for (size_t i = 0; i < nparams; i++) {
       if (i) emitf(",");
-      emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)params[i]);
+      emit_node_ref_obj(params[i]);
     }
     emitf("]");
     any = true;
@@ -1024,7 +1436,7 @@ static void emit_block_node_at(int64_t id, const int64_t* params, size_t nparams
     emitf("\"stmts\":[");
     for (size_t i = 0; i < nstmts; i++) {
       if (i) emitf(",");
-      emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)stmts[i]);
+      emit_node_ref_obj(stmts[i]);
     }
     emitf("]");
   }
@@ -1033,8 +1445,13 @@ static void emit_block_node_at(int64_t id, const int64_t* params, size_t nparams
 
 int64_t sirc_select(int64_t ty, int64_t cond, int64_t then_v, int64_t else_v) {
   int64_t id = emit_node_with_fields_begin("select", ty);
-  emitf("\"args\":[{\"t\":\"ref\",\"id\":%lld},{\"t\":\"ref\",\"id\":%lld},{\"t\":\"ref\",\"id\":%lld}]",
-        (long long)cond, (long long)then_v, (long long)else_v);
+  emitf("\"args\":[");
+  emit_node_ref_obj(cond);
+  emitf(",");
+  emit_node_ref_obj(then_v);
+  emitf(",");
+  emit_node_ref_obj(else_v);
+  emitf("]");
   emit_fields_end();
   return id;
 }
@@ -1063,7 +1480,11 @@ int64_t sirc_ptr_offset(int64_t ty, int64_t base, int64_t index) {
   int64_t id = emit_node_with_fields_begin("ptr.offset", 0);
   emitf("\"ty\":");
   emit_type_ref_obj(ty);
-  emitf(",\"args\":[{\"t\":\"ref\",\"id\":%lld},{\"t\":\"ref\",\"id\":%lld}]", (long long)base, (long long)index);
+  emitf(",\"args\":[");
+  emit_node_ref_obj(base);
+  emitf(",");
+  emit_node_ref_obj(index);
+  emitf("]");
   emit_fields_end();
   return id;
 }
@@ -1100,12 +1521,13 @@ int64_t sirc_term_br(char* to_block_name, SircExprList* args) {
   free(to_block_name);
 
   int64_t id = emit_node_with_fields_begin("term.br", 0);
-  emitf("\"to\":{\"t\":\"ref\",\"id\":%lld}", (long long)bid);
+  emitf("\"to\":");
+  emit_node_ref_obj(bid);
   if (args && args->len) {
     emitf(",\"args\":[");
     for (size_t i = 0; i < args->len; i++) {
       if (i) emitf(",");
-      emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)args->nodes[i]);
+      emit_node_ref_obj(args->nodes[i]);
     }
     emitf("]");
   }
@@ -1122,7 +1544,7 @@ static void emit_branch_args_obj(SircExprList* args) {
   emitf(",\"args\":[");
   for (size_t i = 0; i < args->len; i++) {
     if (i) emitf(",");
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)args->nodes[i]);
+    emit_node_ref_obj(args->nodes[i]);
   }
   emitf("]");
 }
@@ -1135,13 +1557,16 @@ int64_t sirc_term_cbr(int64_t cond, char* then_block_name, SircExprList* then_ar
   free(else_block_name);
 
   int64_t id = emit_node_with_fields_begin("term.cbr", 0);
-  emitf("\"cond\":{\"t\":\"ref\",\"id\":%lld}", (long long)cond);
+  emitf("\"cond\":");
+  emit_node_ref_obj(cond);
   emitf(",\"then\":{");
-  emitf("\"to\":{\"t\":\"ref\",\"id\":%lld}", (long long)then_id);
+  emitf("\"to\":");
+  emit_node_ref_obj(then_id);
   emit_branch_args_obj(then_args);
   emitf("}");
   emitf(",\"else\":{");
-  emitf("\"to\":{\"t\":\"ref\",\"id\":%lld}", (long long)else_id);
+  emitf("\"to\":");
+  emit_node_ref_obj(else_id);
   emit_branch_args_obj(else_args);
   emitf("}");
   emit_fields_end();
@@ -1162,17 +1587,23 @@ int64_t sirc_term_switch(int64_t scrut, SircSwitchCaseList* cases, char* default
   free(default_block_name);
 
   int64_t id = emit_node_with_fields_begin("term.switch", 0);
-  emitf("\"scrut\":{\"t\":\"ref\",\"id\":%lld}", (long long)scrut);
+  emitf("\"scrut\":");
+  emit_node_ref_obj(scrut);
   emitf(",\"cases\":[");
   if (cases) {
     for (size_t i = 0; i < cases->len; i++) {
       if (i) emitf(",");
-      emitf("{\"lit\":{\"t\":\"ref\",\"id\":%lld},\"to\":{\"t\":\"ref\",\"id\":%lld}}", (long long)cases->lit_nodes[i],
-            (long long)cases->to_blocks[i]);
+      emitf("{\"lit\":");
+      emit_node_ref_obj(cases->lit_nodes[i]);
+      emitf(",\"to\":");
+      emit_node_ref_obj(cases->to_blocks[i]);
+      emitf("}");
     }
   }
   emitf("]");
-  emitf(",\"default\":{\"to\":{\"t\":\"ref\",\"id\":%lld}}", (long long)def_id);
+  emitf(",\"default\":{\"to\":");
+  emit_node_ref_obj(def_id);
+  emitf("}");
   emit_fields_end();
 
   if (cases) {
@@ -1185,7 +1616,10 @@ int64_t sirc_term_switch(int64_t scrut, SircSwitchCaseList* cases, char* default
 
 int64_t sirc_term_ret_opt(int has_value, int64_t value_node) {
   int64_t id = emit_node_with_fields_begin("term.ret", 0);
-  if (has_value) emitf("\"value\":{\"t\":\"ref\",\"id\":%lld}", (long long)value_node);
+  if (has_value) {
+    emitf("\"value\":");
+    emit_node_ref_obj(value_node);
+  }
   emit_fields_end();
   return id;
 }
@@ -1302,14 +1736,15 @@ void sirc_fn_def_cfg(char* name, SircParamList* params, int64_t ret, int64_t ent
   emitf(",\"params\":[");
   for (size_t i = 0; i < nparams; i++) {
     if (i) emitf(",");
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)pnodes[i]);
+    emit_node_ref_obj(pnodes[i]);
   }
-  emitf("],\"entry\":{\"t\":\"ref\",\"id\":%lld}", (long long)entry_block);
+  emitf("],\"entry\":");
+  emit_node_ref_obj(entry_block);
   emitf(",\"blocks\":[");
   if (blocks) {
     for (size_t i = 0; i < blocks->len; i++) {
       if (i) emitf(",");
-      emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)blocks->nodes[i]);
+      emit_node_ref_obj(blocks->nodes[i]);
     }
   }
   emitf("]");
@@ -1342,9 +1777,10 @@ void sirc_fn_def_cfg(char* name, SircParamList* params, int64_t ret, int64_t ent
     free(blocks->nodes);
     free(blocks);
   }
+  locals_clear();
 }
 
-int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
+static int64_t sirc_call_impl(char* name, SircExprList* args, SircAttrList* attrs, int64_t forced_type_ref) {
   size_t argc = args ? args->len : 0;
   int64_t* argv = args ? args->nodes : NULL;
 
@@ -1389,7 +1825,8 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
       emitf(",\"flags\":{");
       bool first = true;
       if (count_ref) {
-        emitf("\"count\":{\"t\":\"ref\",\"id\":%lld}", (long long)count_ref);
+        emitf("\"count\":");
+        emit_node_ref_obj(count_ref);
         first = false;
       }
       if (align_present) {
@@ -1422,9 +1859,14 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
     if (!fn) die_at_last("sirc: call.indirect unknown sig function '%s'", acc.sig_fn);
 
     int64_t id = emit_node_with_fields_begin("call.indirect", fn->ret_type);
-    emitf("\"sig\":{\"t\":\"ref\",\"id\":%lld},\"args\":[", (long long)fn->sig_type);
-    emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)argv[0]);
-    for (size_t i = 1; i < argc; i++) emitf(",{\"t\":\"ref\",\"id\":%lld}", (long long)argv[i]);
+    emitf("\"sig\":");
+    emit_type_ref_obj(fn->sig_type);
+    emitf(",\"args\":[");
+    emit_node_ref_obj(argv[0]);
+    for (size_t i = 1; i < argc; i++) {
+      emitf(",");
+      emit_node_ref_obj(argv[i]);
+    }
     emitf("]");
 
     // allow optional extra fields/flags (rare, but consistent)
@@ -1446,7 +1888,8 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
     const char* tname = name + 5;
     int64_t ty = type_from_name(tname);
     int64_t id = emit_node_with_fields_begin(name, ty);
-    emitf("\"addr\":{\"t\":\"ref\",\"id\":%lld}", (long long)argv[0]);
+    emitf("\"addr\":");
+    emit_node_ref_obj(argv[0]);
     AttrItem* a = attrs_find_scalar_item(acc.root, acc.root_len, "align");
     if (a && a->scalar.kind == ATTR_SCALAR_INT) emitf(",\"align\":%lld", (long long)a->scalar.v.i);
     AttrItem* v = attrs_find_scalar_item(acc.root, acc.root_len, "vol");
@@ -1459,7 +1902,10 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
   if (strncmp(name, "store.", 6) == 0) {
     if (argc != 2) die_at_last("sirc: %s requires 2 args (addr, value)", name);
     int64_t id = emit_node_with_fields_begin(name, 0);
-    emitf("\"addr\":{\"t\":\"ref\",\"id\":%lld},\"value\":{\"t\":\"ref\",\"id\":%lld}", (long long)argv[0], (long long)argv[1]);
+    emitf("\"addr\":");
+    emit_node_ref_obj(argv[0]);
+    emitf(",\"value\":");
+    emit_node_ref_obj(argv[1]);
     AttrItem* a = attrs_find_scalar_item(acc.root, acc.root_len, "align");
     if (a && a->scalar.kind == ATTR_SCALAR_INT) emitf(",\"align\":%lld", (long long)a->scalar.v.i);
     AttrItem* v = attrs_find_scalar_item(acc.root, acc.root_len, "vol");
@@ -1487,13 +1933,13 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
   }
 
   // mnemonic-style call: tag is the dotted name.
-  int64_t id = emit_node_with_fields_begin(name, 0);
+  int64_t id = emit_node_with_fields_begin(name, forced_type_ref);
   bool first = true;
   if (argc) {
     emitf("\"args\":[");
     for (size_t i = 0; i < argc; i++) {
       if (i) emitf(",");
-      emitf("{\"t\":\"ref\",\"id\":%lld}", (long long)argv[i]);
+      emit_node_ref_obj(argv[i]);
     }
     emitf("]");
     first = false;
@@ -1502,7 +1948,12 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
     AttrItem* it = &acc.root[i];
     if (!it->key) continue;
     emitf("%s\"%s\":", first ? "" : ",", it->key);
-    emit_attr_scalar(&it->scalar);
+    if (strcmp(it->key, "ty") == 0 && it->scalar.kind == ATTR_SCALAR_STR && it->scalar.v.s && it->scalar.v.s[0]) {
+      const int64_t ty = type_from_name(it->scalar.v.s);
+      emit_type_ref_obj(ty);
+    } else {
+      emit_attr_scalar(&it->scalar);
+    }
     first = false;
   }
   if (acc.flags_len) {
@@ -1515,8 +1966,14 @@ int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) {
   return id;
 }
 
+int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs) { return sirc_call_impl(name, args, attrs, 0); }
+
+int64_t sirc_call_typed(char* name, SircExprList* args, SircAttrList* attrs, int64_t type_ref) {
+  return sirc_call_impl(name, args, attrs, type_ref);
+}
+
 int64_t sirc_stmt_let(char* name, int64_t ty, int64_t value) {
-  (void)ty;
+  locals_set(name, ty);
   int64_t id = emit_let_node(name, value);
   free(name);
   return id;
@@ -1542,6 +1999,7 @@ void sirc_extern_fn(char* name, SircParamList* params, int64_t ret) {
     free(params->nodes);
     free(params);
   }
+  locals_clear();
 }
 
 void sirc_fn_def(char* name, SircParamList* params, int64_t ret, SircNodeList* stmts) {
@@ -1585,6 +2043,7 @@ void sirc_fn_def(char* name, SircParamList* params, int64_t ret, SircNodeList* s
     free(stmts);
   }
   free(name);
+  locals_clear();
 }
 
 static char* default_out_path(const char* in_path) {
@@ -1606,6 +2065,7 @@ static void usage(FILE* out) {
           "Options:\n"
           "  --help, -h    Show this help message\n"
           "  --version     Show version information\n"
+          "  --ids <mode>  Id mode: string (default) or numeric\n"
           "  -o <path>     Write output JSONL to a file\n"
           "\n"
           "License: GPLv3+\n"
@@ -1616,6 +2076,8 @@ int main(int argc, char** argv) {
   const char* in_path = NULL;
   const char* out_path = NULL;
   char* out_path_owned = NULL;
+
+  g_emit.ids_mode = SIRC_IDS_STRING;
 
   for (int i = 1; i < argc; i++) {
     const char* a = argv[i];
@@ -1632,6 +2094,14 @@ int main(int argc, char** argv) {
     if (strcmp(a, "-o") == 0) {
       if (i + 1 >= argc) die_at_last("sirc: -o requires a path");
       out_path = argv[++i];
+      continue;
+    }
+    if (strcmp(a, "--ids") == 0) {
+      if (i + 1 >= argc) die_at_last("sirc: --ids requires a mode (string|numeric)");
+      const char* m = argv[++i];
+      if (strcmp(m, "string") == 0) g_emit.ids_mode = SIRC_IDS_STRING;
+      else if (strcmp(m, "numeric") == 0) g_emit.ids_mode = SIRC_IDS_NUMERIC;
+      else die_at_last("sirc: unknown --ids mode: %s", m);
       continue;
     }
     if (a[0] == '-') die_at_last("sirc: unknown flag: %s", a);
@@ -1653,6 +2123,8 @@ int main(int argc, char** argv) {
   g_emit.input_path = in_path;
   g_emit.next_type_id = 1;
   g_emit.next_node_id = 10;
+  g_emit.last_id_line = 0;
+  g_emit.line_id_seq = 0;
 
   yyin = in;
   yyrestart(in);

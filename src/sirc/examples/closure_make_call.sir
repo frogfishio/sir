@@ -1,0 +1,18 @@
+unit u0 target host +fun:v1 +closure:v1
+
+type CallSig = fn(i32) -> i32
+type CodeSig = fn(i32, i32) -> i32
+type CodeFun = fun(CodeSig)
+type Cls = closure(CallSig, i32)
+
+fn sir_add_env(env:i32, x:i32) -> i32
+  return i32.add(env, x)
+end
+
+fn main() -> i32 public
+  let code: CodeFun = fun.sym() name "sir_add_env" as CodeFun
+  let env: i32 = 5:i32
+  let cls: Cls = closure.make(code, env) as Cls
+  let x: i32 = 7:i32
+  return call.closure(cls, x) as i32
+end

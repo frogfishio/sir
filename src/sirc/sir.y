@@ -1,6 +1,7 @@
 %{
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "sirc_emit.h"
 
@@ -20,6 +21,8 @@ void yyerror(const char* s) {
   double        d;
   int           b;
   int64_t       ty;
+  SircTypeList* tys;
+  SircSumVariantList* variants;
   SircParamList* params;
   SircNodeList*  stmts;
   SircExprList*  args;
@@ -38,6 +41,7 @@ void yyerror(const char* s) {
 %token T_NL T_ARROW
 %token T_UNIT T_TARGET
 %token T_FN T_PUBLIC T_EXTERN T_END T_RETURN T_LET
+%token T_AS
 %token T_SELECT
 %token T_ARRAY
 %token T_PTR_SIZEOF T_PTR_ALIGNOF T_PTR_OFFSET
@@ -55,6 +59,8 @@ void yyerror(const char* s) {
 %destructor { sirc_attrs_free($$); } <attrs>
 
 %type <ty> type type_ctor
+%type <tys> type_list_opt type_list
+%type <variants> sum_variants_opt sum_variants sum_variant
 %type <params> params_opt params
 %type <params> bparams_opt bparams
 %type <stmts> stmt_list
@@ -319,6 +325,7 @@ float_lit
 dotted_or_call
   : dotted_name                                { $$ = sirc_value_ident($1); }
   | dotted_name '(' nl_star args_opt nl_star ')' attr_tail_opt { $$ = sirc_call($1, $4, $7); }
+  | dotted_name '(' nl_star args_opt nl_star ')' attr_tail_opt T_AS type { $$ = sirc_call_typed($1, $4, $7, $9); }
   ;
 
 attr_tail_opt
@@ -378,6 +385,63 @@ type
 type_ctor
   : T_ARRAY '(' nl_star type comma_sep T_INT nl_star ')'
     { $$ = sirc_type_array_of($4, $6); }
+  | T_ID '(' nl_star type nl_star ')'
+    {
+      if (strcmp($1, "fun") != 0) {
+        yyerror("unknown type constructor");
+        free($1);
+        YYERROR;
+      }
+      $$ = sirc_type_fun_of($4);
+      free($1);
+    }
+  | T_ID '(' nl_star type comma_sep type nl_star ')'
+    {
+      if (strcmp($1, "closure") != 0) {
+        yyerror("unknown type constructor");
+        free($1);
+        YYERROR;
+      }
+      $$ = sirc_type_closure_of($4, $6);
+      free($1);
+    }
+  | T_ID '{' nl_star sum_variants_opt nl_star '}'
+    {
+      if (strcmp($1, "sum") != 0) {
+        yyerror("unknown type constructor");
+        free($1);
+        YYERROR;
+      }
+      $$ = sirc_type_sum_of($4);
+      free($1);
+    }
+  | T_FN '(' nl_star type_list_opt nl_star ')' T_ARROW type
+    { $$ = sirc_type_fn_of($4, $8); }
+  ;
+
+type_list_opt
+  : /* empty */              { $$ = sirc_types_empty(); }
+  | type_list                { $$ = $1; }
+  ;
+
+type_list
+  : type                     { $$ = sirc_types_single($1); }
+  | type_list comma_sep type { $$ = sirc_types_append($1, $3); }
+  ;
+
+sum_variants_opt
+  : /* empty */              { $$ = sirc_sum_variants_empty(); }
+  | sum_variants             { $$ = $1; }
+  ;
+
+sum_variants
+  : sum_variant                    { $$ = $1; }
+  | sum_variants comma_sep sum_variant { $$ = sirc_sum_variants_merge($1, $3); }
+  ;
+
+sum_variant
+  : T_ID                     { $$ = sirc_sum_variants_append(sirc_sum_variants_empty(), $1, 0); }
+  | T_ID ':' type            { $$ = sirc_sum_variants_append(sirc_sum_variants_empty(), $1, $3); }
   ;
 
 nl_star

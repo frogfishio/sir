@@ -200,6 +200,7 @@ STR_UNTERM1  \"([^\"\\\n]|\\.)*\n
 "type"                      { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_TYPE; }
 "array"                     { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_ARRAY; }
 "sig"                       { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_SIG; }
+"as"                        { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_AS; }
 "fn"                        { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_FN; }
 "const"                     { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_CONST; }
 "global"                    { sirc_mark(yytext, yylineno, yycolumn); col_advance(); return T_GLOBAL; }

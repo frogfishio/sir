@@ -10,6 +10,8 @@ typedef struct SircNodeList SircNodeList;
 typedef struct SircExprList SircExprList;
 typedef struct SircSwitchCaseList SircSwitchCaseList;
 typedef struct SircAttrList SircAttrList;
+typedef struct SircTypeList SircTypeList;
+typedef struct SircSumVariantList SircSumVariantList;
 
 // Diagnostics context (set by lexer).
 extern int sirc_last_line;
@@ -25,7 +27,21 @@ void sirc_add_feature(char* feature); // takes ownership
 int64_t sirc_type_from_name(char* name); // takes ownership of name
 int64_t sirc_type_ptr_of(int64_t of);
 int64_t sirc_type_array_of(int64_t of, long long len);
+int64_t sirc_type_fn_of(SircTypeList* params, int64_t ret); // takes ownership of params
+int64_t sirc_type_fun_of(int64_t sig);
+int64_t sirc_type_closure_of(int64_t call_sig, int64_t env);
+int64_t sirc_type_sum_of(SircSumVariantList* variants); // takes ownership of variants
 void sirc_type_alias(char* name, int64_t ty); // takes ownership of name
+
+// Type lists (used by type constructors).
+SircTypeList* sirc_types_empty(void);
+SircTypeList* sirc_types_single(int64_t ty);
+SircTypeList* sirc_types_append(SircTypeList* l, int64_t ty);
+
+// Sum variant lists (used by sum(...) type constructor).
+SircSumVariantList* sirc_sum_variants_empty(void);
+SircSumVariantList* sirc_sum_variants_append(SircSumVariantList* l, char* name, int64_t payload_ty); // takes ownership of name
+SircSumVariantList* sirc_sum_variants_merge(SircSumVariantList* a, SircSumVariantList* b); // takes ownership of b
 
 // Params/stmts/args lists
 SircParamList* sirc_params_empty(void);
@@ -73,6 +89,7 @@ SircAttrList* sirc_attrs_add_count(SircAttrList* l, int64_t node_ref);
 void sirc_attrs_free(SircAttrList* l);
 
 int64_t sirc_call(char* name, SircExprList* args, SircAttrList* attrs);
+int64_t sirc_call_typed(char* name, SircExprList* args, SircAttrList* attrs, int64_t type_ref);
 int64_t sirc_select(int64_t ty, int64_t cond, int64_t then_v, int64_t else_v);
 int64_t sirc_ptr_sizeof(int64_t ty);
 int64_t sirc_ptr_alignof(int64_t ty);
