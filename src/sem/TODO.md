@@ -59,7 +59,7 @@ Work items:
   - [x] `type.kind:"prim"`: `i8/i16/i32/i64/bool/i1/f32/f64/void` (execution rules, not just parsing)
   - [ ] `type.kind:"ptr"` treated consistently (typed ptr, but no host pointers)
   - [ ] `type.kind:"array"` basics (size/stride) for `ptr.offset` and init data
-  - [ ] `type.kind:"struct"` (enough for by-pointer access; no “peek” contracts)
+  - [x] `type.kind:"struct"` (enough for by-pointer access; no “peek” contracts)
 - [ ] Core memory parity (execution)
   - [x] `load.i16` / `store.i16`
   - [x] `load.f32` / `store.f32`
@@ -186,10 +186,10 @@ Work items:
   - [x] Define execution-time memory model for globals in SEM (deterministic alloc at module start)
   - [x] `ptr.sym` to globals (address-of) for lowered globals
 - [ ] `const` records / structured constants (agg:v1 style)
-  - [ ] `const.zero`
+  - [x] `const.zero`
   - [x] `const.array`
   - [x] `const.repeat`
-  - [ ] `const.struct`
+  - [x] `const.struct`
 - [ ] `load.f32 / load.f64` and `store.f32 / store.f64` (needed once globals/constants include floats)
 
 ## P3 (language power): functions, closures, ADTs, and SEM intent nodes

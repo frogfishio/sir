@@ -20,6 +20,8 @@ typedef struct type_info {
   bool is_fn;
   bool is_array;
   bool is_ptr;
+  bool is_struct;
+  bool layout_visiting;
   sir_prim_type_t prim; // for prim
   uint32_t* params;     // for fn, arena-owned
   uint32_t param_count;
@@ -27,6 +29,11 @@ typedef struct type_info {
   uint32_t array_of;
   uint32_t array_len;
   uint32_t ptr_of;
+  uint32_t* struct_fields;         // arena-owned; SIR type ids
+  uint32_t* struct_field_align;    // arena-owned; 0 means default
+  uint32_t struct_field_count;
+  bool struct_packed;
+  uint32_t struct_align_override;  // 0 means computed
   uint32_t loc_line;
 } type_info_t;
 
@@ -406,6 +413,13 @@ static bool json_get_u32(const JsonValue* v, uint32_t* out) {
   return true;
 }
 
+static bool json_get_bool(const JsonValue* v, bool* out) {
+  if (!out) return false;
+  if (!v || v->type != JSON_BOOL) return false;
+  *out = v->v.b;
+  return true;
+}
+
 static const JsonValue* obj_req(const JsonValue* obj, const char* key) {
   const JsonValue* v = json_obj_get(obj, key);
   return v;
@@ -682,11 +696,20 @@ static bool val_kind_for_type_ref(const sirj_ctx_t* c, uint32_t type_ref, val_ki
   }
 }
 
-static bool type_layout(const sirj_ctx_t* c, uint32_t type_ref, uint32_t* out_size, uint32_t* out_align) {
+static bool round_up_u32(uint32_t x, uint32_t a, uint32_t* out) {
+  if (!out) return false;
+  if (a == 0 || !is_pow2_u32(a)) return false;
+  const uint64_t y = ((uint64_t)x + (uint64_t)a - 1ull) & ~(uint64_t)(a - 1u);
+  if (y > 0x7FFFFFFFull) return false;
+  *out = (uint32_t)y;
+  return true;
+}
+
+static bool type_layout(sirj_ctx_t* c, uint32_t type_ref, uint32_t* out_size, uint32_t* out_align) {
   if (!c || !out_size || !out_align) return false;
   if (type_ref == 0 || type_ref >= c->type_cap) return false;
   if (!c->types[type_ref].present) return false;
-  const type_info_t* t = &c->types[type_ref];
+  type_info_t* t = &c->types[type_ref];
   if (t->is_fn) return false;
 
   if (t->is_array) {
@@ -699,6 +722,84 @@ static bool type_layout(const sirj_ctx_t* c, uint32_t type_ref, uint32_t* out_si
     if (size64 > 0x7FFFFFFFull) return false;
     *out_size = (uint32_t)size64;
     *out_align = ea ? ea : 1;
+    return true;
+  }
+
+  if (t->is_struct) {
+    if (t->layout_visiting) return false;
+    t->layout_visiting = true;
+
+    uint32_t off = 0;
+    uint32_t max_align = 1;
+
+    if (t->struct_field_count && (!t->struct_fields || !t->struct_field_align)) {
+      t->layout_visiting = false;
+      return false;
+    }
+
+    for (uint32_t i = 0; i < t->struct_field_count; i++) {
+      const uint32_t field_ty = t->struct_fields[i];
+      uint32_t fs = 0, fa = 0;
+      if (!type_layout(c, field_ty, &fs, &fa)) {
+        t->layout_visiting = false;
+        return false;
+      }
+      if (fs == 0) {
+        t->layout_visiting = false;
+        return false;
+      }
+
+      uint32_t field_align = 0;
+      if (t->struct_field_align[i]) {
+        field_align = t->struct_field_align[i];
+      } else {
+        field_align = t->struct_packed ? 1u : (fa ? fa : 1u);
+      }
+      if (field_align == 0 || !is_pow2_u32(field_align)) {
+        t->layout_visiting = false;
+        return false;
+      }
+
+      uint32_t new_off = 0;
+      if (!round_up_u32(off, field_align, &new_off)) {
+        t->layout_visiting = false;
+        return false;
+      }
+      off = new_off;
+
+      const uint64_t next = (uint64_t)off + (uint64_t)fs;
+      if (next > 0x7FFFFFFFull) {
+        t->layout_visiting = false;
+        return false;
+      }
+      off = (uint32_t)next;
+
+      if (field_align > max_align) max_align = field_align;
+    }
+
+    uint32_t align = max_align ? max_align : 1;
+    if (t->struct_align_override) {
+      if (!is_pow2_u32(t->struct_align_override)) {
+        t->layout_visiting = false;
+        return false;
+      }
+      if (t->struct_align_override < align) {
+        t->layout_visiting = false;
+        return false;
+      }
+      align = t->struct_align_override;
+    }
+    if (align == 0) align = 1;
+
+    uint32_t size = 0;
+    if (!round_up_u32(off, align, &size)) {
+      t->layout_visiting = false;
+      return false;
+    }
+
+    t->layout_visiting = false;
+    *out_size = size;
+    *out_align = align;
     return true;
   }
 
@@ -763,6 +864,16 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
   uint32_t size = 0, align = 1;
   if (!type_layout(c, type_ref, &size, &align)) return false;
   (void)align;
+
+  if (strcmp(n->tag, "const.zero") == 0) {
+    if (n->type_ref != type_ref) return false;
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, size);
+    if (!b && size) return false;
+    if (b && size) memset(b, 0, size);
+    *out_bytes = b;
+    *out_len = size;
+    return true;
+  }
 
   if (strcmp(n->tag, "const.i8") == 0) {
     if (size != 1) return false;
@@ -848,6 +959,81 @@ static bool build_const_bytes(sirj_ctx_t* c, uint32_t node_id, uint32_t type_ref
     memcpy(b, &bits, 8);
     *out_bytes = b;
     *out_len = 8;
+    return true;
+  }
+
+  if (strcmp(n->tag, "const.struct") == 0) {
+    if (n->type_ref != type_ref) return false;
+    if (type_ref == 0 || type_ref >= c->type_cap) return false;
+    const type_info_t* t = &c->types[type_ref];
+    if (!t->present || !t->is_struct) return false;
+    if (!n->fields_obj || n->fields_obj->type != JSON_OBJECT) return false;
+
+    uint8_t* b = (uint8_t*)arena_alloc(&c->arena, size);
+    if (!b && size) return false;
+    if (b && size) memset(b, 0, size);
+
+    const uint32_t nfield = t->struct_field_count;
+    uint32_t* field_off = NULL;
+    uint32_t* field_size = NULL;
+    if (nfield) {
+      field_off = (uint32_t*)arena_alloc(&c->arena, (size_t)nfield * sizeof(uint32_t));
+      field_size = (uint32_t*)arena_alloc(&c->arena, (size_t)nfield * sizeof(uint32_t));
+      if (!field_off || !field_size) return false;
+
+      uint32_t off = 0;
+      for (uint32_t i = 0; i < nfield; i++) {
+        const uint32_t fty = t->struct_fields[i];
+        uint32_t fs = 0, fa = 0;
+        if (!type_layout(c, fty, &fs, &fa)) return false;
+        if (fs == 0) return false;
+        uint32_t falign = 0;
+        if (t->struct_field_align && t->struct_field_align[i]) falign = t->struct_field_align[i];
+        else falign = t->struct_packed ? 1u : (fa ? fa : 1u);
+        if (falign == 0 || !is_pow2_u32(falign)) return false;
+        if (!round_up_u32(off, falign, &off)) return false;
+        field_off[i] = off;
+        field_size[i] = fs;
+        const uint64_t next = (uint64_t)off + (uint64_t)fs;
+        if (next > 0x7FFFFFFFull) return false;
+        off = (uint32_t)next;
+      }
+    }
+
+    const JsonValue* fv = json_obj_get(n->fields_obj, "fields");
+    if (!fv) {
+      *out_bytes = b;
+      *out_len = size;
+      return true;
+    }
+    if (!json_is_array(fv)) return false;
+    const JsonArray* a = &fv->v.arr;
+
+    uint32_t prev_i = 0;
+    bool prev_set = false;
+    for (size_t ai = 0; ai < a->len; ai++) {
+      const JsonValue* asn = a->items[ai];
+      if (!json_is_object(asn)) return false;
+      uint32_t fi = 0;
+      if (!json_get_u32(json_obj_get(asn, "i"), &fi)) return false;
+      if (fi >= nfield) return false;
+      if (prev_set && fi <= prev_i) return false;
+      prev_i = fi;
+      prev_set = true;
+
+      const JsonValue* vv = json_obj_get(asn, "v");
+      uint32_t rid = 0;
+      if (!parse_ref_id(vv, &rid)) return false;
+      uint8_t* eb = NULL;
+      uint32_t elen = 0;
+      if (!build_const_bytes(c, rid, t->struct_fields[fi], &eb, &elen)) return false;
+      if (elen != field_size[fi]) return false;
+      if (elen && !eb) return false;
+      if (elen) memcpy(b + field_off[fi], eb, elen);
+    }
+
+    *out_bytes = b;
+    *out_len = size;
     return true;
   }
 
@@ -3040,6 +3226,97 @@ static bool parse_file(sirj_ctx_t* c, const char* path) {
           ti.is_ptr = true;
           ti.prim = SIR_PRIM_PTR;
           (void)json_get_u32(json_obj_get(root, "of"), &ti.ptr_of);
+        } else if (strcmp(kind, "struct") == 0) {
+          ti.is_struct = true;
+          const JsonValue* fv = json_obj_get(root, "fields");
+          if (!json_is_array(fv)) {
+            sirj_diag_setf(c, "sem.parse.type.struct.fields", diag_path, loc_line, 0, NULL, "bad struct.fields array");
+            free(line);
+            fclose(f);
+            return false;
+          }
+          const JsonArray* fa = &fv->v.arr;
+          const uint32_t nfield = (uint32_t)fa->len;
+          if (nfield != fa->len) {
+            sirj_diag_setf(c, "sem.parse.type.struct.fields", diag_path, loc_line, 0, NULL, "struct.fields too large");
+            free(line);
+            fclose(f);
+            return false;
+          }
+          ti.struct_field_count = nfield;
+          if (nfield) {
+            ti.struct_fields = (uint32_t*)arena_alloc(&c->arena, (size_t)nfield * sizeof(uint32_t));
+            ti.struct_field_align = (uint32_t*)arena_alloc(&c->arena, (size_t)nfield * sizeof(uint32_t));
+            if (!ti.struct_fields || !ti.struct_field_align) {
+              sirj_diag_setf(c, "sem.oom", diag_path, loc_line, 0, NULL, "out of memory");
+              free(line);
+              fclose(f);
+              return false;
+            }
+          }
+          for (uint32_t fi = 0; fi < nfield; fi++) {
+            const JsonValue* fobj = fa->items[fi];
+            if (!json_is_object(fobj)) {
+              sirj_diag_setf(c, "sem.parse.type.struct.field", diag_path, loc_line, 0, NULL, "struct field must be an object");
+              free(line);
+              fclose(f);
+              return false;
+            }
+            uint32_t ty = 0;
+            if (!json_get_u32(json_obj_get(fobj, "type_ref"), &ty)) {
+              const JsonValue* tyv = json_obj_get(fobj, "ty");
+              if (!parse_ref_id(tyv, &ty)) {
+                sirj_diag_setf(c, "sem.parse.type.struct.field", diag_path, loc_line, 0, NULL, "struct field missing/invalid type_ref");
+                free(line);
+                fclose(f);
+                return false;
+              }
+            }
+            if (ty == 0) {
+              sirj_diag_setf(c, "sem.parse.type.struct.field", diag_path, loc_line, 0, NULL, "struct field type_ref must be non-zero");
+              free(line);
+              fclose(f);
+              return false;
+            }
+            ti.struct_fields[fi] = ty;
+
+            uint32_t falign = 0;
+            const JsonValue* av = json_obj_get(fobj, "align");
+            if (av) {
+              if (!json_get_u32(av, &falign) || falign == 0 || !is_pow2_u32(falign)) {
+                sirj_diag_setf(c, "sem.parse.type.struct.field.align", diag_path, loc_line, 0, NULL,
+                               "struct field align must be a positive power of two");
+                free(line);
+                fclose(f);
+                return false;
+              }
+            }
+            ti.struct_field_align[fi] = falign;
+          }
+
+          bool packed = false;
+          const JsonValue* pv = json_obj_get(root, "packed");
+          if (pv) {
+            if (!json_get_bool(pv, &packed)) {
+              sirj_diag_setf(c, "sem.parse.type.struct.packed", diag_path, loc_line, 0, NULL, "struct.packed must be boolean");
+              free(line);
+              fclose(f);
+              return false;
+            }
+          }
+          ti.struct_packed = packed;
+
+          uint32_t salign = 0;
+          const JsonValue* av = json_obj_get(root, "align");
+          if (av) {
+            if (!json_get_u32(av, &salign) || salign == 0 || !is_pow2_u32(salign)) {
+              sirj_diag_setf(c, "sem.parse.type.struct.align", diag_path, loc_line, 0, NULL, "struct.align must be a positive power of two");
+              free(line);
+              fclose(f);
+              return false;
+            }
+          }
+          ti.struct_align_override = salign;
         } else {
           // ignore other kinds for now
           memset(&ti, 0, sizeof(ti));
