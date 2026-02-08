@@ -1,0 +1,9 @@
+unit bad_strict_mnemonic_sig_ignored target host
+
+extern fn add_sig(a:i32, b:i32) -> i32
+
+fn main() -> i32
+  ;; 'sig' is meaningful only for call.indirect; for mnemonics it is silently ignored unless --strict.
+  return i32.add(1:i32, 2:i32) sig add_sig
+end
+

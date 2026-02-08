@@ -168,6 +168,10 @@ sirc_add_diag_expect_strict_test(sirc_diag_strict_alloca_unknown_attr tests/fixt
 sirc_add_diag_expect_strict_test(sirc_diag_strict_alloca_align_flag tests/fixtures/bad_strict_alloca_align_flag.sir sirc.strict.attr.bad_type 6 1 "alloca: align must be an integer")
 sirc_add_diag_expect_strict_test(sirc_diag_strict_load_unknown_flag tests/fixtures/bad_strict_load_unknown_flag.sir sirc.strict.attr.unsupported 7 1 "flags are not supported")
 sirc_add_diag_expect_strict_test(sirc_diag_strict_store_unknown_attr tests/fixtures/bad_strict_store_unknown_attr.sir sirc.strict.attr.unknown 7 1 "store.i32: unknown attribute")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_call_indirect_extra_attr tests/fixtures/bad_strict_call_indirect_extra_attr.sir sirc.strict.attr.unsupported 9 1 "call.indirect: extra attributes")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_mnemonic_sig_ignored tests/fixtures/bad_strict_mnemonic_sig_ignored.sir sirc.strict.attr.unsupported 8 1 "i32.add: 'sig' attribute")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_mnemonic_count_ignored tests/fixtures/bad_strict_mnemonic_count_ignored.sir sirc.strict.attr.unsupported 6 1 "i32.add: 'count' attribute")
+sirc_add_diag_expect_strict_test(sirc_diag_strict_mnemonic_ty_wrong_type tests/fixtures/bad_strict_mnemonic_ty_wrong_type.sir sirc.strict.attr.bad_type 6 1 "ty must be a type name string")
 
 #
 # Tests (require sircc)

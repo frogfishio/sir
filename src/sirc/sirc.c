@@ -2588,6 +2588,12 @@ static int64_t sirc_call_impl(char* name, SircExprList* args, SircAttrList* attr
     const FnEntry* fn = fn_find(acc.sig_fn);
     if (!fn) die_at_last("sirc: call.indirect unknown sig function '%s'", acc.sig_fn);
 
+    if (g_strict) {
+      if (acc.have_count) strict_failf("sirc.strict.attr.unsupported", "call.indirect: 'count' attribute is not supported");
+      if (acc.root_len) strict_failf("sirc.strict.attr.unsupported", "call.indirect: extra attributes are not supported in --strict");
+      if (acc.flags_len) strict_failf("sirc.strict.attr.unsupported", "call.indirect: flags are not supported in --strict");
+    }
+
     int64_t id = emit_node_with_fields_begin("call.indirect", fn->ret_type);
     emitf("\"sig\":");
     emit_type_ref_obj(fn->sig_type);
@@ -2703,6 +2709,20 @@ static int64_t sirc_call_impl(char* name, SircExprList* args, SircAttrList* attr
   }
 
   // mnemonic-style call: tag is the dotted name.
+  if (g_strict) {
+    if (acc.have_sig) strict_failf("sirc.strict.attr.unsupported", "%s: 'sig' attribute is not supported", name);
+    if (acc.have_count) strict_failf("sirc.strict.attr.unsupported", "%s: 'count' attribute is not supported", name);
+    for (size_t i = 0; i < acc.root_len; i++) {
+      AttrItem* it = &acc.root[i];
+      if (!it->key) continue;
+      if (strcmp(it->key, "ty") == 0) {
+        if (!(it->scalar.kind == ATTR_SCALAR_STR && it->scalar.v.s && it->scalar.v.s[0])) {
+          strict_failf("sirc.strict.attr.bad_type", "%s: ty must be a type name string", name);
+        }
+      }
+    }
+  }
+
   int64_t id = emit_node_with_fields_begin(name, forced_type_ref);
   bool first = true;
   if (argc) {

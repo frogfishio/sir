@@ -46,6 +46,9 @@ Legend:
   - [ ] Add “frontend hygiene” fixtures once we add sirc-side checks (unknown type, wrong arg count, bad attrs).
     - [x] Unknown type name (`sirc.type.unknown`).
     - [x] Unknown/ignored attrs on known constructs under `--strict` (`sirc.strict.attr.*`).
+      - [x] `alloca`, `load.*`, `store.*` unknown attrs/flags.
+      - [x] `call.indirect` rejects extra attrs/flags.
+      - [x] Generic mnemonics reject ignored `sig`/`count` and enforce `ty` string typing.
     - [ ] Wrong arg count (decide if `sirc` should enforce beyond existing special cases).
 - [ ] Pipeline fixtures: `sirc` output must pass `sircc --verify-only` (already covered by existing tests; expand).
 - [x] Add minimal CLI regression tests: `--lint`, `--diagnostics json`, and `--tool` multi-input.
